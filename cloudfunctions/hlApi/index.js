@@ -164,7 +164,7 @@ const collectionReadyByName = {};
 let seedReady;
 
 function shouldAutoCreateCollections() {
-  return process.env.AUTO_CREATE_COLLECTIONS === 'true' || process.env.SEED_DATA === 'true';
+  return process.env.AUTO_CREATE_COLLECTIONS !== 'false';
 }
 
 function createHttpError(message, status = 400, code = 40001) {
@@ -190,6 +190,11 @@ function nowIso() {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function isMissingCollectionError(err) {
+  const raw = String((err && (err.errMsg || err.message || err.code)) || err || '');
+  return /DATABASE_COLLECTION_NOT_EXIST|ResourceNotFound|database collection not exists|Db or Table not exist/i.test(raw);
 }
 
 function stripInternal(row) {
@@ -254,15 +259,22 @@ function createTokenService(secret = process.env.JWT_SECRET || 'hl-dev-secret') 
 
 const tokenService = createTokenService();
 
-async function ensureCollections() {
-  if (!collectionsReady) {
-    collectionsReady = Promise.all(Object.values(C).map(async name => {
+async function ensureCollection(name) {
+  if (!collectionReadyByName[name]) {
+    collectionReadyByName[name] = (async () => {
       try {
         await db.createCollection(name);
       } catch (err) {
         // Collection already exists or the environment forbids creation here.
       }
-    }));
+    })();
+  }
+  return collectionReadyByName[name];
+}
+
+async function ensureCollections() {
+  if (!collectionsReady) {
+    collectionsReady = Promise.all(Object.values(C).map(name => ensureCollection(name)));
   }
   return collectionsReady;
 }
@@ -285,18 +297,7 @@ function collectionsForPath(path) {
 async function ensureCollectionsForPath(path) {
   if (!shouldAutoCreateCollections()) return;
   const names = Array.from(new Set(collectionsForPath(path)));
-  return Promise.all(names.map(name => {
-    if (!collectionReadyByName[name]) {
-      collectionReadyByName[name] = (async () => {
-        try {
-          await db.createCollection(name);
-        } catch (err) {
-          // Collection already exists or the environment forbids creation here.
-        }
-      })();
-    }
-    return collectionReadyByName[name];
-  }));
+  return Promise.all(names.map(name => ensureCollection(name)));
 }
 
 async function getAll(collectionName, query = null, maxRows = 1000) {
@@ -304,7 +305,19 @@ async function getAll(collectionName, query = null, maxRows = 1000) {
   const pageSize = 100;
   for (let offset = 0; offset < maxRows; offset += pageSize) {
     const ref = query ? db.collection(collectionName).where(query) : db.collection(collectionName);
-    const res = await ref.skip(offset).limit(Math.min(pageSize, maxRows - offset)).get();
+    let res;
+    try {
+      res = await ref.skip(offset).limit(Math.min(pageSize, maxRows - offset)).get();
+    } catch (err) {
+      if (!isMissingCollectionError(err)) throw err;
+      await ensureCollection(collectionName);
+      try {
+        res = await ref.skip(offset).limit(Math.min(pageSize, maxRows - offset)).get();
+      } catch (retryErr) {
+        if (isMissingCollectionError(retryErr)) return rows;
+        throw retryErr;
+      }
+    }
     rows.push(...(res.data || []));
     if (!res.data || res.data.length < pageSize) break;
   }
@@ -312,7 +325,19 @@ async function getAll(collectionName, query = null, maxRows = 1000) {
 }
 
 async function getOne(collectionName, query) {
-  const res = await db.collection(collectionName).where(query).limit(1).get();
+  let res;
+  try {
+    res = await db.collection(collectionName).where(query).limit(1).get();
+  } catch (err) {
+    if (!isMissingCollectionError(err)) throw err;
+    await ensureCollection(collectionName);
+    try {
+      res = await db.collection(collectionName).where(query).limit(1).get();
+    } catch (retryErr) {
+      if (isMissingCollectionError(retryErr)) return null;
+      throw retryErr;
+    }
+  }
   return (res.data || [])[0] || null;
 }
 
@@ -321,6 +346,7 @@ async function getById(collectionName, id) {
 }
 
 async function addRow(collectionName, row) {
+  await ensureCollection(collectionName);
   const payload = { ...row, createdAt: row.createdAt || nowIso(), updatedAt: row.updatedAt || nowIso() };
   await db.collection(collectionName).add({ data: payload });
   return payload;
