@@ -1,0 +1,125 @@
+<view wx:if="{{canOperate}}" class="page safe-bottom with-bottom-nav">
+  <view class="card hero dashboard-hero">
+    <text class="eyebrow">红娘运营</text>
+    <text class="title">{{user.nickname || '红娘工作台'}}</text>
+    <text class="subtitle">集中处理会员经营、沙龙运营和资源协作，保持每个服务动作可跟进。</text>
+    <view class="summary-strip">
+      <view class="summary-item">
+        <text class="summary-value">{{dashboard.matchmaker.memberCount || 0}}</text>
+        <text class="summary-label">会员</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">{{dashboard.resourceCount || dashboard.operations.resourceCount || 0}}</text>
+        <text class="summary-label">资源池</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">{{dashboard.todoCounts.pendingRecommendations || dashboard.operations.todoCounts.pendingRecommendations || 0}}</text>
+        <text class="summary-label">待跟进</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="row">
+      <view>
+        <text class="section-title">运营闭环</text>
+        <text class="section-note">{{loading ? '正在整理工作台数据' : '按会员资料、资源互推和沙龙报名拆分待办。'}}</text>
+      </view>
+      <text class="tag {{statusTagClass}}">{{statusText}}</text>
+    </view>
+    <view class="grid dashboard-grid">
+      <view class="metric">
+        <text class="metric-label">资料待完善</text>
+        <text class="metric-value">{{dashboard.todoCounts.incompleteMembers || dashboard.operations.todoCounts.incompleteMembers || 0}}</text>
+        <text class="metric-hint">低于展示完整度</text>
+      </view>
+      <view class="metric">
+        <text class="metric-label">资源池</text>
+        <text class="metric-value">{{dashboard.resourceCount || dashboard.operations.resourceCount || 0}}</text>
+        <text class="metric-hint">可协作会员</text>
+      </view>
+      <view class="metric">
+        <text class="metric-label">互推待跟进</text>
+        <text class="metric-value">{{dashboard.todoCounts.pendingRecommendations || dashboard.operations.todoCounts.pendingRecommendations || 0}}</text>
+        <text class="metric-hint">推荐记录 pending</text>
+      </view>
+      <view class="metric">
+        <text class="metric-label">沙龙报名</text>
+        <text class="metric-value">{{dashboard.registrationCount || dashboard.operations.registrationCount || 0}}</text>
+        <text class="metric-hint">我的活动报名</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="card task-card">
+    <text class="section-title">快捷任务</text>
+    <text class="section-note">优先处理会员资料、资源池互推和近期活动。</text>
+    <view class="task-list">
+      <button class="task-btn" bindtap="goMembers">
+        <text class="task-title">会员经营</text>
+        <text class="task-badge">{{dashboard.todoCounts.incompleteMembers || dashboard.operations.todoCounts.incompleteMembers || 0}}</text>
+        <text class="task-note">录入、搜索和维护名下会员资料</text>
+      </button>
+      <button class="task-btn" bindtap="goResources">
+        <text class="task-title">会员展示资源池</text>
+        <text class="task-badge">{{dashboard.resourceCount || dashboard.operations.resourceCount || 0}}</text>
+        <text class="task-note">查看其他红娘资源并发起互推</text>
+      </button>
+      <button class="task-btn" bindtap="goSalon">
+        <text class="task-title">沙龙管理</text>
+        <text class="task-badge">{{dashboard.registrationCount || dashboard.operations.registrationCount || 0}}</text>
+        <text class="task-note">创建活动，查看报名热度和席位</text>
+      </button>
+    </view>
+  </view>
+
+  <bottom-nav role="matchmaker" active="dashboard"></bottom-nav>
+</view>
+
+<view wx:else class="page safe-bottom">
+  <view class="card hero approval-hero">
+    <text class="eyebrow">红娘申请</text>
+    <text class="title">{{statusText}}</text>
+    <text class="subtitle">{{loading ? '正在确认红娘申请状态。' : statusNote}}</text>
+    <view class="summary-strip">
+      <view class="summary-item">
+        <text class="summary-value">{{statusText}}</text>
+        <text class="summary-label">申请状态</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">后台</text>
+        <text class="summary-label">审批处理</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">通过</text>
+        <text class="summary-label">开放工作台</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="card approval-card">
+    <view class="row approval-head">
+      <view>
+        <text class="section-title">申请进度</text>
+        <text class="section-note">{{loading ? '请稍候，正在读取最新申请状态。' : statusNote}}</text>
+      </view>
+      <text class="tag {{statusTagClass}}">{{loading ? '确认中' : statusText}}</text>
+    </view>
+    <view class="approval-flow">
+      <view class="flow-item active">
+        <text class="flow-dot">1</text>
+        <text class="flow-copy">提交申请</text>
+      </view>
+      <view class="flow-item {{dashboard.matchmaker.certificationStatus === 0 ? 'active' : ''}}">
+        <text class="flow-dot">2</text>
+        <text class="flow-copy">后台审批</text>
+      </view>
+      <view class="flow-item {{dashboard.matchmaker.certificationStatus === 2 ? 'active' : ''}}">
+        <text class="flow-dot">3</text>
+        <text class="flow-copy">开通工作台</text>
+      </view>
+    </view>
+    <button wx:if="{{dashboard.matchmaker.certificationStatus === 1}}" class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="applyAgain">重新提交申请</button>
+    <button class="btn ghost approval-btn" bindtap="goUserProfile">返回我的</button>
+  </view>
+</view>

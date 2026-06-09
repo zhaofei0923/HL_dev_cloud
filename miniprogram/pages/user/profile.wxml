@@ -1,0 +1,226 @@
+<view class="page safe-bottom with-bottom-nav">
+  <view class="card hero profile-hero">
+    <image class="hero-cover" src="{{preview.coverUrl}}" mode="aspectFill"></image>
+    <view class="hero-mask"></view>
+    <view class="hero-content">
+      <image class="profile-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
+      <text class="eyebrow">个人档案</text>
+      <text class="title">{{preview.displayName || '我的资料'}}</text>
+      <text class="subtitle">资料仅用于红娘服务跟进，不会自动进入会员展示列表。</text>
+      <view class="summary-strip">
+        <view class="summary-item">
+          <text class="summary-value">{{completionText}}</text>
+          <text class="summary-label">资料完成度</text>
+        </view>
+        <view class="summary-item">
+          <text class="summary-value">{{preview.photos.length}}</text>
+          <text class="summary-label">照片墙</text>
+        </view>
+        <view class="summary-item">
+          <text class="summary-value">私密</text>
+          <text class="summary-label">服务资料</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card notice-card profile-progress">
+    <text class="section-title">资料状态</text>
+    <text class="section-note">{{completionNote}}</text>
+  </view>
+
+  <view class="card privacy-card">
+    <view class="privacy-row">
+      <view class="privacy-copy">
+        <text class="section-title">资料展示</text>
+        <text class="section-note">开启后，资料会进入会员浏览和红娘资源池；关闭后仅用于服务跟进。</text>
+      </view>
+      <switch checked="{{form.displayEnabled}}" color="#b4814f" bindchange="onDisplayEnabledChange"></switch>
+    </view>
+    <view class="divider"></view>
+    <text class="section-title">添加红娘</text>
+    <text class="section-note">输入红娘编号或邀请码，提交后需要红娘审批，通过后才会成为该红娘名下会员。</text>
+    <view class="matchmaker-request-row">
+      <input class="request-input" value="{{matchmakerCode}}" bindinput="onMatchmakerCodeInput" placeholder="红娘编号 / 邀请码" />
+      <button class="btn gold request-btn" loading="{{matchmakerRequesting}}" disabled="{{matchmakerRequesting}}" bindtap="submitMatchmakerRequest">提交</button>
+    </view>
+  </view>
+
+  <view class="card form-card">
+    <view class="form-section">
+      <text class="section-title">形象资料</text>
+      <text class="section-note">可从本地相册选择头像和照片墙；未选择时会自动使用预设图片。</text>
+      <view class="image-upload-panel">
+        <image class="upload-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
+        <view class="upload-copy">
+          <text class="field-label">头像图片</text>
+          <text class="item-meta">建议使用清晰正面照，系统会同步到个人档案预览。</text>
+          <button class="btn secondary upload-btn" bindtap="chooseAvatar">上传头像</button>
+        </view>
+      </view>
+      <view class="photo-grid">
+        <image wx:for="{{preview.photos}}" wx:key="*this" class="photo-thumb" src="{{item}}" mode="aspectFill"></image>
+      </view>
+      <button class="btn ghost upload-wall-btn" bindtap="choosePhotos">上传照片墙</button>
+    </view>
+
+    <view class="divider"></view>
+
+    <view class="form-section">
+      <text class="section-title">基础信息</text>
+      <text class="section-note">姓名、性别、年龄和身高会作为服务档案的核心信息。</text>
+      <view class="field">
+        <text class="field-label">姓名</text>
+        <input class="field-input" value="{{form.realName}}" data-field="realName" bindinput="onInput" placeholder="请输入真实姓名或常用称呼" />
+      </view>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">性别</text>
+          <picker mode="selector" range="{{genderOptions}}" bindchange="onGenderChange">
+            <view class="field-input picker-value">{{form.gender === '1' ? '男' : '女'}}</view>
+          </picker>
+        </view>
+        <view class="field half">
+          <text class="field-label">年龄</text>
+          <picker mode="selector" range="{{ageOptions}}" bindchange="onAgeChange">
+            <view class="field-input picker-value">{{ageText}}</view>
+          </picker>
+        </view>
+      </view>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">身高</text>
+          <picker mode="selector" range="{{heightOptions}}" bindchange="onHeightChange">
+            <view class="field-input picker-value">{{heightText}}</view>
+          </picker>
+        </view>
+        <view class="field half">
+          <text class="field-label">籍贯</text>
+          <picker mode="region" bindchange="onNativePlaceChange">
+            <view class="field-input picker-value">{{nativePlaceText}}</view>
+          </picker>
+        </view>
+      </view>
+    </view>
+
+    <view class="divider"></view>
+
+    <view class="form-section">
+      <text class="section-title">城市与职业</text>
+      <text class="section-note">城市、学历、职业和收入是后续匹配判断的重要参考。</text>
+      <view class="field">
+        <text class="field-label">城市</text>
+        <picker mode="region" bindchange="onCityChange">
+          <view class="field-input picker-value">{{cityText}}</view>
+        </picker>
+      </view>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">学历</text>
+          <picker mode="selector" range="{{educationOptions}}" bindchange="onEducationChange">
+            <view class="field-input picker-value">{{educationText}}</view>
+          </picker>
+        </view>
+        <view class="field half">
+          <text class="field-label">收入</text>
+          <picker mode="selector" range="{{incomeOptions}}" bindchange="onIncomeChange">
+            <view class="field-input picker-value">{{incomeText}}</view>
+          </picker>
+        </view>
+      </view>
+      <view class="field">
+        <text class="field-label">职业</text>
+        <picker mode="selector" range="{{occupationOptions}}" bindchange="onOccupationChange">
+          <view class="field-input picker-value">{{occupationText}}</view>
+        </picker>
+      </view>
+    </view>
+
+    <view class="divider"></view>
+
+    <view class="form-section">
+      <text class="section-title">生活状态</text>
+      <text class="section-note">这些信息仅用于红娘服务判断，不会公开展示。</text>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">婚况</text>
+          <picker mode="selector" range="{{maritalOptions}}" bindchange="onMaritalChange">
+            <view class="field-input picker-value">{{form.maritalStatus}}</view>
+          </picker>
+        </view>
+        <view class="field half">
+          <text class="field-label">房产</text>
+          <picker mode="selector" range="{{houseOptions}}" bindchange="onHouseChange">
+            <view class="field-input picker-value">{{form.houseStatus}}</view>
+          </picker>
+        </view>
+      </view>
+      <view class="field">
+        <text class="field-label">车辆</text>
+        <picker mode="selector" range="{{carOptions}}" bindchange="onCarChange">
+          <view class="field-input picker-value">{{form.carStatus}}</view>
+        </picker>
+      </view>
+    </view>
+
+    <view class="divider"></view>
+
+    <view class="form-section">
+      <text class="section-title">介绍与期待</text>
+      <text class="section-note">简要说明兴趣、生活状态和期待的关系方向。</text>
+      <view class="field">
+        <text class="field-label">自我介绍</text>
+        <textarea class="field-input" value="{{form.selfIntro}}" data-field="selfIntro" bindinput="onInput" placeholder="写几句让红娘快速了解你的信息" />
+      </view>
+      <view class="field">
+        <text class="field-label">择偶期待</text>
+        <textarea class="field-input" value="{{form.partnerRequirement}}" data-field="partnerRequirement" bindinput="onInput" placeholder="说明年龄、城市、价值观或生活方式期待" />
+      </view>
+    </view>
+
+    <button class="btn gold save-btn" loading="{{saving}}" disabled="{{saving || loading}}" bindtap="save">保存资料</button>
+  </view>
+
+  <view class="card preview-card">
+    <text class="section-title">档案预览</text>
+    <text class="section-note">以下是红娘服务中看到的资料结构，保持和会员档案一致。</text>
+    <swiper class="photo-swiper" indicator-dots circular>
+      <swiper-item wx:for="{{preview.photos}}" wx:key="*this">
+        <image class="photo-item" src="{{item}}" mode="aspectFill"></image>
+      </swiper-item>
+    </swiper>
+    <view class="info-grid">
+      <view wx:for="{{preview.baseRows}}" wx:key="label" class="info-cell">
+        <text class="metric-label">{{item.label}}</text>
+        <text class="metric-value small">{{item.value}}</text>
+      </view>
+    </view>
+    <view class="info-grid">
+      <view wx:for="{{preview.careerRows}}" wx:key="label" class="info-cell">
+        <text class="metric-label">{{item.label}}</text>
+        <text class="metric-value small">{{item.value}}</text>
+      </view>
+    </view>
+    <view class="tag-row">
+      <text wx:for="{{preview.lifeRows}}" wx:key="label" class="tag">{{item.label}}：{{item.value}}</text>
+    </view>
+    <view class="preview-story">
+      <text class="member-label">自我介绍</text>
+      <text class="item-desc">{{preview.introText}}</text>
+      <view class="divider"></view>
+      <text class="member-label">择偶期待</text>
+      <text class="item-desc">{{preview.partnerText}}</text>
+    </view>
+  </view>
+
+  <view class="card switch-card">
+    <text class="section-title">{{matchmakerEntryTitle}}</text>
+    <text class="section-note">{{matchmakerEntryNote}}</text>
+    <view class="button-row">
+      <button class="btn {{matchmakerApproved ? 'gold' : 'secondary'}}" bindtap="goMatchmaker">{{matchmakerEntryButton}}</button>
+      <button class="btn ghost" bindtap="logout">退出登录</button>
+    </view>
+  </view>
+
+  <bottom-nav role="user" active="mine"></bottom-nav>
+</view>

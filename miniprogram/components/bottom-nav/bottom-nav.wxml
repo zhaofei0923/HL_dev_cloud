@@ -1,0 +1,18 @@
+<view class="bottom-nav-shell">
+  <view class="bottom-nav bottom-nav-{{role}}">
+    <button
+      wx:for="{{tabs}}"
+      wx:key="key"
+      class="bottom-nav-item {{active === item.key ? 'active' : ''}}"
+      data-key="{{item.key}}"
+      data-path="{{item.path}}"
+      bindtap="switchTab"
+      hover-class="bottom-nav-hover"
+    >
+      <view class="nav-icon nav-icon-{{item.icon}}">
+        <view class="nav-icon-mark"></view>
+      </view>
+      <text class="bottom-nav-label">{{item.label}}</text>
+    </button>
+  </view>
+</view>

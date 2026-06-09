@@ -1,0 +1,56 @@
+<view class="page login-page safe-bottom">
+  <view class="card hero entry-hero">
+    <text class="eyebrow">高端私享婚恋服务</text>
+    <text class="title">HL 婚恋服务</text>
+    <text class="subtitle">先浏览会员与沙龙，再完善个人资料；需要经营会员时，可在“我的”中提交红娘申请。</text>
+    <view class="summary-strip">
+      <view class="summary-item">
+        <text class="summary-value">会员</text>
+        <text class="summary-label">脱敏浏览</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">沙龙</text>
+        <text class="summary-label">精选活动</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">我的</text>
+        <text class="summary-label">资料与红娘</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="card role-card">
+    <text class="section-title">开始服务</text>
+    <text class="section-note">从会员资源开始浏览，也可以查看沙龙活动或完善个人资料。</text>
+    <view class="button-row">
+      <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="login">登录并进入</button>
+    </view>
+  </view>
+
+  <view class="card notice-card">
+    <text class="section-title">服务路径</text>
+    <view class="capability-list">
+      <view class="capability-item">
+        <text class="capability-index">01</text>
+        <view class="capability-copy">
+          <text class="item-title">浏览会员资源</text>
+          <text class="item-meta">先看城市、职业、学历和婚恋期待，页面隐藏手机号和运营备注。</text>
+        </view>
+      </view>
+      <view class="capability-item">
+        <text class="capability-index">02</text>
+        <view class="capability-copy">
+          <text class="item-title">选择线下沙龙</text>
+          <text class="item-meta">查看时间、地点、席位和价格，进入详情后完成报名。</text>
+        </view>
+      </view>
+      <view class="capability-item">
+        <text class="capability-index">03</text>
+        <view class="capability-copy">
+          <text class="item-title">完善个人资料</text>
+          <text class="item-meta">让红娘后续跟进更准确，也可从这里查看红娘申请状态。</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

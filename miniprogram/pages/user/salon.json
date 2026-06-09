@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "沙龙活动",
+  "usingComponents": {
+    "bottom-nav": "/components/bottom-nav/bottom-nav"
+  }
+}

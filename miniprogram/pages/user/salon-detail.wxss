@@ -1,0 +1,23 @@
+.detail-hero {
+  min-height: 320rpx;
+}
+
+.detail-tags {
+  margin-top: 24rpx;
+}
+
+.decision-head {
+  align-items: flex-start;
+}
+
+.detail-grid {
+  margin-top: 20rpx;
+}
+
+.action-note {
+  margin-top: 16rpx;
+}
+
+.primary-action-btn {
+  width: 100%;
+}

@@ -1,0 +1,76 @@
+.detail-page {
+  padding-top: 24rpx;
+}
+
+.detail-hero {
+  position: relative;
+  min-height: 460rpx;
+  padding: 0;
+}
+
+.hero-cover,
+.hero-mask {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.hero-mask {
+  background: linear-gradient(180deg, rgba(36, 31, 27, 0.24), rgba(36, 31, 27, 0.84));
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
+  padding: 36rpx 30rpx;
+}
+
+.detail-avatar {
+  display: block;
+  width: 132rpx;
+  height: 132rpx;
+  margin-bottom: 24rpx;
+  border: 5rpx solid rgba(255, 253, 248, 0.92);
+  border-radius: 50%;
+  box-shadow: 0 14rpx 28rpx rgba(36, 31, 27, 0.22);
+}
+
+.hero-tags {
+  margin-top: 22rpx;
+}
+
+.photo-swiper {
+  height: 380rpx;
+  overflow: hidden;
+  border-radius: 14rpx;
+  background: rgba(177, 134, 83, 0.12);
+}
+
+.photo-item {
+  width: 100%;
+  height: 100%;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14rpx;
+  margin-top: 20rpx;
+}
+
+.info-cell {
+  min-height: 118rpx;
+  padding: 18rpx;
+  border: 1rpx solid rgba(151, 119, 82, 0.13);
+  border-radius: 12rpx;
+  background: rgba(255, 253, 248, 0.72);
+}
+
+.story-card .section-title + .item-desc {
+  margin-top: 12rpx;
+}
+
+.empty-btn {
+  margin-top: 20rpx;
+}

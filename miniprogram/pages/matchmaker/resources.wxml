@@ -1,0 +1,76 @@
+<view class="page safe-bottom">
+  <view class="card hero resources-hero">
+    <text class="eyebrow">资源协作</text>
+    <text class="title">会员展示资源池</text>
+    <text class="subtitle">认证红娘可查看其他红娘的会员资源，并基于自己的会员发起互推协作。</text>
+    <view class="summary-strip">
+      <view class="summary-item">
+        <text class="summary-value">{{list.length}}</text>
+        <text class="summary-label">可协作</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">{{primaryMemberName ? '已选择' : '待选择'}}</text>
+        <text class="summary-label">互推会员</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">认证</text>
+        <text class="summary-label">资源权限</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="card access-card">
+    <view class="row">
+      <view>
+        <text class="section-title">资源池权限</text>
+        <text class="section-note">{{accessNote}}</text>
+      </view>
+      <text class="tag gold">{{loading ? '整理中' : '资源池'}}</text>
+    </view>
+    <text wx:if="{{primaryMemberName}}" class="selected-member">当前互推会员：{{primaryMemberName}}</text>
+    <text wx:else class="selected-member muted">请先录入自己的会员，再发起互推。</text>
+    <picker wx:if="{{memberOptions.length}}" mode="selector" range="{{memberOptions}}" value="{{selectedMemberIndex}}" bindchange="onMemberChange">
+      <view class="member-picker">
+        <text class="field-label">选择名下会员</text>
+        <text class="picker-value">{{primaryMemberName}}</text>
+      </view>
+    </picker>
+  </view>
+
+  <view class="card list-shell">
+    <view class="row list-header">
+      <view>
+        <text class="section-title">可展示会员</text>
+        <text class="section-note">{{list.length}} 位可协作资源</text>
+      </view>
+    </view>
+
+    <block wx:if="{{list.length}}">
+      <view wx:for="{{list}}" wx:key="id" class="list-card resource-card">
+        <view class="resource-media">
+          <image class="resource-cover" src="{{item.coverUrl}}" mode="aspectFill"></image>
+          <image class="resource-avatar" src="{{item.avatarUrl}}" mode="aspectFill"></image>
+        </view>
+        <view class="row resource-head">
+          <view class="resource-copy">
+            <text class="item-title">{{item.displayName}}</text>
+            <text class="item-meta">{{item.metaText}}</text>
+            <text class="item-meta">{{item.occupationText}}</text>
+          </view>
+          <text class="tag gold">{{item.incomeText}}</text>
+        </view>
+        <view class="tag-row">
+          <text class="tag rose">可互推</text>
+          <text class="tag">跨红娘协作</text>
+        </view>
+        <button class="btn secondary detail-btn" data-id="{{item.id}}" bindtap="openDetail">查看会员档案</button>
+        <button class="btn gold recommend-btn" data-user-id="{{item.userId}}" loading="{{recommendLoadingId === item.userIdText}}" disabled="{{recommendLoadingId === item.userIdText || !primaryMemberName}}" bindtap="recommend">{{recommendButtonText}}</button>
+      </view>
+    </block>
+
+    <view wx:else class="empty">
+      <text class="empty-title">{{loading ? '正在加载资源池' : '暂无可展示资源'}}</text>
+      <text class="empty-note">{{loading ? '请稍候，正在整理认证资源。' : '认证完成后，可查看更多可协作会员资源。'}}</text>
+    </view>
+  </view>
+</view>

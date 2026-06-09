@@ -1,0 +1,27 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/user/members",
+    "pages/user/member-detail",
+    "pages/user/salon",
+    "pages/user/salon-detail",
+    "pages/user/profile",
+    "pages/matchmaker/dashboard",
+    "pages/matchmaker/members",
+    "pages/matchmaker/member-detail",
+    "pages/matchmaker/member-form",
+    "pages/matchmaker/resources",
+    "pages/matchmaker/salon",
+    "pages/matchmaker/mine",
+    "pages/matchmaker/salon-form"
+  ],
+  "window": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "HL 婚恋服务",
+    "navigationBarBackgroundColor": "#f4efe7",
+    "backgroundColor": "#f4efe7"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

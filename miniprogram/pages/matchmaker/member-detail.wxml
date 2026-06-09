@@ -1,0 +1,79 @@
+<view class="page safe-bottom detail-page">
+  <block wx:if="{{member}}">
+    <view class="card hero detail-hero">
+      <image class="hero-cover" src="{{member.coverUrl}}" mode="aspectFill"></image>
+      <view class="hero-mask"></view>
+      <view class="hero-content">
+        <image class="detail-avatar" src="{{member.avatarUrl}}" mode="aspectFill"></image>
+        <text class="eyebrow">{{isOwn ? '内部会员档案' : '资源池会员'}}</text>
+        <text class="title">{{member.displayName}}</text>
+        <text class="subtitle">{{member.metaText}}</text>
+        <view class="tag-row hero-tags">
+          <text wx:for="{{member.profileTags}}" wx:key="*this" class="tag gold">{{item}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="card gallery-card">
+      <view class="row list-header">
+        <view>
+          <text class="section-title">照片墙</text>
+          <text class="section-note">用于判断生活方式和展示完整度。</text>
+        </view>
+        <text class="tag gold">{{member.photos.length}} 张</text>
+      </view>
+      <swiper class="photo-swiper" indicator-dots circular>
+        <swiper-item wx:for="{{member.photos}}" wx:key="*this">
+          <image class="photo-item" src="{{item}}" mode="aspectFill"></image>
+        </swiper-item>
+      </swiper>
+    </view>
+
+    <view class="card info-card">
+      <text class="section-title">基础资料</text>
+      <view class="info-grid">
+        <view wx:for="{{member.baseRows}}" wx:key="label" class="info-cell">
+          <text class="metric-label">{{item.label}}</text>
+          <text class="metric-value small">{{item.value}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="card info-card">
+      <text class="section-title">职业与服务画像</text>
+      <view class="info-grid">
+        <view wx:for="{{member.careerRows}}" wx:key="label" class="info-cell">
+          <text class="metric-label">{{item.label}}</text>
+          <text class="metric-value small">{{item.value}}</text>
+        </view>
+      </view>
+      <view class="tag-row">
+        <text wx:for="{{member.lifeRows}}" wx:key="label" class="tag">{{item.label}}：{{item.value}}</text>
+      </view>
+    </view>
+
+    <view class="card story-card">
+      <text class="section-title">自我介绍</text>
+      <text class="item-desc">{{member.introText}}</text>
+      <view class="divider"></view>
+      <text class="section-title">择偶期待</text>
+      <text class="item-desc">{{member.partnerText}}</text>
+    </view>
+
+    <view wx:if="{{isOwn}}" class="card notice-card">
+      <text class="section-title">红娘备注</text>
+      <text class="section-note">{{member.remarkText}}</text>
+    </view>
+
+    <view wx:else class="card notice-card">
+      <text class="section-title">协作边界</text>
+      <text class="section-note">资源池档案仅展示协作所需信息，对方红娘的内部备注和服务记录不会公开。</text>
+    </view>
+  </block>
+
+  <view wx:else class="empty">
+    <text class="empty-title">{{loading ? '正在加载档案' : '未找到会员档案'}}</text>
+    <text class="empty-note">{{loading ? '请稍候，正在整理会员资料。' : '请返回列表重新选择。'}}</text>
+    <button class="btn ghost empty-btn" bindtap="goBack">返回</button>
+  </view>
+</view>

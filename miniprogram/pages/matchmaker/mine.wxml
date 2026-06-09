@@ -1,0 +1,53 @@
+<view class="page safe-bottom {{canOperate ? 'with-bottom-nav' : ''}}">
+  <view class="card hero mine-hero">
+    <text class="eyebrow">{{canOperate ? '红娘中心' : '红娘申请'}}</text>
+    <text class="title">{{user.nickname || (canOperate ? '红娘中心' : '申请状态')}}</text>
+    <text class="subtitle">{{canOperate ? '查看红娘身份、认证状态和常用入口。' : statusNote}}</text>
+    <view class="summary-strip">
+      <view class="summary-item">
+        <text class="summary-value">{{statusText}}</text>
+        <text class="summary-label">认证状态</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">{{dashboard.matchmaker.memberCount || 0}}</text>
+        <text class="summary-label">会员</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">L{{dashboard.matchmaker.level || 1}}</text>
+        <text class="summary-label">服务等级</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="card identity-card">
+    <view class="row identity-head">
+      <view>
+        <text class="section-title">{{canOperate ? '身份信息' : '申请信息'}}</text>
+        <text class="section-note">{{dashboard.matchmaker.matchmakerNo || '专属编号待确认'}}</text>
+      </view>
+      <text class="tag {{statusTagClass}}">{{statusText}}</text>
+    </view>
+    <view class="grid mine-grid">
+      <view class="metric">
+        <text class="metric-label">会员数</text>
+        <text class="metric-value">{{dashboard.matchmaker.memberCount || 0}}</text>
+        <text class="metric-hint">名下有效会员</text>
+      </view>
+      <view class="metric">
+        <text class="metric-label">沙龙数</text>
+        <text class="metric-value">{{dashboard.operations.salonCount || 0}}</text>
+        <text class="metric-hint">已创建活动</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="card mine-actions-card">
+    <text class="section-title">{{canOperate ? '常用入口' : '审批状态'}}</text>
+    <text class="section-note">{{canOperate ? '资源池作为二级入口保留在这里，便于从个人中心快速进入。' : statusNote}}</text>
+    <button wx:if="{{canOperate}}" class="btn gold action-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="goResources">会员展示资源池</button>
+    <button wx:if="{{dashboard.matchmaker.certificationStatus === 1}}" class="btn secondary action-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="applyAgain">重新提交申请</button>
+    <button class="btn ghost action-btn" bindtap="logout">{{canOperate ? '退出工作台' : '返回登录'}}</button>
+  </view>
+
+  <bottom-nav wx:if="{{canOperate}}" role="matchmaker" active="mine"></bottom-nav>
+</view>

@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "完善资料",
+  "usingComponents": {
+    "bottom-nav": "/components/bottom-nav/bottom-nav"
+  }
+}

@@ -1,0 +1,56 @@
+<view class="page salon-detail-page safe-bottom">
+  <block wx:if="{{event}}">
+    <view class="card hero detail-hero">
+      <text class="eyebrow">沙龙详情</text>
+      <text class="title">{{event.title}}</text>
+      <text class="subtitle">{{event.descriptionText}}</text>
+      <view class="tag-row detail-tags">
+        <text class="tag gold">{{event.statusText}}</text>
+        <text class="tag rose">{{event.priceText}}</text>
+        <text class="tag">{{event.seatHint}}</text>
+      </view>
+    </view>
+
+    <view class="card decision-card">
+      <view class="row decision-head">
+        <view>
+          <text class="section-title">报名信息</text>
+          <text class="section-note">确认时间、地点和席位后即可报名。</text>
+        </view>
+      </view>
+      <view class="grid detail-grid">
+        <view class="metric">
+          <text class="metric-label">活动时间</text>
+          <text class="metric-value small">{{event.eventDateText}}</text>
+        </view>
+        <view class="metric">
+          <text class="metric-label">活动地点</text>
+          <text class="metric-value small">{{event.locationText}}</text>
+        </view>
+        <view class="metric">
+          <text class="metric-label">席位</text>
+          <text class="metric-value small">{{event.participantText}}</text>
+          <text class="metric-hint">{{event.seatHint}}</text>
+        </view>
+        <view class="metric">
+          <text class="metric-label">费用</text>
+          <text class="metric-value small">{{event.priceText}}</text>
+        </view>
+      </view>
+      <view class="button-row">
+        <button
+          class="btn {{event.primaryAction.className}} primary-action-btn"
+          loading="{{actionLoading}}"
+          disabled="{{actionLoading || loading || event.primaryAction.disabled}}"
+          bindtap="primaryAction"
+        >{{event.primaryAction.text}}</button>
+      </view>
+      <text class="section-note action-note">{{event.primaryAction.note}}</text>
+    </view>
+  </block>
+
+  <view wx:else class="card empty">
+    <text class="empty-title">{{loading ? '正在加载活动' : '活动不存在'}}</text>
+    <text class="empty-note">{{loading ? '请稍候，正在整理沙龙详情。' : '请返回列表重新选择活动。'}}</text>
+  </view>
+</view>

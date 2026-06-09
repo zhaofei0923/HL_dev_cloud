@@ -1,0 +1,63 @@
+<view class="page safe-bottom with-bottom-nav">
+  <view class="card hero salon-hero">
+    <text class="eyebrow">线下服务场景</text>
+    <text class="title">沙龙活动</text>
+    <text class="subtitle">查看近期开放活动，结合时间、地点、席位和费用判断是否报名。</text>
+    <view class="summary-strip">
+      <view class="summary-item">
+        <text class="summary-value">{{list.length}}</text>
+        <text class="summary-label">{{active === 'all' ? '近期活动' : '我的报名'}}</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">席位</text>
+        <text class="summary-label">余量提示</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">红娘</text>
+        <text class="summary-label">后续跟进</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="segment">
+    <button class="btn {{active === 'all' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadAll">全部活动</button>
+    <button class="btn {{active === 'mine' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadMine">我的报名</button>
+  </view>
+
+  <view class="card list-shell">
+    <view class="row list-header">
+      <view>
+        <text class="section-title">{{listTitle}}</text>
+        <text class="section-note">{{listNote}}</text>
+      </view>
+      <text class="tag gold">{{loading ? '加载中' : '活动服务'}}</text>
+    </view>
+
+    <block wx:if="{{list.length}}">
+      <view wx:for="{{list}}" wx:key="id" class="list-card salon-card" data-id="{{item.id}}" bindtap="openDetail">
+        <view class="row salon-card-head">
+          <view class="salon-card-copy">
+            <text class="item-title">{{item.title}}</text>
+            <text class="item-meta">{{item.eventDate}}</text>
+            <text class="item-meta">{{item.location}}</text>
+          </view>
+          <text class="tag gold">{{item.statusText}}</text>
+        </view>
+        <text class="item-desc">{{item.description}}</text>
+        <view class="tag-row">
+          <text class="tag">{{item.participantText}}</text>
+          <text class="tag">{{item.seatText}}</text>
+          <text class="tag rose">{{item.priceText}}</text>
+        </view>
+        <text class="tap-hint">查看时间、席位与报名状态</text>
+      </view>
+    </block>
+
+    <view wx:else class="empty">
+      <text class="empty-title">{{loading ? '正在加载沙龙' : '暂无开放活动'}}</text>
+      <text class="empty-note">{{loading ? '请稍候，正在整理近期活动安排。' : '新的线下沙龙开放后会第一时间在这里展示。'}}</text>
+    </view>
+  </view>
+
+  <bottom-nav role="user" active="salon"></bottom-nav>
+</view>

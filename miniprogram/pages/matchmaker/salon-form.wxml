@@ -1,0 +1,66 @@
+<view class="page safe-bottom">
+  <view class="card hero salon-form-hero">
+    <text class="eyebrow">新沙龙</text>
+    <text class="title">创建沙龙活动</text>
+    <text class="subtitle">补齐标题、时间、地点和席位上限；提交后需管理员审核，通过后展示给会员。</text>
+  </view>
+
+  <view class="card form-card">
+    <view class="form-section">
+      <text class="section-title">活动信息</text>
+      <text class="section-note">标题和介绍会直接展示给会员，建议写清氛围和对象。</text>
+      <view class="field">
+        <text class="field-label">活动标题</text>
+        <input class="field-input" value="{{form.title}}" data-field="title" bindinput="onInput" placeholder="例如：周末轻社交沙龙" />
+      </view>
+      <view class="field">
+        <text class="field-label">活动介绍</text>
+        <textarea class="field-input" value="{{form.description}}" data-field="description" bindinput="onInput" placeholder="说明活动氛围、对象和流程" />
+      </view>
+    </view>
+
+    <view class="divider"></view>
+
+    <view class="form-section">
+      <text class="section-title">时间与地点</text>
+      <text class="section-note">用于会员报名决策和后续提醒。</text>
+      <view class="field">
+        <text class="field-label">地点</text>
+        <input class="field-input" value="{{form.location}}" data-field="location" bindinput="onInput" placeholder="例如：杭州 城西会客厅" />
+      </view>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">日期</text>
+          <picker mode="date" value="{{dateValue}}" bindchange="onDateChange">
+            <view class="field-input picker-value">{{dateValue}}</view>
+          </picker>
+        </view>
+        <view class="field half">
+          <text class="field-label">时间</text>
+          <picker mode="time" value="{{timeValue}}" bindchange="onTimeChange">
+            <view class="field-input picker-value">{{timeValue}}</view>
+          </picker>
+        </view>
+      </view>
+    </view>
+
+    <view class="divider"></view>
+
+    <view class="form-section">
+      <text class="section-title">席位与费用</text>
+      <text class="section-note">席位为 0 表示不限；价格为 0 表示免费。</text>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">席位上限</text>
+          <input class="field-input" type="number" value="{{form.maxParticipants}}" data-field="maxParticipants" bindinput="onInput" />
+        </view>
+        <view class="field half">
+          <text class="field-label">价格</text>
+          <input class="field-input" type="number" value="{{form.price}}" data-field="price" bindinput="onInput" />
+        </view>
+      </view>
+    </view>
+
+    <button class="btn gold save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="save">提交活动审核</button>
+  </view>
+</view>

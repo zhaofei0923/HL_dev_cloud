@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "会员经营",
+  "usingComponents": {
+    "bottom-nav": "/components/bottom-nav/bottom-nav"
+  }
+}
