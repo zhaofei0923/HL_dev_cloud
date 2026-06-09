@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.currentUser = exports.setSession = exports.request = void 0;
+exports.currentUser = exports.setSession = exports.request = exports.isSessionRecoverableError = exports.apiErrorMessage = void 0;
 const cloud_1 = require("../config/cloud");
 function isUnauthorized(code) {
     return code === 401 || code === 40100 || code === 40102;
@@ -10,6 +10,16 @@ function errorText(err) {
         return '';
     return String(err.errMsg || err.message || err);
 }
+function apiErrorMessage(err) {
+    return errorText(err);
+}
+exports.apiErrorMessage = apiErrorMessage;
+function isSessionRecoverableError(err) {
+    const code = Number(err && err.code);
+    const raw = errorText(err);
+    return isUnauthorized(code) || /invalid token|unauthorized|user not found/i.test(raw);
+}
+exports.isSessionRecoverableError = isSessionRecoverableError;
 function cloudFailMessage(err) {
     const raw = errorText(err);
     if (/timeout/i.test(raw)) {
@@ -55,13 +65,20 @@ function request(path, options = {}) {
                 const message = body && body.message ? body.message : '请求失败';
                 if (options.showError !== false)
                     wx.showToast({ title: message, icon: 'none' });
-                reject(new Error(message));
+                const apiError = new Error(message);
+                apiError.code = code;
+                apiError.response = body;
+                apiError.path = path;
+                reject(apiError);
             },
             fail(err) {
                 const message = cloudFailMessage(err);
                 if (options.showError !== false)
                     wx.showToast({ title: message, icon: 'none', duration: 3000 });
-                reject(new Error(message));
+                const apiError = new Error(message);
+                apiError.raw = err;
+                apiError.path = path;
+                reject(apiError);
             }
         });
     });

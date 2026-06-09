@@ -1,0 +1,15 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "envId": "cloud1-d2gza7q9c8d69c721",
+  "region": "ap-shanghai",
+  "functionRoot": "cloudfunctions",
+  "functions": [
+    {
+      "name": "hlApi",
+      "runtime": "Nodejs16.13",
+      "handler": "index.main",
+      "timeout": 20,
+      "memorySize": 256
+    }
+  ]
+}

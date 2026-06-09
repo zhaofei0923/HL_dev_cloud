@@ -1,4 +1,5 @@
-import { currentUser } from '../../services/api'
+import { apiErrorMessage, currentUser, isSessionRecoverableError } from '../../services/api'
+import { loginByWechat } from '../../services/auth'
 import { matchmakerApi } from '../../services/matchmaker'
 
 function defaultDashboard() {
@@ -75,15 +76,25 @@ Page({
     await this.loadDashboard()
   },
 
+  async loadOrCreateDashboard() {
+    try {
+      return await matchmakerApi.dashboard(false)
+    } catch (err) {
+      await matchmakerApi.apply()
+      return matchmakerApi.dashboard()
+    }
+  },
+
   async loadDashboard() {
     this.setData({ loading: true })
     try {
       let dashboard: any
       try {
-        dashboard = await matchmakerApi.dashboard(false)
+        dashboard = await this.loadOrCreateDashboard()
       } catch (err) {
-        await matchmakerApi.apply()
-        dashboard = await matchmakerApi.dashboard()
+        if (!isSessionRecoverableError(err)) throw err
+        await loginByWechat('matchmaker')
+        dashboard = await this.loadOrCreateDashboard()
       }
       const view = certificationView(dashboard.matchmaker)
       this.setData({
@@ -96,13 +107,14 @@ Page({
       })
     } catch (err) {
       console.warn('load matchmaker dashboard failed', err)
+      const message = apiErrorMessage(err)
       this.setData({
         user: currentUser() || {},
         dashboard: defaultDashboard(),
         canOperate: false,
-        statusText: '云服务未连接',
+        statusText: isSessionRecoverableError(err) ? '登录状态需刷新' : '服务暂不可用',
         statusTagClass: 'rose',
-        statusNote: '请确认 hlApi 云函数已部署后重试。'
+        statusNote: message || '请在云开发控制台查看 hlApi 运行日志后重试。'
       })
     } finally {
       this.setData({ loading: false })

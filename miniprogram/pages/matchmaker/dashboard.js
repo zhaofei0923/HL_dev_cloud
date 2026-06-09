@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const api_1 = require("../../services/api");
+const auth_1 = require("../../services/auth");
 const matchmaker_1 = require("../../services/matchmaker");
 function defaultDashboard() {
     return {
@@ -72,16 +73,27 @@ Page({
     async onShow() {
         await this.loadDashboard();
     },
+    async loadOrCreateDashboard() {
+        try {
+            return await matchmaker_1.matchmakerApi.dashboard(false);
+        }
+        catch (err) {
+            await matchmaker_1.matchmakerApi.apply();
+            return matchmaker_1.matchmakerApi.dashboard();
+        }
+    },
     async loadDashboard() {
         this.setData({ loading: true });
         try {
             let dashboard;
             try {
-                dashboard = await matchmaker_1.matchmakerApi.dashboard(false);
+                dashboard = await this.loadOrCreateDashboard();
             }
             catch (err) {
-                await matchmaker_1.matchmakerApi.apply();
-                dashboard = await matchmaker_1.matchmakerApi.dashboard();
+                if (!(0, api_1.isSessionRecoverableError)(err))
+                    throw err;
+                await (0, auth_1.loginByWechat)('matchmaker');
+                dashboard = await this.loadOrCreateDashboard();
             }
             const view = certificationView(dashboard.matchmaker);
             this.setData({
@@ -95,13 +107,14 @@ Page({
         }
         catch (err) {
             console.warn('load matchmaker dashboard failed', err);
+            const message = (0, api_1.apiErrorMessage)(err);
             this.setData({
                 user: (0, api_1.currentUser)() || {},
                 dashboard: defaultDashboard(),
                 canOperate: false,
-                statusText: '云服务未连接',
+                statusText: (0, api_1.isSessionRecoverableError)(err) ? '登录状态需刷新' : '服务暂不可用',
                 statusTagClass: 'rose',
-                statusNote: '请确认 hlApi 云函数已部署后重试。'
+                statusNote: message || '请在云开发控制台查看 hlApi 运行日志后重试。'
             });
         }
         finally {

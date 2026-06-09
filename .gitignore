@@ -15,6 +15,7 @@ build/
 coverage/
 
 miniprogram_npm/
+.cloudbase/
 
 *.local
 *.log

@@ -24,6 +24,16 @@ function errorText(err: any) {
   return String(err.errMsg || err.message || err)
 }
 
+export function apiErrorMessage(err: any) {
+  return errorText(err)
+}
+
+export function isSessionRecoverableError(err: any) {
+  const code = Number(err && err.code)
+  const raw = errorText(err)
+  return isUnauthorized(code) || /invalid token|unauthorized|user not found/i.test(raw)
+}
+
 function cloudFailMessage(err: any) {
   const raw = errorText(err)
   if (/timeout/i.test(raw)) {
@@ -72,12 +82,19 @@ export function request<T = any>(path: string, options: ApiOptions = {}): Promis
 
         const message = body && body.message ? body.message : '请求失败'
         if (options.showError !== false) wx.showToast({ title: message, icon: 'none' })
-        reject(new Error(message))
+        const apiError = new Error(message) as any
+        apiError.code = code
+        apiError.response = body
+        apiError.path = path
+        reject(apiError)
       },
       fail(err) {
         const message = cloudFailMessage(err)
         if (options.showError !== false) wx.showToast({ title: message, icon: 'none', duration: 3000 })
-        reject(new Error(message))
+        const apiError = new Error(message) as any
+        apiError.raw = err
+        apiError.path = path
+        reject(apiError)
       }
     })
   })
