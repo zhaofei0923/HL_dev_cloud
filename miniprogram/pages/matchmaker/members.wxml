@@ -6,7 +6,7 @@
       <text class="subtitle">录入、筛选和维护名下会员，沉淀可展示、可互推的服务资源。</text>
       <view class="summary-strip">
         <view class="summary-item">
-          <text class="summary-value">{{list.length}}</text>
+          <text class="summary-value">{{total}}</text>
           <text class="summary-label">名下会员</text>
         </view>
         <view class="summary-item">
@@ -88,7 +88,7 @@
       <view class="row list-header">
         <view>
           <text class="section-title">会员列表</text>
-          <text class="section-note">{{list.length}} 位会员</text>
+          <text class="section-note">{{total}} 位会员</text>
         </view>
       </view>
 

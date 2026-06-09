@@ -48,6 +48,7 @@ function certificationView(matchmaker) {
 Page({
     data: {
         list: [],
+        total: 0,
         keyword: '',
         city: '',
         gender: '',
@@ -93,13 +94,15 @@ Page({
                 await this.load();
             }
             else {
-                this.setData({ list: [] });
+                this.setData({ list: [], total: 0, pendingRequests: [] });
             }
         }
         catch (err) {
             console.warn('refresh matchmaker member gate failed', err);
             this.setData({
                 list: [],
+                total: 0,
+                pendingRequests: [],
                 canOperate: false,
                 statusText: '云服务未连接',
                 statusTagClass: 'rose',
@@ -125,12 +128,12 @@ Page({
                 serviceLevel: this.data.serviceLevel
             });
             const list = (result.list || []).map((row) => normalizeMember(row));
-            this.setData({ list });
+            this.setData({ list, total: Number(result.total || list.length || 0) });
             await this.loadRequests();
         }
         catch (err) {
             console.warn('load matchmaker members failed', err);
-            this.setData({ list: [] });
+            this.setData({ list: [], total: 0 });
         }
         finally {
             this.setData({ loading: false });
@@ -140,7 +143,7 @@ Page({
         if (!this.data.canOperate)
             return;
         try {
-            const result = await matchmaker_1.matchmakerApi.memberRequests({ status: 'pending', page: 1, pageSize: 20 });
+            const result = await matchmaker_1.matchmakerApi.memberRequests({ status: 'pending', page: 1, pageSize: 20 }, false);
             this.setData({ pendingRequests: (result.list || []).map((row) => normalizeRequest(row)) });
         }
         catch (err) {

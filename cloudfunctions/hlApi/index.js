@@ -810,6 +810,11 @@ const matchmaker = {
     const allMembers = await getAll(C.members, { status: 1 });
     const matchRecords = await getAll(C.matchRecords, { matchmakerId: row.id });
     const memberViews = await Promise.all(members.map(memberRow => memberView(memberRow, { matchRecords })));
+    const resourceViews = await Promise.all(
+      allMembers
+        .filter(item => item.matchmakerId !== row.id)
+        .map(memberRow => memberView(memberRow, { matchRecords }))
+    );
     const eventIds = salons.map(item => Number(item.id));
     const registrations = eventIds.length
       ? (await getAll(C.registrations)).filter(item => eventIds.includes(Number(item.eventId)) && item.status === 'registered')
@@ -825,7 +830,7 @@ const matchmaker = {
       upcomingSalons: salons.filter(item => item.status === 'upcoming').length,
       salonRegistrations: registrations.length
     };
-    const resourceCount = allMembers.filter(item => item.matchmakerId !== row.id).length;
+    const resourceCount = resourceViews.filter(item => item.displayEnabled).length;
     const pendingMemberRequests = (await getAll(C.memberRequests, { matchmakerId: row.id, status: 'pending' })).length;
     return {
       matchmaker: { ...stripInternal(row), memberCount: members.length },

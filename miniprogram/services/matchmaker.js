@@ -9,8 +9,8 @@ exports.matchmakerApi = {
     dashboard(showError = true) {
         return (0, api_1.request)('/matchmaker/dashboard', { showError });
     },
-    memberRequests(data) {
-        return (0, api_1.request)('/matchmaker/member-requests', { data });
+    memberRequests(data, showError = true) {
+        return (0, api_1.request)('/matchmaker/member-requests', { data, showError });
     },
     approveMemberRequest(id) {
         return (0, api_1.request)(`/matchmaker/member-requests/${id}/approve`, { method: 'POST' });

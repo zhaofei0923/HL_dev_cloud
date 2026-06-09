@@ -50,6 +50,7 @@ function certificationView(matchmaker: any) {
 Page({
   data: {
     list: [] as any[],
+    total: 0,
     keyword: '',
     city: '',
     gender: '',
@@ -95,12 +96,14 @@ Page({
       if (view.canOperate) {
         await this.load()
       } else {
-        this.setData({ list: [] })
+        this.setData({ list: [], total: 0, pendingRequests: [] })
       }
     } catch (err) {
       console.warn('refresh matchmaker member gate failed', err)
       this.setData({
         list: [],
+        total: 0,
+        pendingRequests: [],
         canOperate: false,
         statusText: '云服务未连接',
         statusTagClass: 'rose',
@@ -125,11 +128,11 @@ Page({
         serviceLevel: this.data.serviceLevel
       })
       const list = (result.list || []).map((row: any) => normalizeMember(row))
-      this.setData({ list })
+      this.setData({ list, total: Number(result.total || list.length || 0) })
       await this.loadRequests()
     } catch (err) {
       console.warn('load matchmaker members failed', err)
-      this.setData({ list: [] })
+      this.setData({ list: [], total: 0 })
     } finally {
       this.setData({ loading: false })
     }
@@ -138,7 +141,7 @@ Page({
   async loadRequests() {
     if (!this.data.canOperate) return
     try {
-      const result: any = await matchmakerApi.memberRequests({ status: 'pending', page: 1, pageSize: 20 })
+      const result: any = await matchmakerApi.memberRequests({ status: 'pending', page: 1, pageSize: 20 }, false)
       this.setData({ pendingRequests: (result.list || []).map((row: any) => normalizeRequest(row)) })
     } catch (err) {
       console.warn('load member requests failed', err)

@@ -7,8 +7,8 @@ export const matchmakerApi = {
   dashboard(showError = true) {
     return request('/matchmaker/dashboard', { showError })
   },
-  memberRequests(data?: Record<string, any>) {
-    return request('/matchmaker/member-requests', { data })
+  memberRequests(data?: Record<string, any>, showError = true) {
+    return request('/matchmaker/member-requests', { data, showError })
   },
   approveMemberRequest(id: number | string) {
     return request(`/matchmaker/member-requests/${id}/approve`, { method: 'POST' })

@@ -11,6 +11,7 @@ function normalizeResource(row) {
 Page({
     data: {
         list: [],
+        total: 0,
         myMembers: [],
         memberOptions: [],
         selectedMemberIndex: 0,
@@ -34,6 +35,7 @@ Page({
             const memberOptions = myMembers.map((item) => item.realName || item.nickname || '我的会员');
             this.setData({
                 list,
+                total: Number(resources.total || list.length || 0),
                 myMembers,
                 memberOptions,
                 selectedMemberIndex: 0,
@@ -46,6 +48,7 @@ Page({
             console.warn('load matchmaker resources failed', err);
             this.setData({
                 list: [],
+                total: 0,
                 myMembers: [],
                 memberOptions: [],
                 selectedMemberIndex: 0,

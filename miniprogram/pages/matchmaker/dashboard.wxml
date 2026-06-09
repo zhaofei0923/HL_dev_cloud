@@ -57,7 +57,7 @@
     <view class="task-list">
       <button class="task-btn" bindtap="goMembers">
         <text class="task-title">会员经营</text>
-        <text class="task-badge">{{dashboard.todoCounts.incompleteMembers || dashboard.operations.todoCounts.incompleteMembers || 0}}</text>
+        <text class="task-badge">{{dashboard.matchmaker.memberCount || 0}}</text>
         <text class="task-note">录入、搜索和维护名下会员资料</text>
       </button>
       <button class="task-btn" bindtap="goResources">

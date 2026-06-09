@@ -5,7 +5,7 @@
     <text class="subtitle">认证红娘可查看其他红娘的会员资源，并基于自己的会员发起互推协作。</text>
     <view class="summary-strip">
       <view class="summary-item">
-        <text class="summary-value">{{list.length}}</text>
+        <text class="summary-value">{{total}}</text>
         <text class="summary-label">可协作</text>
       </view>
       <view class="summary-item">
@@ -41,7 +41,7 @@
     <view class="row list-header">
       <view>
         <text class="section-title">可展示会员</text>
-        <text class="section-note">{{list.length}} 位可协作资源</text>
+        <text class="section-note">{{total}} 位可协作资源</text>
       </view>
     </view>
 
