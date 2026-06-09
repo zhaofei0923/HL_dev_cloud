@@ -244,8 +244,10 @@ Page({
             return;
         this.updateForm(field, e.detail.value);
     },
-    onDisplayEnabledChange(e) {
-        this.setForm({ ...this.data.form, displayEnabled: !!e.detail.value });
+    async onDisplayEnabledChange(e) {
+        const next = { ...this.data.form, displayEnabled: !!e.detail.value };
+        this.setForm(next);
+        await this.saveProfile(next, next.displayEnabled ? '已开启展示' : '已关闭展示');
     },
     onMatchmakerCodeInput(e) {
         this.setData({ matchmakerCode: e.detail.value });
@@ -342,6 +344,41 @@ Page({
     },
     onCarChange(e) {
         this.updateForm('carStatus', this.data.carOptions[Number(e.detail.value)]);
+    },
+    async saveProfile(form, toastTitle = '已保存') {
+        if (this.data.saving)
+            return;
+        this.setData({ saving: true });
+        try {
+            const payload = payloadFromForm(form);
+            const result = await (0, api_1.request)('/user/profile', { method: 'PUT', data: payload });
+            const user = {
+                ...((0, api_1.currentUser)() || {}),
+                ...(result.user || {}),
+                nickname: payload.realName || (result.user && result.user.nickname) || (((0, api_1.currentUser)() || {}).nickname) || '',
+                avatarUrl: payload.avatarUrl,
+                gender: Number(payload.gender || 0)
+            };
+            wx.setStorageSync('user', user);
+            getApp().globalData.user = user;
+            const nextForm = hydrateImageDisplay(normalizeForm(result.profile || payload, user));
+            const completion = completionFor(nextForm);
+            this.setData({
+                user,
+                form: nextForm,
+                preview: previewFor(nextForm),
+                ...selectorTextFor(nextForm),
+                completionText: completion.text,
+                completionNote: completion.note
+            });
+            wx.showToast({ title: toastTitle });
+        }
+        catch (err) {
+            console.warn('save user profile failed', err);
+        }
+        finally {
+            this.setData({ saving: false });
+        }
     },
     async save() {
         if (this.data.saving)

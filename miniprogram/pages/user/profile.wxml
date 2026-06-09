@@ -6,7 +6,7 @@
       <image class="profile-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
       <text class="eyebrow">个人档案</text>
       <text class="title">{{preview.displayName || '我的资料'}}</text>
-      <text class="subtitle">资料仅用于红娘服务跟进，不会自动进入会员展示列表。</text>
+      <text class="subtitle">{{form.displayEnabled ? '资料已进入会员浏览和红娘资源池，联系方式不会公开。' : '资料仅用于红娘服务跟进，开启展示后进入会员区。'}}</text>
       <view class="summary-strip">
         <view class="summary-item">
           <text class="summary-value">{{completionText}}</text>
@@ -17,8 +17,8 @@
           <text class="summary-label">照片墙</text>
         </view>
         <view class="summary-item">
-          <text class="summary-value">私密</text>
-          <text class="summary-label">服务资料</text>
+          <text class="summary-value">{{form.displayEnabled ? '展示' : '私密'}}</text>
+          <text class="summary-label">展示状态</text>
         </view>
       </view>
     </view>

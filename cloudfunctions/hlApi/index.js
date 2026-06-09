@@ -444,6 +444,10 @@ function lastRecommendationStatusForUser(userId, records = []) {
   return status;
 }
 
+function sortMemberRowsDesc(a, b) {
+  return Number(b.sortId || b.id || 0) - Number(a.sortId || a.id || 0);
+}
+
 async function memberView(member, context = {}) {
   const user = await getById(C.users, member.userId) || {};
   const profile = await getOne(C.profiles, { userId: Number(member.userId) }) || {};
@@ -481,18 +485,69 @@ async function memberView(member, context = {}) {
   };
 }
 
+async function profileMemberView(profile, context = {}) {
+  const user = await getById(C.users, profile.userId) || {};
+  const profileId = Number(profile.id || profile.userId || 0);
+  const row = {
+    id: `profile_${profileId || Number(profile.userId)}`,
+    sortId: profileId || Number(profile.userId) || 0,
+    source: 'profile',
+    matchmakerId: null,
+    userId: Number(profile.userId),
+    memberType: 'self_profile',
+    serviceLevel: '',
+    expireAt: null,
+    remark: '',
+    status: user.status === undefined ? 1 : Number(user.status),
+    nickname: user.nickname || profile.realName || '',
+    phone: user.phone || '',
+    avatarUrl: user.avatarUrl || profile.avatarUrl || '',
+    gender: user.gender || profile.gender || 0,
+    isVerified: user.isVerified || 0,
+    realName: profile.realName || user.nickname || '',
+    age: profile.age || null,
+    height: profile.height || null,
+    education: profile.education || '',
+    occupation: profile.occupation || '',
+    incomeRange: profile.incomeRange || '',
+    city: profile.city || '',
+    province: profile.province || '',
+    nativePlace: profile.nativePlace || '',
+    maritalStatus: profile.maritalStatus || '',
+    houseStatus: profile.houseStatus || '',
+    carStatus: profile.carStatus || '',
+    selfIntro: profile.selfIntro || '',
+    partnerRequirement: profile.partnerRequirement || '',
+    photos: Array.isArray(profile.photos) ? clone(profile.photos) : [],
+    displayEnabled: isTrue(profile.displayEnabled),
+    displayUpdatedAt: profile.displayUpdatedAt || ''
+  };
+  const completion = profileCompletionFor(row);
+  return {
+    ...row,
+    profileCompletion: completion,
+    displayStatus: displayStatusForMember(row, completion),
+    lastRecommendStatus: lastRecommendationStatusForUser(row.userId, context.matchRecords || [])
+  };
+}
+
+function sanitizePublicMemberRow(row, options = {}) {
+  const safe = { ...row };
+  delete safe.phone;
+  delete safe.matchmakerId;
+  if (!options.keepUserId) delete safe.userId;
+  delete safe.displayEnabled;
+  delete safe.displayUpdatedAt;
+  delete safe.serviceLevel;
+  delete safe.expireAt;
+  delete safe.remark;
+  return safe;
+}
+
 async function publicMemberView(member, context = {}) {
   const row = await memberView(member, context);
   if (!row.displayEnabled) return null;
-  delete row.phone;
-  delete row.matchmakerId;
-  delete row.userId;
-  delete row.displayEnabled;
-  delete row.displayUpdatedAt;
-  delete row.serviceLevel;
-  delete row.expireAt;
-  delete row.remark;
-  return row;
+  return sanitizePublicMemberRow(row);
 }
 
 async function eventView(event, currentUserId = null) {
@@ -835,12 +890,18 @@ const matchmaker = {
     const salons = await getAll(C.salonEvents, { organizerId: Number(userId) });
     const allMembers = await getAll(C.members, { status: 1 });
     const matchRecords = await getAll(C.matchRecords, { matchmakerId: row.id });
+    const memberUserIds = new Set(allMembers.map(item => Number(item.userId)));
+    const profileResources = (await getAll(C.profiles))
+      .filter(item => isTrue(item.displayEnabled))
+      .filter(item => !memberUserIds.has(Number(item.userId)))
+      .filter(item => Number(item.userId) !== Number(userId));
     const memberViews = await Promise.all(members.map(memberRow => memberView(memberRow, { matchRecords })));
     const resourceViews = await Promise.all(
       allMembers
         .filter(item => item.matchmakerId !== row.id)
         .map(memberRow => memberView(memberRow, { matchRecords }))
     );
+    const profileResourceViews = await Promise.all(profileResources.map(profileRow => profileMemberView(profileRow, { matchRecords })));
     const eventIds = salons.map(item => Number(item.id));
     const registrations = eventIds.length
       ? (await getAll(C.registrations)).filter(item => eventIds.includes(Number(item.eventId)) && item.status === 'registered')
@@ -856,7 +917,7 @@ const matchmaker = {
       upcomingSalons: salons.filter(item => item.status === 'upcoming').length,
       salonRegistrations: registrations.length
     };
-    const resourceCount = resourceViews.filter(item => item.displayEnabled).length;
+    const resourceCount = [...resourceViews, ...profileResourceViews].filter(item => Number(item.status) === 1 && item.displayEnabled).length;
     const pendingMemberRequests = (await getAll(C.memberRequests, { matchmakerId: row.id, status: 'pending' })).length;
     return {
       matchmaker: { ...stripInternal(row), memberCount: members.length },
@@ -995,15 +1056,43 @@ const member = {
     const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
     const rows = await getAll(C.members, { status: 1 });
     const matchRecords = await getAll(C.matchRecords, { matchmakerId: mm.id });
-    const views = await Promise.all(rows.filter(row => row.matchmakerId !== mm.id).map(row => memberView(row, { matchRecords })));
-    return paginate(views.filter(row => row.displayEnabled && matchesMemberFilters(row, filters)).sort((a, b) => b.id - a.id), filters.page, filters.pageSize);
+    const memberUserIds = new Set(rows.map(row => Number(row.userId)));
+    const profileRows = (await getAll(C.profiles))
+      .filter(row => isTrue(row.displayEnabled))
+      .filter(row => !memberUserIds.has(Number(row.userId)))
+      .filter(row => Number(row.userId) !== Number(matchmakerUserId));
+    const memberViews = await Promise.all(rows.filter(row => row.matchmakerId !== mm.id).map(row => memberView(row, { matchRecords })));
+    const profileViews = await Promise.all(profileRows.map(row => profileMemberView(row, { matchRecords })));
+    const views = [...memberViews, ...profileViews];
+    return paginate(
+      views
+        .filter(row => Number(row.status) === 1 && row.displayEnabled && matchesMemberFilters(row, filters))
+        .sort(sortMemberRowsDesc),
+      filters.page,
+      filters.pageSize
+    );
   },
 
   async showcase(filters = {}) {
     const rows = await getAll(C.members, { status: 1 });
     const matchRecords = await getAll(C.matchRecords);
-    const views = await Promise.all(rows.map(row => publicMemberView(row, { matchRecords })));
-    return paginate(views.filter(row => row && matchesMemberFilters(row, filters)).sort((a, b) => b.id - a.id), filters.page, filters.pageSize);
+    const memberUserIds = new Set(rows.map(row => Number(row.userId)));
+    const profileRows = (await getAll(C.profiles))
+      .filter(row => isTrue(row.displayEnabled))
+      .filter(row => !memberUserIds.has(Number(row.userId)));
+    const memberViews = await Promise.all(rows.map(row => publicMemberView(row, { matchRecords })));
+    const profileViews = await Promise.all(profileRows.map(async row => {
+      const view = await profileMemberView(row, { matchRecords });
+      if (!view.displayEnabled) return null;
+      return sanitizePublicMemberRow(view);
+    }));
+    return paginate(
+      [...memberViews, ...profileViews]
+        .filter(row => row && Number(row.status) === 1 && matchesMemberFilters(row, filters))
+        .sort(sortMemberRowsDesc),
+      filters.page,
+      filters.pageSize
+    );
   },
 
   async update(matchmakerUserId, memberId, data = {}) {
