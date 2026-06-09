@@ -956,7 +956,10 @@ const member = {
 
   async listOwn(matchmakerUserId, filters = {}) {
     const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
-    const rows = await getAll(C.members, { matchmakerId: mm.id });
+    let rows = await getAll(C.members, { matchmakerId: mm.id });
+    if (filters.status === undefined || filters.status === '') {
+      rows = rows.filter(row => Number(row.status) === 1);
+    }
     const matchRecords = await getAll(C.matchRecords, { matchmakerId: mm.id });
     const views = await Promise.all(rows.map(row => memberView(row, { matchRecords })));
     return paginate(views.filter(row => matchesMemberFilters(row, filters)).sort((a, b) => b.id - a.id), filters.page, filters.pageSize);
