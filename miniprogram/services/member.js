@@ -12,6 +12,9 @@ exports.memberApi = {
     showcase(data) {
         return (0, api_1.request)('/member/showcase', { data });
     },
+    resolveMatchmakerInvite(data) {
+        return (0, api_1.request)('/member/matchmaker-invite/resolve', { data });
+    },
     requestMatchmaker(data) {
         return (0, api_1.request)('/member/matchmaker-requests', { method: 'POST', data });
     },

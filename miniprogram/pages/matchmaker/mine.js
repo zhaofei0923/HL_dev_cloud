@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const api_1 = require("../../services/api");
 const matchmaker_1 = require("../../services/matchmaker");
+const invite_1 = require("../../utils/invite");
 function defaultDashboard() {
     return {
         matchmaker: {
@@ -13,6 +14,19 @@ function defaultDashboard() {
         },
         operations: {
             salonCount: 0
+        }
+    };
+}
+function defaultInviteCard() {
+    return {
+        matchmakerNo: '',
+        inviteCode: '',
+        sharePath: '',
+        qrCodeFileID: '',
+        matchmaker: {
+            nickname: '',
+            avatarUrl: '',
+            level: 1
         }
     };
 }
@@ -47,6 +61,9 @@ Page({
         user: null,
         dashboard: defaultDashboard(),
         loading: false,
+        inviteCard: defaultInviteCard(),
+        inviteLoading: false,
+        inviteResetting: false,
         canOperate: false,
         statusText: '待审批',
         statusTagClass: '',
@@ -75,6 +92,8 @@ Page({
                 statusTagClass: view.statusTagClass,
                 statusNote: view.statusNote
             });
+            if (view.canOperate)
+                await this.loadInviteCard(false);
         }
         catch (err) {
             console.warn('load matchmaker mine failed', err);
@@ -107,6 +126,56 @@ Page({
             this.setData({ loading: false });
         }
     },
+    async loadInviteCard(showError = true) {
+        this.setData({ inviteLoading: true });
+        try {
+            const inviteCard = await matchmaker_1.matchmakerApi.inviteCard(showError);
+            this.setData({ inviteCard });
+        }
+        catch (err) {
+            console.warn('load invite card failed', err);
+            this.setData({ inviteCard: defaultInviteCard() });
+        }
+        finally {
+            this.setData({ inviteLoading: false });
+        }
+    },
+    copyInviteCode() {
+        const code = this.data.inviteCard && this.data.inviteCard.inviteCode;
+        if (!code)
+            return;
+        wx.setClipboardData({ data: code });
+    },
+    previewInviteQr() {
+        const fileID = this.data.inviteCard && this.data.inviteCard.qrCodeFileID;
+        if (!fileID)
+            return;
+        wx.previewImage({ urls: [fileID] });
+    },
+    async resetInviteCode() {
+        if (this.data.inviteResetting)
+            return;
+        wx.showModal({
+            title: '重置邀请码',
+            content: '重置后旧邀请码和旧二维码将失效，已有待审批申请不受影响。',
+            success: async (res) => {
+                if (!res.confirm)
+                    return;
+                this.setData({ inviteResetting: true });
+                try {
+                    const inviteCard = await matchmaker_1.matchmakerApi.resetInviteCode();
+                    this.setData({ inviteCard });
+                    wx.showToast({ title: '已重置' });
+                }
+                catch (err) {
+                    console.warn('reset invite code failed', err);
+                }
+                finally {
+                    this.setData({ inviteResetting: false });
+                }
+            }
+        });
+    },
     goResources() {
         if (!this.data.canOperate) {
             wx.showToast({ title: '红娘认证通过后可使用', icon: 'none' });
@@ -118,5 +187,13 @@ Page({
         wx.removeStorageSync('token');
         wx.removeStorageSync('user');
         wx.redirectTo({ url: '/pages/index/index' });
+    },
+    onShareAppMessage() {
+        const card = this.data.inviteCard || {};
+        const code = card.inviteCode || '';
+        return {
+            title: `${(this.data.user && this.data.user.nickname) || '红娘顾问'}邀请你添加红娘`,
+            path: card.sharePath || (0, invite_1.invitePath)(code, 'share')
+        };
     }
 });

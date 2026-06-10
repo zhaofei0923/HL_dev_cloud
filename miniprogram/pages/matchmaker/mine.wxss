@@ -15,6 +15,70 @@
   margin-bottom: 0;
 }
 
+.invite-head {
+  align-items: flex-start;
+}
+
+.invite-panel {
+  display: flex;
+  gap: 18rpx;
+  margin-top: 22rpx;
+}
+
+.invite-code-box,
+.invite-qr-box {
+  box-sizing: border-box;
+  border: 1rpx solid rgba(151, 119, 82, 0.14);
+  border-radius: 14rpx;
+  background: rgba(255, 253, 248, 0.76);
+}
+
+.invite-code-box {
+  flex: 1;
+  min-width: 0;
+  padding: 20rpx;
+}
+
+.invite-label {
+  margin-top: 18rpx;
+}
+
+.invite-code {
+  display: block;
+  margin-top: 8rpx;
+  color: #241f1b;
+  font-size: 30rpx;
+  font-weight: 900;
+  line-height: 1.2;
+  word-break: break-all;
+}
+
+.invite-qr-box {
+  display: flex;
+  flex: 0 0 188rpx;
+  align-items: center;
+  justify-content: center;
+  width: 188rpx;
+  min-height: 188rpx;
+  padding: 14rpx;
+}
+
+.invite-qr {
+  width: 160rpx;
+  height: 160rpx;
+}
+
+.invite-qr-placeholder {
+  color: #7f6650;
+  font-size: 22rpx;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.invite-actions {
+  margin-top: 20rpx;
+}
+
 .action-btn {
   margin-top: 18rpx;
 }

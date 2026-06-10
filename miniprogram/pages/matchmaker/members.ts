@@ -6,6 +6,47 @@ function normalizeMember(row: any) {
   return normalizeMemberProfile(row, true)
 }
 
+function memberName(member: any) {
+  return member ? (member.displayName || member.realName || member.nickname || '会员') : ''
+}
+
+function memberOption(member: any) {
+  const name = memberName(member)
+  const meta = member && member.metaText ? ` · ${member.metaText}` : ''
+  return `${name}${meta}`
+}
+
+function recommendCard(member: any) {
+  if (!member) return {}
+  return {
+    id: member.id,
+    name: memberName(member),
+    metaText: member.metaText || '基础信息待完善',
+    occupationText: member.occupationText || '职业待完善',
+    completionText: member.profileCompletionText || '0%',
+    statusText: member.lastRecommendStatusText || '暂无推荐'
+  }
+}
+
+function recommendState(list: any[], sourceIndex = 0, targetIndex = 0) {
+  const members = Array.isArray(list) ? list : []
+  const safeSourceIndex = members.length ? Math.min(Math.max(sourceIndex, 0), members.length - 1) : 0
+  const source = members[safeSourceIndex] || null
+  const targets = source ? members.filter(item => String(item.id) !== String(source.id)) : []
+  const safeTargetIndex = targets.length ? Math.min(Math.max(targetIndex, 0), targets.length - 1) : 0
+  const target = targets[safeTargetIndex] || null
+  return {
+    recommendAIndex: safeSourceIndex,
+    recommendBIndex: safeTargetIndex,
+    recommendAOptions: members.map(memberOption),
+    recommendBOptions: targets.map(memberOption),
+    recommendA: recommendCard(source),
+    recommendB: recommendCard(target),
+    recommendReady: !!source && !!target,
+    recommendHint: members.length >= 2 ? '选择两名会员后可发起待跟进互推。' : '至少需要两名名下会员。'
+  }
+}
+
 function normalizeRequest(row: any) {
   const user = row.user || {}
   const profile = row.profile || {}
@@ -64,6 +105,15 @@ Page({
     serviceLevelLabel: '全部等级',
     pendingRequests: [] as any[],
     requestProcessingId: '',
+    recommendAIndex: 0,
+    recommendBIndex: 0,
+    recommendAOptions: [] as string[],
+    recommendBOptions: [] as string[],
+    recommendA: {} as any,
+    recommendB: {} as any,
+    recommendReady: false,
+    recommendHint: '至少需要两名名下会员。',
+    recommendLoading: false,
     loading: false,
     removingId: '',
     canOperate: false,
@@ -128,11 +178,15 @@ Page({
         serviceLevel: this.data.serviceLevel
       })
       const list = (result.list || []).map((row: any) => normalizeMember(row))
-      this.setData({ list, total: Number(result.total || list.length || 0) })
+      this.setData({
+        list,
+        total: Number(result.total || list.length || 0),
+        ...recommendState(list, this.data.recommendAIndex, this.data.recommendBIndex)
+      })
       await this.loadRequests()
     } catch (err) {
       console.warn('load matchmaker members failed', err)
-      this.setData({ list: [], total: 0 })
+      this.setData({ list: [], total: 0, ...recommendState([]) })
     } finally {
       this.setData({ loading: false })
     }
@@ -230,6 +284,41 @@ Page({
       serviceLevelLabel: '全部等级'
     })
     this.load()
+  },
+
+  onRecommendAChange(e: any) {
+    const index = Number(e.detail.value || 0)
+    this.setData(recommendState(this.data.list, index, 0))
+  },
+
+  onRecommendBChange(e: any) {
+    const index = Number(e.detail.value || 0)
+    this.setData(recommendState(this.data.list, this.data.recommendAIndex, index))
+  },
+
+  async recommendInternal() {
+    const source = this.data.recommendA
+    const target = this.data.recommendB
+    if (!source.id || !target.id) {
+      wx.showToast({ title: '至少选择两名会员', icon: 'none' })
+      return
+    }
+    if (this.data.recommendLoading) return
+    this.setData({ recommendLoading: true })
+    try {
+      const result: any = await memberApi.recommend({
+        mode: 'internal',
+        myMemberId: source.id,
+        targetMemberId: target.id,
+        note: `${source.name} 与 ${target.name} 条件较匹配，进入互推待跟进。`
+      })
+      wx.showToast({ title: result && result.duplicated ? '已有待跟进互推' : '互推已创建' })
+      await this.load()
+    } catch (err) {
+      console.warn('internal recommend failed', err)
+    } finally {
+      this.setData({ recommendLoading: false })
+    }
   },
 
   goAdd() {

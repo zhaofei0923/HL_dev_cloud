@@ -2,9 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const api_1 = require("../../services/api");
 const matchmaker_1 = require("../../services/matchmaker");
-const member_1 = require("../../services/member");
 const local_image_1 = require("../../utils/local-image");
 const member_format_1 = require("../../utils/member-format");
+const invite_1 = require("../../utils/invite");
 const profile_options_1 = require("../../utils/profile-options");
 const FORM_DEFAULTS = {
     realName: '',
@@ -258,20 +258,33 @@ Page({
             wx.showToast({ title: '请输入红娘编号', icon: 'none' });
             return;
         }
-        if (this.data.matchmakerRequesting)
-            return;
-        this.setData({ matchmakerRequesting: true });
-        try {
-            await member_1.memberApi.requestMatchmaker({ code });
-            wx.showToast({ title: '已提交申请', icon: 'success' });
-            this.setData({ matchmakerCode: '' });
-        }
-        catch (err) {
-            console.warn('request matchmaker failed', err);
-        }
-        finally {
-            this.setData({ matchmakerRequesting: false });
-        }
+        wx.navigateTo({ url: (0, invite_1.invitePath)(code, 'inviteCode') });
+    },
+    scanMatchmakerInvite() {
+        wx.scanCode({
+            scanType: ['qrCode'],
+            success: res => {
+                const code = (0, invite_1.extractInviteCode)(res.result || res.path);
+                if (!code) {
+                    wx.showToast({ title: '未识别到红娘邀请码', icon: 'none' });
+                    return;
+                }
+                wx.navigateTo({ url: (0, invite_1.invitePath)(code, 'scan') });
+            },
+            fail: err => {
+                if (!/cancel/i.test(String(err && err.errMsg))) {
+                    wx.showToast({ title: '扫码失败，请重试', icon: 'none' });
+                }
+            }
+        });
+    },
+    showInviteLinkTip() {
+        wx.showModal({
+            title: '微信链接添加',
+            content: '请打开红娘发来的微信分享卡片，系统会自动识别邀请码，并进入确认申请页面。',
+            showCancel: false,
+            confirmText: '知道了'
+        });
     },
     async chooseAvatar() {
         try {

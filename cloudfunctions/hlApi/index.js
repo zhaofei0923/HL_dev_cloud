@@ -216,6 +216,34 @@ function hashText(value) {
   return String(value || 'hl').split('').reduce((hash, char) => ((hash * 31) + char.charCodeAt(0)) >>> 0, 0);
 }
 
+const INVITE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function normalizeInviteCode(value) {
+  return String(value || '').trim().replace(/\s+/g, '').toUpperCase();
+}
+
+function randomInviteCode() {
+  const bytes = crypto.randomBytes(6);
+  let suffix = '';
+  for (let index = 0; index < 6; index += 1) {
+    suffix += INVITE_CODE_ALPHABET[bytes[index] % INVITE_CODE_ALPHABET.length];
+  }
+  return `HL${suffix}`;
+}
+
+function defaultMatchmakerNo(id) {
+  return `MM${String(Number(id) || Date.now()).padStart(6, '0')}`;
+}
+
+async function uniqueInviteCode(excludeMatchmakerId = null) {
+  for (let tries = 0; tries < 12; tries += 1) {
+    const code = randomInviteCode();
+    const existing = await getOne(C.matchmakers, { inviteCode: code });
+    if (!existing || Number(existing.id) === Number(excludeMatchmakerId)) return code;
+  }
+  return `HL${String(Date.now()).slice(-6).toUpperCase()}`;
+}
+
 function defaultMemberMedia(data = {}) {
   const key = data.realName || data.nickname || data.city || data.gender || 'hl';
   const hash = hashText(key);
@@ -375,6 +403,54 @@ async function nextId(key) {
       const res = await ref.get();
       return Number(res.data.value);
     }
+  }
+}
+
+async function ensureMatchmakerIdentity(row) {
+  if (!row) return row;
+  const patch = {};
+  if (!row.matchmakerNo) patch.matchmakerNo = defaultMatchmakerNo(row.id);
+  if (!row.inviteCode) patch.inviteCode = await uniqueInviteCode(row.id);
+  if (!row.inviteCodeStatus) patch.inviteCodeStatus = 'active';
+  if (!row.inviteCodeUpdatedAt) patch.inviteCodeUpdatedAt = nowIso();
+  if (!Object.keys(patch).length) return row;
+  return updateRow(C.matchmakers, row, patch);
+}
+
+async function ensureInviteQrCode(row) {
+  const matchmaker = await ensureMatchmakerIdentity(row);
+  if (matchmaker.inviteQrFileID && matchmaker.inviteQrCodeFor === matchmaker.inviteCode) {
+    return matchmaker.inviteQrFileID;
+  }
+  if (!cloud.openapi || !cloud.openapi.wxacode || !cloud.openapi.wxacode.getUnlimited) {
+    return matchmaker.inviteQrFileID || '';
+  }
+  try {
+    const codeRes = await cloud.openapi.wxacode.getUnlimited({
+      scene: `code=${matchmaker.inviteCode}`,
+      page: 'pages/user/matchmaker-invite',
+      checkPath: false
+    });
+    const rawContent = codeRes && (codeRes.buffer || codeRes.fileContent);
+    const fileContent = Buffer.isBuffer(rawContent)
+      ? rawContent
+      : (rawContent instanceof ArrayBuffer || ArrayBuffer.isView(rawContent) ? Buffer.from(rawContent) : null);
+    if (!fileContent) return matchmaker.inviteQrFileID || '';
+    const uploadRes = await cloud.uploadFile({
+      cloudPath: `matchmaker-invites/${matchmaker.id}-${matchmaker.inviteCode}.png`,
+      fileContent
+    });
+    const fileID = uploadRes && uploadRes.fileID ? uploadRes.fileID : '';
+    if (fileID) {
+      await updateRow(C.matchmakers, matchmaker, {
+        inviteQrFileID: fileID,
+        inviteQrCodeFor: matchmaker.inviteCode
+      });
+    }
+    return fileID;
+  } catch (err) {
+    console.warn('generate invite qr code failed', err);
+    return matchmaker.inviteQrFileID || '';
   }
 }
 
@@ -592,7 +668,7 @@ async function getMatchmakerByUserIdOrThrow(userId) {
   if (!matchmaker) {
     throw createHttpError('matchmaker not found', 404, 40400);
   }
-  return matchmaker;
+  return ensureMatchmakerIdentity(matchmaker);
 }
 
 async function getCertifiedMatchmakerByUserIdOrThrow(userId) {
@@ -604,16 +680,54 @@ async function getCertifiedMatchmakerByUserIdOrThrow(userId) {
 }
 
 async function resolveMatchmakerForRequest(data = {}) {
-  const rawCode = String(data.matchmakerNo || data.inviteCode || data.code || '').trim();
-  if (data.matchmakerId) return getById(C.matchmakers, data.matchmakerId);
+  const rawCode = normalizeInviteCode(data.matchmakerNo || data.inviteCode || data.code || '');
+  if (data.matchmakerId) {
+    const byId = await getById(C.matchmakers, data.matchmakerId);
+    return byId ? ensureMatchmakerIdentity(byId) : null;
+  }
   if (!rawCode) throw createHttpError('matchmaker code is required');
   if (/^MBR\d+$/i.test(rawCode)) {
-    return getById(C.matchmakers, Number(rawCode.replace(/^MBR0*/i, '')));
+    const byLegacy = await getById(C.matchmakers, Number(rawCode.replace(/^MBR0*/i, '')));
+    return byLegacy ? ensureMatchmakerIdentity(byLegacy) : null;
   }
+  const byInvite = await getOne(C.matchmakers, { inviteCode: rawCode, inviteCodeStatus: 'active' });
+  if (byInvite) return ensureMatchmakerIdentity(byInvite);
   const byNo = await getOne(C.matchmakers, { matchmakerNo: rawCode });
-  if (byNo) return byNo;
-  if (/^\d+$/.test(rawCode)) return getById(C.matchmakers, Number(rawCode));
+  if (byNo) return ensureMatchmakerIdentity(byNo);
+  if (/^\d+$/.test(rawCode)) {
+    const numeric = await getById(C.matchmakers, Number(rawCode));
+    return numeric ? ensureMatchmakerIdentity(numeric) : null;
+  }
   return null;
+}
+
+function requestApplySource(data = {}) {
+  const source = String(data.applySource || data.source || '').trim();
+  if (['scan', 'share', 'inviteCode', 'manual'].includes(source)) return source;
+  if (data.scanResult || data.scene) return 'scan';
+  if (data.inviteCode) return 'inviteCode';
+  return 'manual';
+}
+
+async function matchmakerInvitePreview(data = {}) {
+  const matchmaker = await resolveMatchmakerForRequest(data);
+  if (!matchmaker || Number(matchmaker.status) !== 1) {
+    throw createHttpError('matchmaker not found', 404, 40400);
+  }
+  if (Number(matchmaker.certificationStatus) !== 2) {
+    throw createHttpError('matchmaker is not certified', 403, 40301);
+  }
+  const user = await getById(C.users, matchmaker.userId);
+  const members = await getAll(C.members, { matchmakerId: matchmaker.id, status: 1 });
+  return {
+    matchmakerNo: matchmaker.matchmakerNo,
+    nickname: (user && user.nickname) || '红娘顾问',
+    avatarUrl: (user && user.avatarUrl) || '',
+    level: matchmaker.level || 1,
+    memberCount: members.length,
+    certificationStatus: matchmaker.certificationStatus,
+    applySource: requestApplySource(data)
+  };
 }
 
 async function activeMemberAssignment(userId) {
@@ -670,7 +784,7 @@ async function createMemberMatchmakerRequest(userId, data = {}) {
   const reusable = existingRows.find(row => ['rejected', 'cancelled'].includes(row.status));
   const requestPatch = {
     status: 'pending',
-    applySource: data.inviteCode ? 'inviteCode' : 'manual',
+    applySource: requestApplySource(data),
     applyMessage: data.message || '',
     reviewRemark: '',
     reviewedAt: null,
@@ -822,8 +936,12 @@ const auth = {
       user = await updateRow(C.users, user, patch);
     }
 
-    if (inviteCode && /^MBR\d+$/.test(inviteCode)) {
-      await createMemberMatchmakerRequest(user.id, { inviteCode });
+    if (inviteCode) {
+      try {
+        await createMemberMatchmakerRequest(user.id, { inviteCode, source: 'share' });
+      } catch (err) {
+        console.warn('login invite request failed', err);
+      }
     }
 
     return {
@@ -850,11 +968,15 @@ const matchmaker = {
     const user = await getUserOrThrow(userId);
     let row = await getOne(C.matchmakers, { userId: user.id });
     if (!row) {
+      const id = await nextId('matchmaker');
       const certificationStatus = data.certificationStatus !== undefined ? Number(data.certificationStatus) : 0;
       row = await addRow(C.matchmakers, {
-        id: await nextId('matchmaker'),
+        id,
         userId: user.id,
-        matchmakerNo: `MM${String(Date.now()).slice(-6)}${String(user.id).padStart(4, '0')}`,
+        matchmakerNo: defaultMatchmakerNo(id),
+        inviteCode: await uniqueInviteCode(id),
+        inviteCodeStatus: 'active',
+        inviteCodeUpdatedAt: nowIso(),
         level: data.level || 1,
         parentId: data.parentId || null,
         teamId: null,
@@ -867,6 +989,7 @@ const matchmaker = {
     } else if (Number(row.certificationStatus) === 1) {
       row = await updateRow(C.matchmakers, row, { certificationStatus: 0, certificationRemark: '' });
     }
+    row = await ensureMatchmakerIdentity(row);
     await updateRow(C.users, user, { currentRole: 'matchmaker' });
     return stripInternal(row);
   },
@@ -944,6 +1067,39 @@ const matchmaker = {
     };
   },
 
+  async inviteCard(userId) {
+    const row = await getCertifiedMatchmakerByUserIdOrThrow(userId);
+    const user = await getUserOrThrow(userId);
+    const qrCodeFileID = await ensureInviteQrCode(row);
+    const sharePath = `/pages/user/matchmaker-invite?code=${encodeURIComponent(row.inviteCode)}&source=share`;
+    return {
+      matchmakerNo: row.matchmakerNo,
+      inviteCode: row.inviteCode,
+      inviteCodeStatus: row.inviteCodeStatus || 'active',
+      inviteCodeUpdatedAt: row.inviteCodeUpdatedAt || row.updatedAt || '',
+      sharePath,
+      qrCodeFileID,
+      matchmaker: {
+        nickname: user.nickname || '红娘顾问',
+        avatarUrl: user.avatarUrl || '',
+        level: row.level || 1
+      }
+    };
+  },
+
+  async resetInviteCode(userId) {
+    const row = await getCertifiedMatchmakerByUserIdOrThrow(userId);
+    const inviteCode = await uniqueInviteCode(row.id);
+    await updateRow(C.matchmakers, row, {
+      inviteCode,
+      inviteCodeStatus: 'active',
+      inviteCodeUpdatedAt: nowIso(),
+      inviteQrFileID: '',
+      inviteQrCodeFor: ''
+    });
+    return matchmaker.inviteCard(userId);
+  },
+
   async listMemberRequests(matchmakerUserId, filters = {}) {
     const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
     let rows = await getAll(C.memberRequests, { matchmakerId: mm.id });
@@ -962,6 +1118,24 @@ const matchmaker = {
 };
 
 const member = {
+  async resolveMatchmakerInvite(userId, data = {}) {
+    await getUserOrThrow(userId);
+    const preview = await matchmakerInvitePreview(data);
+    const assignment = await activeMemberAssignment(userId);
+    let existingRequest = null;
+    if (!assignment) {
+      const matchmakerRow = await resolveMatchmakerForRequest(data);
+      const rows = await getAll(C.memberRequests, { userId: Number(userId), matchmakerId: Number(matchmakerRow.id) });
+      existingRequest = rows.sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0] || null;
+    }
+    return {
+      ...preview,
+      alreadyAssigned: !!assignment,
+      assignedMatchmakerId: assignment ? assignment.matchmakerId : null,
+      existingRequest: existingRequest ? stripInternal(existingRequest) : null
+    };
+  },
+
   async requestMatchmaker(userId, data = {}) {
     return createMemberMatchmakerRequest(userId, data);
   },
@@ -1139,9 +1313,66 @@ const member = {
   async recommend(matchmakerUserId, data = {}) {
     const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
     const own = await getById(C.members, data.myMemberId);
-    if (!own || own.matchmakerId !== mm.id || own.status !== 1) {
+    if (!own || Number(own.matchmakerId) !== Number(mm.id) || Number(own.status) !== 1) {
       throw createHttpError('own member not found');
     }
+    if (data.mode === 'internal') {
+      const target = await getById(C.members, data.targetMemberId);
+      if (!target || Number(target.matchmakerId) !== Number(mm.id) || Number(target.status) !== 1) {
+        throw createHttpError('target member not found');
+      }
+      if (Number(own.id) === Number(target.id) || Number(own.userId) === Number(target.userId)) {
+        throw createHttpError('cannot recommend to self');
+      }
+
+      const [userAId, userBId] = Number(own.userId) < Number(target.userId)
+        ? [Number(own.userId), Number(target.userId)]
+        : [Number(target.userId), Number(own.userId)];
+      const pending = (await getAll(C.matchRecords, { matchmakerId: mm.id, status: 'pending' }))
+        .find(record => record.matchType === 'internal_recommend'
+          && Number(record.userAId) === Number(userAId)
+          && Number(record.userBId) === Number(userBId));
+      if (pending) {
+        return { matchRecord: stripInternal(pending), messages: [], duplicated: true };
+      }
+
+      const ownUser = await getById(C.users, own.userId);
+      const targetUser = await getById(C.users, target.userId);
+      const ownName = (ownUser && ownUser.nickname) || `会员${own.userId}`;
+      const targetName = (targetUser && targetUser.nickname) || `会员${target.userId}`;
+      const matchRecord = await addRow(C.matchRecords, {
+        id: await nextId('matchRecord'),
+        userAId,
+        userBId,
+        sourceMemberId: Number(own.id),
+        targetMemberId: Number(target.id),
+        matchmakerId: mm.id,
+        matchType: 'internal_recommend',
+        compatibilityScore: null,
+        note: data.note || '',
+        status: 'pending'
+      });
+      const messages = await Promise.all([
+        addRow(C.messages, {
+          id: await nextId('message'),
+          senderId: Number(matchmakerUserId),
+          receiverId: Number(own.userId),
+          contentType: 'text',
+          content: data.note || `红娘为你推荐了会员 ${targetName}，请等待后续跟进。`,
+          isRead: 0
+        }),
+        addRow(C.messages, {
+          id: await nextId('message'),
+          senderId: Number(matchmakerUserId),
+          receiverId: Number(target.userId),
+          contentType: 'text',
+          content: data.note || `红娘为你推荐了会员 ${ownName}，请等待后续跟进。`,
+          isRead: 0
+        })
+      ]);
+      return { matchRecord: stripInternal(matchRecord), messages: messages.map(message => stripInternal(message)) };
+    }
+
     const resourceUser = await getById(C.users, data.resourceUserId);
     if (!resourceUser) throw createHttpError('resource user not found', 404, 40400);
     if (own.userId === resourceUser.id) throw createHttpError('cannot recommend to self');
@@ -1508,6 +1739,8 @@ exports.main = async (event = {}) => {
 
     if (method === 'POST' && path === '/matchmaker/apply') return ok(await matchmaker.apply(session.userId, data));
     if (method === 'GET' && path === '/matchmaker/dashboard') return ok(await matchmaker.dashboard(session.userId));
+    if (method === 'GET' && path === '/matchmaker/invite-card') return ok(await matchmaker.inviteCard(session.userId));
+    if (method === 'POST' && path === '/matchmaker/invite-code/reset') return ok(await matchmaker.resetInviteCode(session.userId));
     if (method === 'GET' && path === '/matchmaker/member-requests') return ok(await matchmaker.listMemberRequests(session.userId, data));
     const matchmakerRequestApproveMatch = path.match(/^\/matchmaker\/member-requests\/(\d+)\/approve$/);
     if (matchmakerRequestApproveMatch && method === 'POST') return ok(await matchmaker.approveMemberRequest(session.userId, matchmakerRequestApproveMatch[1]));
@@ -1517,6 +1750,7 @@ exports.main = async (event = {}) => {
     if (method === 'GET' && path === '/member/list') return ok(await member.listOwn(session.userId, data));
     if (method === 'GET' && path === '/member/resources') return ok(await member.resources(session.userId, data));
     if (method === 'GET' && path === '/member/showcase') return ok(await member.showcase(data));
+    if (method === 'GET' && path === '/member/matchmaker-invite/resolve') return ok(await member.resolveMatchmakerInvite(session.userId, data));
     if (method === 'POST' && path === '/member/matchmaker-requests') return ok(await member.requestMatchmaker(session.userId, data));
     if (method === 'POST' && path === '/member/manual') return ok(await member.addManual(session.userId, data));
     if (method === 'POST' && path === '/member/recommend') return ok(await member.recommend(session.userId, data));

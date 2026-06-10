@@ -1,0 +1,66 @@
+<view class="page safe-bottom">
+  <view class="card hero invite-hero">
+    <text class="eyebrow">红娘邀请</text>
+    <text class="title">确认添加红娘</text>
+    <text class="subtitle">通过{{sourceText}}进入，提交后仍需红娘审批，通过后才会成为该红娘名下会员。</text>
+    <view class="summary-strip">
+      <view class="summary-item">
+        <text class="summary-value">{{code || '待识别'}}</text>
+        <text class="summary-label">邀请码</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">{{sourceText}}</text>
+        <text class="summary-label">添加方式</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">审批</text>
+        <text class="summary-label">归属确认</text>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{errorText}}" class="card notice-card">
+    <text class="section-title">邀请不可用</text>
+    <text class="section-note">{{errorText}}</text>
+    <button class="btn ghost invite-action" bindtap="goProfile">返回我的资料</button>
+  </view>
+
+  <view wx:elif="{{invite}}" class="card invite-card">
+    <view class="invite-profile">
+      <image class="invite-avatar" src="{{invite.avatarUrl || '/assets/members/avatar-female-1.png'}}" mode="aspectFill"></image>
+      <view class="invite-copy">
+        <text class="section-title">{{invite.nickname || '红娘顾问'}}</text>
+        <text class="section-note">红娘编号 {{invite.matchmakerNo}}</text>
+      </view>
+      <text class="tag gold">已认证</text>
+    </view>
+
+    <view class="invite-info-grid">
+      <view class="metric">
+        <text class="metric-label">会员服务</text>
+        <text class="metric-value">{{invite.memberCount || 0}}</text>
+        <text class="metric-hint">名下会员</text>
+      </view>
+      <view class="metric">
+        <text class="metric-label">服务等级</text>
+        <text class="metric-value">L{{invite.level || 1}}</text>
+        <text class="metric-hint">红娘等级</text>
+      </view>
+    </view>
+
+    <view wx:if="{{invite.alreadyAssigned}}" class="notice-inline">
+      <text class="item-meta">你已有关联红娘，暂不能申请添加其他红娘。</text>
+    </view>
+    <view wx:elif="{{invite.existingRequest && invite.existingRequest.status === 'pending'}}" class="notice-inline">
+      <text class="item-meta">你已提交过申请，请等待红娘审批。</text>
+    </view>
+
+    <button class="btn gold invite-action" loading="{{submitting}}" disabled="{{submitting || !canSubmit}}" bindtap="submitRequest">提交添加申请</button>
+    <button class="btn ghost invite-action" bindtap="copyCode">复制邀请码</button>
+  </view>
+
+  <view wx:else class="card invite-card">
+    <text class="section-title">正在确认邀请</text>
+    <text class="section-note">{{loading ? '正在读取红娘信息，请稍候。' : '请确认邀请码后重试。'}}</text>
+  </view>
+</view>

@@ -10,6 +10,9 @@ export const memberApi = {
   showcase(data?: Record<string, any>) {
     return request('/member/showcase', { data })
   },
+  resolveMatchmakerInvite(data: Record<string, any>) {
+    return request('/member/matchmaker-invite/resolve', { data })
+  },
   requestMatchmaker(data: Record<string, any>) {
     return request('/member/matchmaker-requests', { method: 'POST', data })
   },

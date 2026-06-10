@@ -1,8 +1,8 @@
 import { currentUser, request } from '../../services/api'
 import { matchmakerApi } from '../../services/matchmaker'
-import { memberApi } from '../../services/member'
 import { chooseLocalImages } from '../../utils/local-image'
 import { defaultAvatar, defaultPhotos, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
+import { extractInviteCode, invitePath } from '../../utils/invite'
 import {
   AGE_OPTIONS,
   EDUCATION_OPTIONS,
@@ -283,17 +283,35 @@ Page({
       wx.showToast({ title: '请输入红娘编号', icon: 'none' })
       return
     }
-    if (this.data.matchmakerRequesting) return
-    this.setData({ matchmakerRequesting: true })
-    try {
-      await memberApi.requestMatchmaker({ code })
-      wx.showToast({ title: '已提交申请', icon: 'success' })
-      this.setData({ matchmakerCode: '' })
-    } catch (err) {
-      console.warn('request matchmaker failed', err)
-    } finally {
-      this.setData({ matchmakerRequesting: false })
-    }
+    wx.navigateTo({ url: invitePath(code, 'inviteCode') })
+  },
+
+  scanMatchmakerInvite() {
+    wx.scanCode({
+      scanType: ['qrCode'],
+      success: res => {
+        const code = extractInviteCode(res.result || res.path)
+        if (!code) {
+          wx.showToast({ title: '未识别到红娘邀请码', icon: 'none' })
+          return
+        }
+        wx.navigateTo({ url: invitePath(code, 'scan') })
+      },
+      fail: err => {
+        if (!/cancel/i.test(String(err && err.errMsg))) {
+          wx.showToast({ title: '扫码失败，请重试', icon: 'none' })
+        }
+      }
+    })
+  },
+
+  showInviteLinkTip() {
+    wx.showModal({
+      title: '微信链接添加',
+      content: '请打开红娘发来的微信分享卡片，系统会自动识别邀请码，并进入确认申请页面。',
+      showCancel: false,
+      confirmText: '知道了'
+    })
   },
 
   async chooseAvatar() {

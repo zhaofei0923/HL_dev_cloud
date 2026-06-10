@@ -41,6 +41,52 @@
       </view>
     </view>
 
+    <view class="card internal-recommend-card">
+      <view class="row recommend-head">
+        <view>
+          <text class="section-title">名下会员互推</text>
+          <text class="section-note">选择两名名下会员，创建待跟进互推记录并通知双方。</text>
+        </view>
+        <text class="tag gold">{{recommendReady ? '可互推' : '待选择'}}</text>
+      </view>
+      <view class="recommend-select-grid">
+        <picker wx:if="{{recommendAOptions.length}}" mode="selector" range="{{recommendAOptions}}" value="{{recommendAIndex}}" bindchange="onRecommendAChange">
+          <view class="field recommend-picker">
+            <text class="field-label">会员 A</text>
+            <text class="field-input picker-value">{{recommendA.name || '请选择会员'}}</text>
+          </view>
+        </picker>
+        <picker wx:if="{{recommendBOptions.length}}" mode="selector" range="{{recommendBOptions}}" value="{{recommendBIndex}}" bindchange="onRecommendBChange">
+          <view class="field recommend-picker">
+            <text class="field-label">会员 B</text>
+            <text class="field-input picker-value">{{recommendB.name || '请选择会员'}}</text>
+          </view>
+        </picker>
+      </view>
+      <view class="recommend-pair">
+        <view class="recommend-person {{recommendA.id ? '' : 'empty'}}">
+          <text class="recommend-name">{{recommendA.name || '会员 A'}}</text>
+          <text class="recommend-meta">{{recommendA.metaText || '请选择第一位会员'}}</text>
+          <text class="recommend-meta">{{recommendA.occupationText || '职业待完善'}}</text>
+          <view class="tag-row recommend-tags">
+            <text class="tag gold">完整度 {{recommendA.completionText || '-'}}</text>
+            <text class="tag">推荐 {{recommendA.statusText || '-'}}</text>
+          </view>
+        </view>
+        <view class="recommend-person {{recommendB.id ? '' : 'empty'}}">
+          <text class="recommend-name">{{recommendB.name || '会员 B'}}</text>
+          <text class="recommend-meta">{{recommendB.metaText || '请选择第二位会员'}}</text>
+          <text class="recommend-meta">{{recommendB.occupationText || '职业待完善'}}</text>
+          <view class="tag-row recommend-tags">
+            <text class="tag gold">完整度 {{recommendB.completionText || '-'}}</text>
+            <text class="tag">推荐 {{recommendB.statusText || '-'}}</text>
+          </view>
+        </view>
+      </view>
+      <text class="recommend-hint">{{recommendHint}}</text>
+      <button class="btn gold internal-recommend-btn" loading="{{recommendLoading}}" disabled="{{recommendLoading || !recommendReady}}" bindtap="recommendInternal">发起互推</button>
+    </view>
+
     <view class="card search-card">
       <view class="row search-head">
         <view>

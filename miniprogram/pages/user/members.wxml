@@ -25,7 +25,6 @@
         <text class="section-title">查找合适档案</text>
         <text class="section-note">按城市、性别和关键词快速缩小范围；联系方式和红娘备注始终不公开。</text>
       </view>
-      <text class="tag gold">{{loading ? '整理中' : '隐私保护'}}</text>
     </view>
     <view class="field search-field">
       <input

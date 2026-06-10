@@ -55,21 +55,21 @@
     <text class="section-title">快捷任务</text>
     <text class="section-note">优先处理会员资料、资源池互推和近期活动。</text>
     <view class="task-list">
-      <button class="task-btn" bindtap="goMembers">
+      <view class="task-btn" bindtap="goMembers">
         <text class="task-title">会员经营</text>
         <text class="task-badge">{{dashboard.matchmaker.memberCount || 0}}</text>
         <text class="task-note">录入、搜索和维护名下会员资料</text>
-      </button>
-      <button class="task-btn" bindtap="goResources">
+      </view>
+      <view class="task-btn" bindtap="goResources">
         <text class="task-title">会员展示资源池</text>
         <text class="task-badge">{{dashboard.resourceCount || dashboard.operations.resourceCount || 0}}</text>
         <text class="task-note">查看其他红娘资源并发起互推</text>
-      </button>
-      <button class="task-btn" bindtap="goSalon">
+      </view>
+      <view class="task-btn" bindtap="goSalon">
         <text class="task-title">沙龙管理</text>
         <text class="task-badge">{{dashboard.registrationCount || dashboard.operations.registrationCount || 0}}</text>
         <text class="task-note">创建活动，查看报名热度和席位</text>
-      </button>
+      </view>
     </view>
   </view>
 

@@ -9,6 +9,12 @@ exports.matchmakerApi = {
     dashboard(showError = true) {
         return (0, api_1.request)('/matchmaker/dashboard', { showError });
     },
+    inviteCard(showError = true) {
+        return (0, api_1.request)('/matchmaker/invite-card', { showError });
+    },
+    resetInviteCode() {
+        return (0, api_1.request)('/matchmaker/invite-code/reset', { method: 'POST' });
+    },
     memberRequests(data, showError = true) {
         return (0, api_1.request)('/matchmaker/member-requests', { data, showError });
     },

@@ -39,10 +39,24 @@
     </view>
     <view class="divider"></view>
     <text class="section-title">添加红娘</text>
-    <text class="section-note">输入红娘编号或邀请码，提交后需要红娘审批，通过后才会成为该红娘名下会员。</text>
+    <text class="section-note">可通过扫码、微信分享卡片或邀请码添加；提交后需要红娘审批，通过后才会成为该红娘名下会员。</text>
+    <view class="matchmaker-option-grid">
+      <view class="matchmaker-option" bindtap="scanMatchmakerInvite">
+        <text class="option-title">扫码添加</text>
+        <text class="option-note">扫红娘小程序码</text>
+      </view>
+      <view class="matchmaker-option" bindtap="showInviteLinkTip">
+        <text class="option-title">链接添加</text>
+        <text class="option-note">打开微信分享卡片</text>
+      </view>
+      <view class="matchmaker-option active">
+        <text class="option-title">邀请码</text>
+        <text class="option-note">手动输入编号</text>
+      </view>
+    </view>
     <view class="matchmaker-request-row">
       <input class="request-input" value="{{matchmakerCode}}" bindinput="onMatchmakerCodeInput" placeholder="红娘编号 / 邀请码" />
-      <button class="btn gold request-btn" loading="{{matchmakerRequesting}}" disabled="{{matchmakerRequesting}}" bindtap="submitMatchmakerRequest">提交</button>
+      <button class="btn gold request-btn" loading="{{matchmakerRequesting}}" disabled="{{matchmakerRequesting}}" bindtap="submitMatchmakerRequest">下一步</button>
     </view>
   </view>
 

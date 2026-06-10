@@ -7,6 +7,12 @@ export const matchmakerApi = {
   dashboard(showError = true) {
     return request('/matchmaker/dashboard', { showError })
   },
+  inviteCard(showError = true) {
+    return request('/matchmaker/invite-card', { showError })
+  },
+  resetInviteCode() {
+    return request('/matchmaker/invite-code/reset', { method: 'POST' })
+  },
   memberRequests(data?: Record<string, any>, showError = true) {
     return request('/matchmaker/member-requests', { data, showError })
   },
