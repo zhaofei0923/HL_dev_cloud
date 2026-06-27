@@ -17,7 +17,9 @@
     "strict": true,
     "strictPropertyInitialization": true,
     "skipLibCheck": true,
-    "lib": ["ES2020"],
+    "lib": [
+      "ES2020"
+    ],
     "typeRoots": [
       "./typings"
     ]

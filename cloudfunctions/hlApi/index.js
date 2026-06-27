@@ -21,6 +21,9 @@ const C = {
   counters: 'hl_counters'
 };
 
+const MATCHMAKER_CERTIFICATION_STATUSES = new Set([0, 1, 2]);
+const SALON_REVIEW_STATUSES = new Set(['upcoming', 'rejected']);
+
 const SEEDED_MEMBER_GROUPS = [
   [
     {
@@ -210,6 +213,14 @@ function toNumber(value) {
 
 function isTrue(value) {
   return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function normalizeCertificationStatus(value) {
+  const status = Number(value);
+  if (!Number.isInteger(status) || !MATCHMAKER_CERTIFICATION_STATUSES.has(status)) {
+    throw createHttpError('invalid certification status');
+  }
+  return status;
 }
 
 function hashText(value) {
@@ -997,8 +1008,9 @@ const matchmaker = {
   async setCertification(matchmakerId, certificationStatus, remark = '') {
     const row = await getById(C.matchmakers, matchmakerId);
     if (!row) throw createHttpError('matchmaker not found', 404, 40400);
+    const normalizedStatus = normalizeCertificationStatus(certificationStatus);
     const updated = await updateRow(C.matchmakers, row, {
-      certificationStatus: Number(certificationStatus),
+      certificationStatus: normalizedStatus,
       certificationRemark: remark
     });
     return stripInternal(updated);
@@ -1605,11 +1617,12 @@ const admin = {
   async reviewSalon(eventId, status, remark = '') {
     const event = await getById(C.salonEvents, eventId);
     if (!event) throw createHttpError('event not found', 404, 40400);
-    if (!['upcoming', 'rejected'].includes(status)) {
+    const reviewStatus = String(status || '');
+    if (!SALON_REVIEW_STATUSES.has(reviewStatus)) {
       throw createHttpError('invalid salon review status');
     }
     return eventView(await updateRow(C.salonEvents, event, {
-      status,
+      status: reviewStatus,
       reviewRemark: remark || '',
       reviewedAt: nowIso()
     }));

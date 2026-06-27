@@ -1,0 +1,367 @@
+{
+  "version": 1,
+  "envId": "cloud1-d2gza7q9c8d69c721",
+  "cloudFunction": "hlApi",
+  "roles": [
+    {
+      "id": "developer",
+      "name": "开发者",
+      "description": "可查看和维护全部集合、云函数、权限规则和系统字段。"
+    },
+    {
+      "id": "operator",
+      "name": "运营人员",
+      "description": "只处理红娘审核、会员资料、沙龙审核、报名记录和异常排查。"
+    },
+    {
+      "id": "matchmaker",
+      "name": "普通红娘",
+      "description": "不进入 CloudBase CMS，只通过小程序红娘端完成会员、沙龙和申请管理。"
+    }
+  ],
+  "globalHiddenFields": [
+    "_id",
+    "_openid",
+    "openid",
+    "token",
+    "refreshToken"
+  ],
+  "protectedCollections": [
+    "hl_counters"
+  ],
+  "statusDictionary": {
+    "matchmakerCertificationStatus": [
+      {
+        "value": 0,
+        "label": "待审核"
+      },
+      {
+        "value": 1,
+        "label": "已拒绝"
+      },
+      {
+        "value": 2,
+        "label": "已通过"
+      }
+    ],
+    "salonStatus": [
+      {
+        "value": "pending",
+        "label": "待审核"
+      },
+      {
+        "value": "upcoming",
+        "label": "报名中"
+      },
+      {
+        "value": "rejected",
+        "label": "未通过"
+      },
+      {
+        "value": "cancelled",
+        "label": "已取消"
+      },
+      {
+        "value": "ended",
+        "label": "已结束"
+      }
+    ],
+    "registrationStatus": [
+      {
+        "value": "registered",
+        "label": "已报名"
+      },
+      {
+        "value": "cancelled",
+        "label": "已取消"
+      }
+    ],
+    "memberRequestStatus": [
+      {
+        "value": "pending",
+        "label": "待红娘处理"
+      },
+      {
+        "value": "approved",
+        "label": "已通过"
+      },
+      {
+        "value": "rejected",
+        "label": "已拒绝"
+      },
+      {
+        "value": "cancelled",
+        "label": "已取消"
+      }
+    ]
+  },
+  "views": [
+    {
+      "id": "matchmaker-approval",
+      "name": "红娘审批",
+      "collection": "hl_matchmakers",
+      "purpose": "红娘认证审核、等级维护和账号启停。",
+      "filters": [
+        {
+          "field": "status",
+          "operator": "==",
+          "value": 1
+        }
+      ],
+      "editableFields": [
+        "certificationStatus",
+        "certificationRemark",
+        "level",
+        "status"
+      ],
+      "readonlyFields": [
+        "id",
+        "userId",
+        "matchmakerNo",
+        "inviteCode",
+        "inviteCodeStatus",
+        "totalPerformance",
+        "createdAt",
+        "updatedAt"
+      ],
+      "hiddenFields": [
+        "_id",
+        "_openid"
+      ],
+      "preferredActions": [
+        {
+          "name": "通过红娘认证",
+          "method": "PUT",
+          "path": "/admin/matchmakers/{id}/certification",
+          "body": {
+            "certificationStatus": 2,
+            "remark": ""
+          }
+        },
+        {
+          "name": "拒绝红娘认证",
+          "method": "PUT",
+          "path": "/admin/matchmakers/{id}/certification",
+          "body": {
+            "certificationStatus": 1,
+            "remark": "请补充拒绝原因"
+          }
+        }
+      ],
+      "manualCmsAllowed": true,
+      "warnings": [
+        "certificationStatus 只能是 0、1、2。",
+        "拒绝时必须填写 certificationRemark，方便红娘端展示原因。"
+      ]
+    },
+    {
+      "id": "salon-approval",
+      "name": "沙龙审批",
+      "collection": "hl_salon_events",
+      "purpose": "查看待审核沙龙，处理通过、拒绝、取消和活动基础信息维护。",
+      "filters": [
+        {
+          "field": "status",
+          "operator": "in",
+          "value": [
+            "pending",
+            "upcoming",
+            "rejected"
+          ]
+        }
+      ],
+      "editableFields": [
+        "title",
+        "description",
+        "coverImage",
+        "location",
+        "eventDate",
+        "maxParticipants",
+        "price",
+        "status",
+        "reviewRemark"
+      ],
+      "readonlyFields": [
+        "id",
+        "organizerId",
+        "currentParticipants",
+        "reviewedAt",
+        "createdAt",
+        "updatedAt"
+      ],
+      "hiddenFields": [
+        "_id",
+        "_openid"
+      ],
+      "preferredActions": [
+        {
+          "name": "通过沙龙审核",
+          "method": "POST",
+          "path": "/admin/salons/{id}/review",
+          "body": {
+            "status": "upcoming",
+            "remark": ""
+          }
+        },
+        {
+          "name": "拒绝沙龙审核",
+          "method": "POST",
+          "path": "/admin/salons/{id}/review",
+          "body": {
+            "status": "rejected",
+            "remark": "请补充拒绝原因"
+          }
+        }
+      ],
+      "manualCmsAllowed": true,
+      "warnings": [
+        "审核接口只接受 upcoming 或 rejected。",
+        "报名、取消报名和人数增减必须走云函数，不要在 CMS 里直接改 currentParticipants。"
+      ]
+    },
+    {
+      "id": "member-profile-management",
+      "name": "会员资料管理",
+      "collection": "hl_profiles",
+      "purpose": "维护用户公开资料和展示开关。",
+      "editableFields": [
+        "realName",
+        "gender",
+        "age",
+        "height",
+        "city",
+        "nativePlace",
+        "education",
+        "occupation",
+        "incomeRange",
+        "maritalStatus",
+        "houseStatus",
+        "carStatus",
+        "selfIntro",
+        "partnerRequirement",
+        "photos",
+        "displayEnabled"
+      ],
+      "readonlyFields": [
+        "id",
+        "userId",
+        "displayUpdatedAt",
+        "createdAt",
+        "updatedAt"
+      ],
+      "hiddenFields": [
+        "_id",
+        "_openid",
+        "openid"
+      ],
+      "preferredActions": [],
+      "manualCmsAllowed": true,
+      "warnings": [
+        "displayEnabled = true 后会员会进入公开浏览和红娘资源池。",
+        "手机号、登录态和 token 字段不应进入运营视图。"
+      ]
+    },
+    {
+      "id": "member-service-management",
+      "name": "会员服务管理",
+      "collection": "hl_members",
+      "purpose": "维护红娘名下会员关系、服务等级、备注和展示状态。",
+      "editableFields": [
+        "memberType",
+        "serviceLevel",
+        "remark",
+        "displayEnabled",
+        "status"
+      ],
+      "readonlyFields": [
+        "id",
+        "userId",
+        "matchmakerId",
+        "createdAt",
+        "updatedAt"
+      ],
+      "hiddenFields": [
+        "_id",
+        "_openid"
+      ],
+      "preferredActions": [],
+      "manualCmsAllowed": true,
+      "warnings": [
+        "新增会员关系应走小程序或云函数，不建议在 CMS 手工新增 hl_members。",
+        "变更 status 前先确认不会影响红娘端会员池展示。"
+      ]
+    },
+    {
+      "id": "registration-management",
+      "name": "报名管理",
+      "collection": "hl_registrations",
+      "purpose": "查看沙龙报名名单，处理签到和少量异常状态。",
+      "editableFields": [
+        "status",
+        "checkedInAt"
+      ],
+      "readonlyFields": [
+        "id",
+        "eventId",
+        "userId",
+        "createdAt",
+        "updatedAt"
+      ],
+      "hiddenFields": [
+        "_id",
+        "_openid"
+      ],
+      "preferredActions": [],
+      "manualCmsAllowed": true,
+      "warnings": [
+        "报名和取消报名应走云函数，确保 currentParticipants 同步。",
+        "CMS 只用于签到、排查和必要的状态修正。"
+      ]
+    },
+    {
+      "id": "member-matchmaker-request-audit",
+      "name": "会员添加红娘申请排查",
+      "collection": "hl_member_matchmaker_requests",
+      "purpose": "排查会员申请添加红娘的异常状态，默认只读。",
+      "editableFields": [],
+      "readonlyFields": [
+        "id",
+        "userId",
+        "matchmakerId",
+        "status",
+        "applySource",
+        "applyMessage",
+        "reviewRemark",
+        "reviewedAt",
+        "reviewerId",
+        "createdAt",
+        "updatedAt"
+      ],
+      "hiddenFields": [
+        "_id",
+        "_openid"
+      ],
+      "preferredActions": [
+        {
+          "name": "红娘通过会员申请",
+          "method": "POST",
+          "path": "/matchmaker/member-requests/{id}/approve",
+          "body": {}
+        },
+        {
+          "name": "红娘拒绝会员申请",
+          "method": "POST",
+          "path": "/matchmaker/member-requests/{id}/reject",
+          "body": {
+            "remark": "请补充拒绝原因"
+          }
+        }
+      ],
+      "manualCmsAllowed": false,
+      "warnings": [
+        "不要在 CMS 里直接把 status 改成 approved。",
+        "通过申请会联动写入 hl_members 和 hl_messages，必须由红娘端小程序或云函数完成。"
+      ]
+    }
+  ]
+}
