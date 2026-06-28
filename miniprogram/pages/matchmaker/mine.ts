@@ -154,7 +154,7 @@ Page({
     if (this.data.inviteResetting) return
     wx.showModal({
       title: '重置邀请码',
-      content: '重置后旧邀请码和旧二维码将失效，已有待审批申请不受影响。',
+      content: '重置后旧注册链接、邀请码和二维码将失效，已有会员关系不受影响。',
       success: async res => {
         if (!res.confirm) return
         this.setData({ inviteResetting: true })
@@ -189,8 +189,8 @@ Page({
     const card = this.data.inviteCard || {}
     const code = card.inviteCode || ''
     return {
-      title: `${(this.data.user && this.data.user.nickname) || '红娘顾问'}邀请你添加红娘`,
-      path: card.sharePath || invitePath(code, 'share')
+      title: `${(this.data.user && this.data.user.nickname) || '红娘顾问'}邀请你注册成为会员`,
+      path: card.sharePath || invitePath(code, 'matchmakerShare')
     }
   }
 })

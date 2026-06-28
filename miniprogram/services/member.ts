@@ -16,6 +16,12 @@ export const memberApi = {
   requestMatchmaker(data: Record<string, any>) {
     return request('/member/matchmaker-requests', { method: 'POST', data })
   },
+  acceptMatchmakerInvite(data: Record<string, any>) {
+    return request('/member/matchmaker-invite/accept', { method: 'POST', data })
+  },
+  referralCard(showError = false) {
+    return request('/member/referral-card', { showError })
+  },
   addManual(data: Record<string, any>) {
     return request('/member/manual', { method: 'POST', data })
   },

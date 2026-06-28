@@ -18,6 +18,12 @@ exports.memberApi = {
     requestMatchmaker(data) {
         return (0, api_1.request)('/member/matchmaker-requests', { method: 'POST', data });
     },
+    acceptMatchmakerInvite(data) {
+        return (0, api_1.request)('/member/matchmaker-invite/accept', { method: 'POST', data });
+    },
+    referralCard(showError = false) {
+        return (0, api_1.request)('/member/referral-card', { showError });
+    },
     addManual(data) {
         return (0, api_1.request)('/member/manual', { method: 'POST', data });
     },

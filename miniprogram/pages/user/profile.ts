@@ -1,4 +1,5 @@
 import { currentUser, request } from '../../services/api'
+import { memberApi } from '../../services/member'
 import { matchmakerApi } from '../../services/matchmaker'
 import { chooseLocalImages } from '../../utils/local-image'
 import { defaultAvatar, defaultPhotos, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
@@ -199,6 +200,8 @@ Page({
     matchmakerEntryButton: '申请 / 查看状态',
     matchmakerCode: '',
     matchmakerRequesting: false,
+    referralCard: { canShare: false } as any,
+    referralLoading: false,
     ...selectorTextFor(FORM_DEFAULTS),
     form: { ...FORM_DEFAULTS },
     preview: previewFor(FORM_DEFAULTS)
@@ -220,6 +223,7 @@ Page({
         completionNote: completion.note
       })
       void this.refreshMatchmakerEntry()
+      void this.loadReferralCard()
     } catch (err) {
       console.warn('load user profile failed', err)
       const form = hydrateImageDisplay(normalizeForm({}, currentUser() || {}))
@@ -243,6 +247,19 @@ Page({
       this.setData(matchmakerEntryView(dashboard.matchmaker))
     } catch (err) {
       this.setData(matchmakerEntryView(null))
+    }
+  },
+
+  async loadReferralCard() {
+    this.setData({ referralLoading: true })
+    try {
+      const referralCard = await memberApi.referralCard(false)
+      this.setData({ referralCard })
+    } catch (err) {
+      console.warn('load member referral card failed', err)
+      this.setData({ referralCard: { canShare: false } })
+    } finally {
+      this.setData({ referralLoading: false })
     }
   },
 
@@ -308,7 +325,7 @@ Page({
   showInviteLinkTip() {
     wx.showModal({
       title: '微信链接添加',
-      content: '请打开红娘发来的微信分享卡片，系统会自动识别邀请码，并进入确认申请页面。',
+      content: '打开红娘或会员发来的微信分享卡片后，系统会自动注册为对应红娘名下免费会员；扫码和手动邀请码仍需提交申请。',
       showCancel: false,
       confirmText: '知道了'
     })
@@ -469,5 +486,13 @@ Page({
     wx.removeStorageSync('token')
     wx.removeStorageSync('user')
     wx.redirectTo({ url: '/pages/index/index' })
+  },
+
+  onShareAppMessage() {
+    const card = this.data.referralCard || {}
+    return {
+      title: '邀请你注册成为 HL 会员',
+      path: card.sharePath || '/pages/user/members'
+    }
   }
 })

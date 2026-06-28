@@ -39,6 +39,14 @@
   background: rgba(177, 134, 83, 0.12);
 }
 
+.notice-inline.success {
+  background: rgba(72, 126, 82, 0.12);
+}
+
+.notice-inline.warning {
+  background: rgba(180, 129, 79, 0.16);
+}
+
 .invite-action {
   margin-top: 18rpx;
 }

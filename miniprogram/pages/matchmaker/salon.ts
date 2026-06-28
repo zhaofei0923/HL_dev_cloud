@@ -1,6 +1,7 @@
 import { salonApi } from '../../services/salon'
 import { matchmakerApi } from '../../services/matchmaker'
 import { memberApi } from '../../services/member'
+import { invitePath } from '../../utils/invite'
 
 function pad(value: number) {
   return value < 10 ? `0${value}` : String(value)
@@ -76,6 +77,7 @@ Page({
     cancellingId: '',
     invitingId: '',
     canOperate: false,
+    shareCode: '',
     statusText: '待审批',
     statusTagClass: '',
     statusNote: '红娘认证通过后，才可以发起沙龙并管理活动。'
@@ -98,6 +100,7 @@ Page({
       const view = certificationView(dashboard.matchmaker)
       this.setData({
         canOperate: view.canOperate,
+        shareCode: dashboard.matchmaker && dashboard.matchmaker.inviteCode ? dashboard.matchmaker.inviteCode : '',
         statusText: view.statusText,
         statusTagClass: view.statusTagClass,
         statusNote: view.statusNote
@@ -258,5 +261,22 @@ Page({
         }
       }
     })
+  },
+
+  onShareAppMessage(options?: any) {
+    const dataset = options && options.target && options.target.dataset ? options.target.dataset : {}
+    const eventId = dataset.id || ''
+    const title = dataset.title || '沙龙活动'
+    const code = this.data.shareCode || ''
+    if (eventId && code) {
+      return {
+        title: `邀请你报名沙龙《${title}》`,
+        path: invitePath(code, 'salonShare', { eventId, autoRegister: true })
+      }
+    }
+    return {
+      title: '邀请你注册成为会员',
+      path: code ? invitePath(code, 'matchmakerShare') : '/pages/user/members'
+    }
   }
 })

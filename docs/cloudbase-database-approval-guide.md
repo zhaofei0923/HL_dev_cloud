@@ -32,7 +32,7 @@ cloud1-d2gza7q9c8d69c721
 1. 可以在后台数据库中处理的内容：红娘认证状态、沙龙审核状态、会员展示资料、服务等级、备注、报名签到等轻量维护。
 2. 不要直接修改系统字段：`_id`、`_openid`、`openid`、`createdAt`、`updatedAt`、`token`、`refreshToken`。
 3. 不要直接修改计数字段：例如 `hl_salon_events.currentParticipants`。报名和取消报名必须走小程序/云函数，否则人数会和报名表不一致。
-4. 不要直接审批“会员添加红娘申请”。该流程必须由红娘端小程序处理，否则不会自动写入 `hl_members` 和 `hl_messages`。
+4. 不要直接审批“会员添加红娘申请”。手动审批必须由红娘端小程序处理；微信分享注册链接自动注册必须由云函数处理，否则不会自动写入 `hl_members` 和 `hl_messages`。
 5. 任何会同时影响多个集合的动作，都不要在数据库里手动改，要走小程序或云函数接口。
 
 ## 3. 红娘审批
@@ -383,6 +383,12 @@ hl_messages
 如果只在数据库里改 `status`，会员关系和消息记录不会自动生成，后续页面会出现数据不一致。
 
 正确处理方式：
+
+```text
+微信分享注册链接自动注册 -> POST /member/matchmaker-invite/accept
+```
+
+该接口仅用于 `share`、`matchmakerShare`、`memberShare`、`salonShare` 等微信分享来源，会自动把申请记录置为 `approved`，并同步写入 `hl_members` 和 `hl_messages`。
 
 ```text
 红娘端小程序 -> 会员申请 -> 通过/拒绝

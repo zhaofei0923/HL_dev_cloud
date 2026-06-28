@@ -44,8 +44,8 @@
   <view wx:if="{{canOperate}}" class="card invite-card">
     <view class="row invite-head">
       <view>
-        <text class="section-title">邀请会员</text>
-        <text class="section-note">会员扫码、点微信分享卡片或输入邀请码后，会进入待审批申请。</text>
+        <text class="section-title">邀请注册会员</text>
+        <text class="section-note">微信好友点分享卡片后，会注册为你的免费会员；扫码和手动邀请码仍走添加申请。</text>
       </view>
       <text class="tag gold">{{inviteCard.inviteCodeStatus || 'active'}}</text>
     </view>
@@ -63,7 +63,7 @@
     </view>
     <view class="button-row invite-actions">
       <button class="btn secondary" bindtap="copyInviteCode">复制邀请码</button>
-      <button class="btn gold" open-type="share">分享给会员</button>
+      <button class="btn gold" open-type="share">分享注册链接</button>
     </view>
     <button class="btn ghost action-btn" loading="{{inviteResetting}}" disabled="{{inviteResetting}}" bindtap="resetInviteCode">重置邀请码</button>
   </view>

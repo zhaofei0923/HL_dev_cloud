@@ -54,7 +54,7 @@
 
 .matchmaker-option-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10rpx;
   margin-top: 18rpx;
 }
@@ -111,6 +111,42 @@
   height: 76rpx;
   font-size: 25rpx;
   line-height: 76rpx;
+}
+
+.referral-head,
+.referral-matchmaker {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+}
+
+.referral-head {
+  align-items: flex-start;
+}
+
+.referral-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.referral-matchmaker {
+  margin-top: 20rpx;
+  padding: 18rpx;
+  border: 1rpx solid rgba(151, 119, 82, 0.14);
+  border-radius: 14rpx;
+  background: rgba(255, 253, 248, 0.72);
+}
+
+.referral-avatar {
+  flex: 0 0 82rpx;
+  width: 82rpx;
+  height: 82rpx;
+  border-radius: 50%;
+  background: rgba(177, 134, 83, 0.12);
+}
+
+.referral-actions {
+  margin-top: 18rpx;
 }
 
 .form-card {

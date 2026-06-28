@@ -325,7 +325,7 @@ function collectionsForPath(path) {
     return [...common, C.matchmakers, C.members, C.memberRequests, C.salonEvents, C.registrations, C.matchRecords, C.messages];
   }
   if (path.startsWith('/member')) {
-    return [...common, C.matchmakers, C.members, C.memberRequests, C.matchRecords, C.messages];
+    return [...common, C.matchmakers, C.members, C.memberRequests, C.matchRecords, C.salonEvents, C.messages];
   }
   if (path.startsWith('/salon')) {
     return [...common, C.matchmakers, C.members, C.salonEvents, C.registrations, C.messages];
@@ -714,10 +714,15 @@ async function resolveMatchmakerForRequest(data = {}) {
 
 function requestApplySource(data = {}) {
   const source = String(data.applySource || data.source || '').trim();
-  if (['scan', 'share', 'inviteCode', 'manual'].includes(source)) return source;
+  if (['scan', 'share', 'inviteCode', 'manual', 'matchmakerShare', 'memberShare', 'salonShare'].includes(source)) return source;
   if (data.scanResult || data.scene) return 'scan';
   if (data.inviteCode) return 'inviteCode';
   return 'manual';
+}
+
+function isShareInviteSource(data = {}) {
+  const source = requestApplySource(data);
+  return ['share', 'matchmakerShare', 'memberShare', 'salonShare'].includes(source);
 }
 
 async function matchmakerInvitePreview(data = {}) {
@@ -858,6 +863,97 @@ async function approveMemberMatchmakerRequest(matchmakerUserId, requestId) {
   return {
     request: await memberRequestView(reviewed),
     member: await memberView(memberRow)
+  };
+}
+
+async function validateInviteEventForMatchmaker(eventId, matchmaker) {
+  if (!eventId) return null;
+  const event = await getById(C.salonEvents, eventId);
+  if (!event) throw createHttpError('event not found', 404, 40400);
+  if (Number(event.organizerId) !== Number(matchmaker.userId)) {
+    throw createHttpError('event does not belong to matchmaker', 403, 40300);
+  }
+  return event;
+}
+
+async function acceptMemberMatchmakerInvite(userId, data = {}) {
+  await getUserOrThrow(userId);
+  const matchmaker = await resolveMatchmakerForRequest(data);
+  if (!matchmaker || Number(matchmaker.status) !== 1) {
+    throw createHttpError('matchmaker not found', 404, 40400);
+  }
+  if (Number(matchmaker.certificationStatus) !== 2) {
+    throw createHttpError('matchmaker is not certified', 403, 40301);
+  }
+  if (!isShareInviteSource(data)) {
+    throw createHttpError('share invite source is required');
+  }
+
+  const event = await validateInviteEventForMatchmaker(data.eventId, matchmaker);
+  const assignment = await activeMemberAssignment(userId);
+  if (assignment && Number(assignment.matchmakerId) !== Number(matchmaker.id)) {
+    throw createHttpError('member already has another matchmaker', 409, 40901);
+  }
+
+  const existingRows = (await getAll(C.memberRequests, { userId: Number(userId), matchmakerId: Number(matchmaker.id) }))
+    .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+  let request = existingRows[0] || null;
+  let memberRow = assignment || await getOne(C.members, { matchmakerId: matchmaker.id, userId: Number(userId) });
+  const isNewAssignment = !memberRow || Number(memberRow.status) !== 1;
+
+  if (memberRow) {
+    memberRow = await updateRow(C.members, memberRow, {
+      memberType: memberRow.memberType || 'free',
+      status: 1
+    });
+  } else {
+    memberRow = await addRow(C.members, {
+      id: await nextId('member'),
+      matchmakerId: Number(matchmaker.id),
+      userId: Number(userId),
+      memberType: 'free',
+      serviceLevel: '',
+      expireAt: null,
+      remark: 'share invite accepted',
+      status: 1
+    });
+  }
+
+  const requestPatch = {
+    status: 'approved',
+    applySource: requestApplySource(data),
+    applyMessage: data.message || '',
+    reviewRemark: 'share invite accepted',
+    reviewedAt: nowIso(),
+    reviewerId: Number(matchmaker.userId)
+  };
+  request = request
+    ? await updateRow(C.memberRequests, request, requestPatch)
+    : await addRow(C.memberRequests, {
+      id: await nextId('memberRequest'),
+      userId: Number(userId),
+      matchmakerId: Number(matchmaker.id),
+      ...requestPatch
+    });
+
+  if (isNewAssignment) {
+    await addRow(C.messages, {
+      id: await nextId('message'),
+      senderId: Number(matchmaker.userId),
+      receiverId: Number(userId),
+      contentType: 'system',
+      content: '你已通过微信邀请成为红娘名下会员。',
+      isRead: 0
+    });
+  }
+
+  return {
+    status: 'approved',
+    alreadyAssigned: !isNewAssignment,
+    invite: await matchmakerInvitePreview(data),
+    member: await memberView(memberRow),
+    request: await memberRequestView(request),
+    event: event ? stripInternal(event) : null
   };
 }
 
@@ -1083,7 +1179,7 @@ const matchmaker = {
     const row = await getCertifiedMatchmakerByUserIdOrThrow(userId);
     const user = await getUserOrThrow(userId);
     const qrCodeFileID = await ensureInviteQrCode(row);
-    const sharePath = `/pages/user/matchmaker-invite?code=${encodeURIComponent(row.inviteCode)}&source=share`;
+    const sharePath = `/pages/user/matchmaker-invite?code=${encodeURIComponent(row.inviteCode)}&source=matchmakerShare`;
     return {
       matchmakerNo: row.matchmakerNo,
       inviteCode: row.inviteCode,
@@ -1150,6 +1246,35 @@ const member = {
 
   async requestMatchmaker(userId, data = {}) {
     return createMemberMatchmakerRequest(userId, data);
+  },
+
+  async acceptMatchmakerInvite(userId, data = {}) {
+    return acceptMemberMatchmakerInvite(userId, data);
+  },
+
+  async referralCard(userId) {
+    const assignment = await activeMemberAssignment(userId);
+    if (!assignment) {
+      return { canShare: false, reason: 'no_matchmaker' };
+    }
+    const matchmakerRow = await getById(C.matchmakers, assignment.matchmakerId);
+    if (!matchmakerRow || Number(matchmakerRow.status) !== 1 || Number(matchmakerRow.certificationStatus) !== 2) {
+      return { canShare: false, reason: 'matchmaker_unavailable' };
+    }
+    const matchmakerWithIdentity = await ensureMatchmakerIdentity(matchmakerRow);
+    const matchmakerUser = await getById(C.users, matchmakerWithIdentity.userId);
+    const sharePath = `/pages/user/matchmaker-invite?code=${encodeURIComponent(matchmakerWithIdentity.inviteCode)}&source=memberShare`;
+    return {
+      canShare: true,
+      inviteCode: matchmakerWithIdentity.inviteCode,
+      sharePath,
+      matchmaker: {
+        matchmakerNo: matchmakerWithIdentity.matchmakerNo,
+        nickname: (matchmakerUser && matchmakerUser.nickname) || '红娘顾问',
+        avatarUrl: (matchmakerUser && matchmakerUser.avatarUrl) || '',
+        level: matchmakerWithIdentity.level || 1
+      }
+    };
   },
 
   async addManual(matchmakerUserId, data = {}) {
@@ -1765,6 +1890,8 @@ exports.main = async (event = {}) => {
     if (method === 'GET' && path === '/member/showcase') return ok(await member.showcase(data));
     if (method === 'GET' && path === '/member/matchmaker-invite/resolve') return ok(await member.resolveMatchmakerInvite(session.userId, data));
     if (method === 'POST' && path === '/member/matchmaker-requests') return ok(await member.requestMatchmaker(session.userId, data));
+    if (method === 'POST' && path === '/member/matchmaker-invite/accept') return ok(await member.acceptMatchmakerInvite(session.userId, data));
+    if (method === 'GET' && path === '/member/referral-card') return ok(await member.referralCard(session.userId));
     if (method === 'POST' && path === '/member/manual') return ok(await member.addManual(session.userId, data));
     if (method === 'POST' && path === '/member/recommend') return ok(await member.recommend(session.userId, data));
     const memberMatch = path.match(/^\/member\/(\d+)$/);

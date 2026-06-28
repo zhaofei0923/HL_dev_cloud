@@ -26,6 +26,21 @@ export function extractInviteCode(input: any) {
   return codeLike ? normalizeInviteCode(codeLike[1]) : ''
 }
 
-export function invitePath(code: string, source = 'share') {
-  return `/pages/user/matchmaker-invite?code=${encodeURIComponent(normalizeInviteCode(code))}&source=${encodeURIComponent(source)}`
+type InvitePathOptions = {
+  eventId?: string | number
+  autoRegister?: boolean
+}
+
+export function invitePath(code: string, source = 'share', options: InvitePathOptions = {}) {
+  const query = [
+    `code=${encodeURIComponent(normalizeInviteCode(code))}`,
+    `source=${encodeURIComponent(source)}`
+  ]
+  if (options.eventId !== undefined && options.eventId !== '') {
+    query.push(`eventId=${encodeURIComponent(String(options.eventId))}`)
+  }
+  if (options.autoRegister) {
+    query.push('autoRegister=1')
+  }
+  return `/pages/user/matchmaker-invite?${query.join('&')}`
 }

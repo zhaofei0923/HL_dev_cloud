@@ -48,7 +48,7 @@
 - `hl_members` 可编辑：`memberType`、`serviceLevel`、`remark`、`displayEnabled`、`status`。
 - 只读：`id`、`userId`、`matchmakerId`、`displayUpdatedAt`、`createdAt`、`updatedAt`。
 - 运营动作：补齐资料、调整会员类型和服务等级、协助关闭/开启展示。`displayEnabled = true` 后，会员才会进入公开会员浏览和红娘资源池。
-- 注意：新增会员关系、红娘通过会员申请、会员互推应走小程序或云函数，不建议在 CMS 手工新增联动记录。
+- 注意：新增会员关系、红娘通过会员申请、微信注册链接自动注册、会员互推应走小程序或云函数，不建议在 CMS 手工新增联动记录。
 
 ### 报名管理 `hl_registrations`
 
@@ -61,7 +61,8 @@
 
 - 默认只读：`id`、`userId`、`matchmakerId`、`status`、`applySource`、`applyMessage`、`reviewRemark`、`reviewedAt`、`reviewerId`、`createdAt`、`updatedAt`。
 - 运营动作：日常审批应由红娘在小程序端处理；后台只用于排查异常状态。
-- 禁止动作：不要在 CMS 手工把 `status` 改成 `approved`。审批通过会同时写入 `hl_members` 和 `hl_messages`，必须通过 `/matchmaker/member-requests/:id/approve` 完成。
+- 微信分享：`matchmakerShare`、`memberShare`、`salonShare` 来源会通过 `/member/matchmaker-invite/accept` 自动写入 `approved`、`hl_members` 和 `hl_messages`。
+- 禁止动作：不要在 CMS 手工把 `status` 改成 `approved`。审批通过或分享自动注册都会同时写入 `hl_members` 和 `hl_messages`，必须通过云函数完成。
 
 ## 隐藏字段和保护集合
 

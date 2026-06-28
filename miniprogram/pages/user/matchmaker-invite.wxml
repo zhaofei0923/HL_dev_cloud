@@ -1,8 +1,8 @@
 <view class="page safe-bottom">
   <view class="card hero invite-hero">
-    <text class="eyebrow">红娘邀请</text>
-    <text class="title">确认添加红娘</text>
-    <text class="subtitle">通过{{sourceText}}进入，提交后仍需红娘审批，通过后才会成为该红娘名下会员。</text>
+    <text class="eyebrow">{{autoMode ? '会员注册' : '红娘邀请'}}</text>
+    <text class="title">{{autoRegister ? '确认沙龙邀请' : (autoMode ? '注册成为会员' : '确认添加红娘')}}</text>
+    <text class="subtitle">{{autoMode ? '通过微信分享链接进入后，系统会自动注册为该红娘名下免费会员。' : '通过扫码或手动邀请码进入，提交后仍需红娘审批，通过后才会成为该红娘名下会员。'}}</text>
     <view class="summary-strip">
       <view class="summary-item">
         <text class="summary-value">{{code || '待识别'}}</text>
@@ -13,7 +13,7 @@
         <text class="summary-label">添加方式</text>
       </view>
       <view class="summary-item">
-        <text class="summary-value">审批</text>
+        <text class="summary-value">{{autoMode ? '自动归属' : '审批'}}</text>
         <text class="summary-label">归属确认</text>
       </view>
     </view>
@@ -49,13 +49,24 @@
     </view>
 
     <view wx:if="{{invite.alreadyAssigned}}" class="notice-inline">
-      <text class="item-meta">你已有关联红娘，暂不能申请添加其他红娘。</text>
+      <text class="item-meta">{{autoMode ? '当前账号已有关联红娘，系统会继续确认是否为同一红娘。' : '你已有关联红娘，暂不能申请添加其他红娘。'}}</text>
     </view>
-    <view wx:elif="{{invite.existingRequest && invite.existingRequest.status === 'pending'}}" class="notice-inline">
+    <view wx:elif="{{!autoMode && invite.existingRequest && invite.existingRequest.status === 'pending'}}" class="notice-inline">
       <text class="item-meta">你已提交过申请，请等待红娘审批。</text>
     </view>
+    <view wx:if="{{autoMessage}}" class="notice-inline {{autoDone ? 'success' : 'warning'}}">
+      <text class="item-meta">{{autoMessage}}</text>
+    </view>
 
-    <button class="btn gold invite-action" loading="{{submitting}}" disabled="{{submitting || !canSubmit}}" bindtap="submitRequest">提交添加申请</button>
+    <button
+      wx:if="{{autoMode}}"
+      class="btn gold invite-action"
+      loading="{{submitting}}"
+      disabled="{{submitting || autoDone}}"
+      bindtap="acceptShareInvite"
+    >{{actionText}}</button>
+    <button wx:else class="btn gold invite-action" loading="{{submitting}}" disabled="{{submitting || !canSubmit}}" bindtap="submitRequest">{{actionText}}</button>
+    <button wx:if="{{autoMode && eventId}}" class="btn secondary invite-action" bindtap="goSalonDetail">查看沙龙详情</button>
     <button class="btn ghost invite-action" bindtap="copyCode">复制邀请码</button>
   </view>
 

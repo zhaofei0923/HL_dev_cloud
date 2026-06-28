@@ -78,6 +78,7 @@
         <view wx:if="{{active === 'mine' && item.canInvite}}" class="invite-actions">
           <button class="btn gold invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':one'}}" disabled="{{invitingId || !selectedMemberName}}" bindtap="inviteSelected">推送选中会员</button>
           <button class="btn secondary invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':all'}}" disabled="{{invitingId || !members.length}}" bindtap="inviteAll">推送全部会员</button>
+          <button class="btn ghost invite-btn" open-type="share" data-id="{{item.id}}" data-title="{{item.title}}">微信分享</button>
         </view>
         <text wx:if="{{active === 'mine' && !item.canInvite}}" class="review-note">活动通过管理员审核后可推送给名下会员。</text>
         <button wx:if="{{active === 'mine'}}" class="btn danger cancel-btn" data-id="{{item.id}}" loading="{{cancellingId === item.idText}}" disabled="{{cancellingId === item.idText}}" bindtap="cancel">取消活动</button>
