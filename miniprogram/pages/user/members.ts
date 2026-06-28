@@ -107,6 +107,11 @@ Page({
   },
 
   onShow() {
+    const token = wx.getStorageSync('token')
+    if (!token) {
+      wx.redirectTo({ url: '/pages/index/index' })
+      return
+    }
     this.load()
   },
 
