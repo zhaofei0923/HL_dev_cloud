@@ -1,5 +1,5 @@
 {
-  "navigationBarTitleText": "会员展示",
+  "navigationBarTitleText": "推荐",
   "usingComponents": {
     "bottom-nav": "/components/bottom-nav/bottom-nav"
   }

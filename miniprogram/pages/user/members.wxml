@@ -1,35 +1,38 @@
-<view class="page safe-bottom with-bottom-nav">
-  <view class="card hero members-hero">
-    <text class="eyebrow">隐私脱敏档案</text>
-    <text class="title">优质会员</text>
-    <text class="subtitle">浏览经红娘整理的公开档案，重点查看照片、城市、职业学历和择偶期待。</text>
-    <view class="summary-strip">
-      <view class="summary-item">
-        <text class="summary-value">{{total}}</text>
-        <text class="summary-label">可浏览</text>
+<view class="page recommend-page safe-bottom with-bottom-nav">
+  <view class="recommend-topbar">
+    <view class="recommend-heading">
+      <text class="recommend-title">推荐</text>
+      <text class="recommend-note">{{loading ? '正在整理会员资料' : countText}}</text>
+    </view>
+    <view class="topbar-actions">
+      <view wx:if="{{previewAvatars.length}}" class="avatar-stack">
+        <image
+          wx:for="{{previewAvatars}}"
+          wx:key="key"
+          class="stack-avatar {{item.className}}"
+          src="{{item.url}}"
+          mode="aspectFill"
+        ></image>
       </view>
-      <view class="summary-item">
-        <text class="summary-value">脱敏</text>
-        <text class="summary-label">隐私展示</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">画像</text>
-        <text class="summary-label">择偶期待</text>
-      </view>
+      <button
+        class="filter-trigger {{filterOpen ? 'active' : ''}}"
+        aria-label="筛选"
+        bindtap="toggleFilter"
+      >
+        <view class="filter-lines">
+          <view class="filter-line line-top"></view>
+          <view class="filter-line line-mid"></view>
+          <view class="filter-line line-bottom"></view>
+        </view>
+      </button>
     </view>
   </view>
 
-  <view class="card filter-card">
-    <view class="row filter-head">
-      <view>
-        <text class="section-title">查找合适档案</text>
-        <text class="section-note">按城市、性别和关键词快速缩小范围；联系方式和红娘备注始终不公开。</text>
-      </view>
-    </view>
+  <view wx:if="{{filterOpen}}" class="filter-panel">
     <view class="field search-field">
       <input
         class="field-input"
-        placeholder="输入城市 / 职业 / 学历"
+        placeholder="城市 / 职业 / 学历"
         value="{{keyword}}"
         confirm-type="search"
         bindinput="onKeyword"
@@ -51,58 +54,62 @@
       <view class="quick-filter {{gender === '1' ? 'active' : ''}}" data-gender="1" bindtap="setGender">男士</view>
       <view class="quick-filter {{gender === '2' ? 'active' : ''}}" data-gender="2" bindtap="setGender">女士</view>
     </view>
-    <view class="button-row">
-      <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="search">搜索</button>
+    <view class="button-row filter-buttons">
+      <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="search">应用筛选</button>
       <button class="btn secondary" disabled="{{loading}}" bindtap="clearKeyword">重置</button>
     </view>
   </view>
 
-  <view class="card list-shell">
-    <view class="row list-header">
-      <view>
-        <text class="section-title">公开档案</text>
-        <text class="section-note">{{loading ? '正在整理会员资料' : countText}}</text>
-      </view>
-    </view>
-
-    <block wx:if="{{list.length}}">
-      <view wx:for="{{list}}" wx:key="id" class="list-card member-card" data-id="{{item.id}}" bindtap="openDetail">
-        <view class="member-media">
-          <image class="member-cover" src="{{item.coverUrl}}" mode="aspectFill"></image>
-          <image class="member-avatar" src="{{item.avatarUrl}}" mode="aspectFill"></image>
+  <view class="recommend-stage">
+    <block wx:if="{{currentMember}}">
+      <view
+        class="recommend-card"
+        bindtap="openCurrentDetail"
+        bindtouchstart="onCardTouchStart"
+        bindtouchend="onCardTouchEnd"
+      >
+        <image class="recommend-cover" src="{{currentMember.coverUrl}}" mode="aspectFill"></image>
+        <view class="cover-shade"></view>
+        <view class="card-top-meta">
+          <text class="status-chip">{{currentMember.statusText}}</text>
+          <text wx:if="{{positionText}}" class="position-chip">{{positionText}}</text>
         </view>
-        <view class="row member-head">
-          <view class="member-copy">
-            <text class="item-title">{{item.displayName}}</text>
-            <text class="item-meta">{{item.metaText}}</text>
-            <text class="item-meta">{{item.workText}}</text>
+        <view class="member-overlay">
+          <view class="privacy-chip">
+            <view class="privacy-dot"></view>
+            <text>公开资料已脱敏</text>
           </view>
-          <text class="tag gold">{{item.displayStatusText}}</text>
+          <view class="name-line">
+            <text class="recommend-name">{{currentMember.displayName}}</text>
+            <text class="recommend-age">{{currentMember.ageText}}</text>
+          </view>
+          <text class="recommend-meta">{{currentMember.primaryMeta}}</text>
+          <text class="recommend-work">{{currentMember.profileLine}}</text>
+          <view wx:if="{{currentMember.cardTags.length}}" class="card-tag-row">
+            <text wx:for="{{currentMember.cardTags}}" wx:key="*this" class="card-tag">{{item}}</text>
+          </view>
+          <view class="quote-block">
+            <text class="quote-mark">“</text>
+            <text class="quote-text">{{currentMember.partnerPreview}}</text>
+          </view>
         </view>
+      </view>
 
-        <view wx:if="{{item.highlightTags.length}}" class="tag-row">
-          <text wx:for="{{item.highlightTags}}" wx:for-item="tag" wx:key="*this" class="tag">{{tag}}</text>
-          <text class="tag rose">完整度 {{item.profileCompletionText}}</text>
-        </view>
-
-        <view class="member-section">
-          <text class="member-label">择偶期待</text>
-          <text class="item-desc">{{item.partnerText}}</text>
-        </view>
-        <text class="detail-link">查看完整档案</text>
+      <view class="recommend-toolbar">
+        <button class="toolbar-button toolbar-detail" catchtap="openCurrentDetail">查看详情</button>
+        <button class="toolbar-button toolbar-next" catchtap="nextMember">换一位</button>
       </view>
     </block>
 
-    <view wx:else class="empty">
+    <view wx:else class="recommend-empty">
       <text class="empty-title">{{loading ? '正在加载会员' : emptyTitle}}</text>
-      <text class="empty-note">{{loading ? '请稍候，正在整理可公开展示的会员档案。' : emptyNote}}</text>
+      <text class="empty-note">{{loading ? '请稍候，正在整理可公开展示的会员资料。' : emptyNote}}</text>
+      <view class="button-row empty-buttons">
+        <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="load">重新加载</button>
+        <button class="btn ghost" bindtap="toggleFilter">调整筛选</button>
+      </view>
+      <button class="btn secondary profile-entry" bindtap="goProfile">完善我的资料</button>
     </view>
-  </view>
-
-  <view class="card notice-card privacy-card">
-    <text class="section-title">想被更准确推荐？</text>
-    <text class="section-note">完善自己的基础资料后，红娘可以基于城市、职业、价值观和活动偏好继续跟进。</text>
-    <button class="btn ghost profile-btn" bindtap="goProfile">完善个人资料</button>
   </view>
 
   <bottom-nav role="user" active="members"></bottom-nav>

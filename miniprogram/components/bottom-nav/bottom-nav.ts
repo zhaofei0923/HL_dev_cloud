@@ -8,7 +8,7 @@ type NavItem = {
 }
 
 const USER_TABS: NavItem[] = [
-  { key: 'members', label: '会员', path: '/pages/user/members', icon: 'members' },
+  { key: 'members', label: '推荐', path: '/pages/user/members', icon: 'members' },
   { key: 'salon', label: '沙龙', path: '/pages/user/salon', icon: 'salon' },
   { key: 'mine', label: '我的', path: '/pages/user/profile', icon: 'mine' }
 ]
