@@ -61,7 +61,7 @@
 
 - 默认只读：`id`、`userId`、`matchmakerId`、`status`、`applySource`、`applyMessage`、`reviewRemark`、`reviewedAt`、`reviewerId`、`createdAt`、`updatedAt`。
 - 运营动作：日常审批应由红娘在小程序端处理；后台只用于排查异常状态。
-- 微信分享：`matchmakerShare`、`memberShare`、`salonShare` 来源会通过 `/member/matchmaker-invite/accept` 自动写入 `approved`、`hl_members` 和 `hl_messages`。
+- 微信分享：`matchmakerShare`、`memberShare`、`salonShare`、`memberSalonShare` 来源会通过 `/member/matchmaker-invite/accept` 自动写入 `approved`、`hl_members` 和 `hl_messages`。
 - 禁止动作：不要在 CMS 手工把 `status` 改成 `approved`。审批通过或分享自动注册都会同时写入 `hl_members` 和 `hl_messages`，必须通过云函数完成。
 
 ## 隐藏字段和保护集合

@@ -72,7 +72,9 @@ Page({
     data: {
         id: '',
         event: null,
+        shareCard: { canShare: false },
         loading: false,
+        shareLoading: false,
         actionLoading: false
     },
     onLoad(options) {
@@ -85,14 +87,37 @@ Page({
         this.setData({ loading: true });
         try {
             const event = await salon_1.salonApi.detail(this.data.id);
-            this.setData({ event: normalizeEvent(event) });
+            const normalized = normalizeEvent(event);
+            this.setData({ event: normalized });
+            if (normalized && normalized.isRegistered && normalized.status === 'upcoming') {
+                await this.loadShareCard();
+            }
+            else {
+                this.setData({ shareCard: { canShare: false } });
+            }
         }
         catch (err) {
             console.warn('load salon detail failed', err);
-            this.setData({ event: null });
+            this.setData({ event: null, shareCard: { canShare: false } });
         }
         finally {
             this.setData({ loading: false });
+        }
+    },
+    async loadShareCard() {
+        if (!this.data.id)
+            return;
+        this.setData({ shareLoading: true });
+        try {
+            const shareCard = await salon_1.salonApi.shareCard(this.data.id, false);
+            this.setData({ shareCard });
+        }
+        catch (err) {
+            console.warn('load salon share card failed', err);
+            this.setData({ shareCard: { canShare: false } });
+        }
+        finally {
+            this.setData({ shareLoading: false });
         }
     },
     async register() {
@@ -136,5 +161,13 @@ Page({
             return;
         }
         this.register();
+    },
+    onShareAppMessage() {
+        const card = this.data.shareCard || {};
+        const event = this.data.event || {};
+        return {
+            title: card.title || `邀请你参加沙龙《${event.title || '精选沙龙'}》`,
+            path: card.sharePath || `/pages/user/salon-detail?id=${encodeURIComponent(this.data.id)}`
+        };
     }
 });

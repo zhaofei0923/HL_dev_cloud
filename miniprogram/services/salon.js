@@ -9,6 +9,9 @@ exports.salonApi = {
     detail(id) {
         return (0, api_1.request)(`/salon/events/${id}`);
     },
+    shareCard(id, showError = false) {
+        return (0, api_1.request)(`/salon/events/${id}/share-card`, { showError });
+    },
     register(id) {
         return (0, api_1.request)(`/salon/events/${id}/register`, { method: 'POST' });
     },

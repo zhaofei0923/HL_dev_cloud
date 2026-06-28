@@ -714,7 +714,7 @@ async function resolveMatchmakerForRequest(data = {}) {
 
 function requestApplySource(data = {}) {
   const source = String(data.applySource || data.source || '').trim();
-  if (['scan', 'share', 'inviteCode', 'manual', 'matchmakerShare', 'memberShare', 'salonShare'].includes(source)) return source;
+  if (['scan', 'share', 'inviteCode', 'manual', 'matchmakerShare', 'memberShare', 'salonShare', 'memberSalonShare'].includes(source)) return source;
   if (data.scanResult || data.scene) return 'scan';
   if (data.inviteCode) return 'inviteCode';
   return 'manual';
@@ -722,7 +722,7 @@ function requestApplySource(data = {}) {
 
 function isShareInviteSource(data = {}) {
   const source = requestApplySource(data);
-  return ['share', 'matchmakerShare', 'memberShare', 'salonShare'].includes(source);
+  return ['share', 'matchmakerShare', 'memberShare', 'salonShare', 'memberSalonShare'].includes(source);
 }
 
 async function matchmakerInvitePreview(data = {}) {
@@ -1576,6 +1576,37 @@ const salon = {
     return event ? eventView(event, currentUserId) : null;
   },
 
+  async shareCard(eventId, userId) {
+    const event = await getById(C.salonEvents, eventId);
+    if (!event) throw createHttpError('event not found', 404, 40400);
+    const eventSummary = {
+      id: event.id,
+      title: event.title || '精选沙龙',
+      eventDate: event.eventDate || '',
+      location: event.location || '',
+      status: event.status || ''
+    };
+    if (event.status !== 'upcoming') {
+      return { canShare: false, reason: 'event_unavailable', event: eventSummary };
+    }
+    const registration = await getOne(C.registrations, { eventId: event.id, userId: Number(userId), status: 'registered' });
+    if (!registration) {
+      return { canShare: false, reason: 'not_registered', event: eventSummary };
+    }
+    const matchmakerRow = await getOne(C.matchmakers, { userId: Number(event.organizerId), status: 1 });
+    if (!matchmakerRow || Number(matchmakerRow.certificationStatus) !== 2) {
+      return { canShare: false, reason: 'matchmaker_unavailable', event: eventSummary };
+    }
+    const matchmakerWithIdentity = await ensureMatchmakerIdentity(matchmakerRow);
+    const sharePath = `/pages/user/matchmaker-invite?code=${encodeURIComponent(matchmakerWithIdentity.inviteCode)}&source=memberSalonShare&eventId=${encodeURIComponent(String(event.id))}&autoRegister=1`;
+    return {
+      canShare: true,
+      title: `邀请你报名沙龙《${eventSummary.title}》`,
+      sharePath,
+      event: eventSummary
+    };
+  },
+
   async register(eventId, userId) {
     let event = await getById(C.salonEvents, eventId);
     if (!event) throw createHttpError('event not found', 404, 40400);
@@ -1902,6 +1933,8 @@ exports.main = async (event = {}) => {
     if (method === 'POST' && path === '/salon/events') return ok(await salon.createEvent(session.userId, data));
     if (method === 'GET' && path === '/salon/my-events') return ok(await salon.myEvents(session.userId, data));
     if (method === 'GET' && path === '/salon/my-registrations') return ok(await salon.myRegistrations(session.userId, data));
+    const shareCardMatch = path.match(/^\/salon\/events\/(\d+)\/share-card$/);
+    if (shareCardMatch && method === 'GET') return ok(await salon.shareCard(shareCardMatch[1], session.userId));
     const salonMatch = path.match(/^\/salon\/events\/(\d+)$/);
     if (salonMatch && method === 'GET') {
       const detail = await salon.getEventDetail(salonMatch[1], session.userId);

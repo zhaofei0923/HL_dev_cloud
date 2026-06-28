@@ -6,7 +6,7 @@ import { extractInviteCode, invitePath, normalizeInviteCode } from '../../utils/
 function sourceText(source: string) {
   if (source === 'scan') return '扫码添加'
   if (source === 'share' || source === 'matchmakerShare' || source === 'memberShare') return '微信注册链接'
-  if (source === 'salonShare') return '沙龙邀请'
+  if (source === 'salonShare' || source === 'memberSalonShare') return '沙龙邀请'
   if (source === 'inviteCode') return '邀请码'
   return '手动输入'
 }
@@ -17,7 +17,7 @@ function queryValue(raw: string, key: string) {
 }
 
 function isAutoInviteSource(source: string) {
-  return ['share', 'matchmakerShare', 'memberShare', 'salonShare'].includes(source)
+  return ['share', 'matchmakerShare', 'memberShare', 'salonShare', 'memberSalonShare'].includes(source)
 }
 
 function errorMessage(err: any) {
@@ -29,7 +29,7 @@ function parseOptions(options: Record<string, any>) {
   const code = extractInviteCode(options.code || options.inviteCode || options.matchmakerNo || scene)
   const source = String(options.source || queryValue(scene, 'source') || (scene ? 'scan' : 'share'))
   const eventId = String(options.eventId || queryValue(scene, 'eventId') || '')
-  const autoRegister = String(options.autoRegister || queryValue(scene, 'autoRegister') || '') === '1' || source === 'salonShare'
+  const autoRegister = String(options.autoRegister || queryValue(scene, 'autoRegister') || '') === '1' || source === 'salonShare' || source === 'memberSalonShare'
   return {
     code: normalizeInviteCode(code),
     source,

@@ -388,7 +388,7 @@ hl_messages
 微信分享注册链接自动注册 -> POST /member/matchmaker-invite/accept
 ```
 
-该接口仅用于 `share`、`matchmakerShare`、`memberShare`、`salonShare` 等微信分享来源，会自动把申请记录置为 `approved`，并同步写入 `hl_members` 和 `hl_messages`。
+该接口仅用于 `share`、`matchmakerShare`、`memberShare`、`salonShare`、`memberSalonShare` 等微信分享来源，会自动把申请记录置为 `approved`，并同步写入 `hl_members` 和 `hl_messages`。
 
 ```text
 红娘端小程序 -> 会员申请 -> 通过/拒绝

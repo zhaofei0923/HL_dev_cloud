@@ -7,6 +7,9 @@ export const salonApi = {
   detail(id: number | string) {
     return request(`/salon/events/${id}`)
   },
+  shareCard(id: number | string, showError = false) {
+    return request(`/salon/events/${id}/share-card`, { showError })
+  },
   register(id: number | string) {
     return request(`/salon/events/${id}/register`, { method: 'POST' })
   },

@@ -47,6 +47,17 @@
       </view>
       <text class="section-note action-note">{{event.primaryAction.note}}</text>
     </view>
+
+    <view wx:if="{{shareCard.canShare}}" class="card share-card">
+      <view class="row share-head">
+        <view>
+          <text class="section-title">邀请好友参加</text>
+          <text class="section-note">好友点开微信分享卡片后，会自动注册并报名本场沙龙。</text>
+        </view>
+        <text class="tag gold">已报名</text>
+      </view>
+      <button class="btn gold share-btn" open-type="share" loading="{{shareLoading}}" disabled="{{shareLoading}}">分享给微信好友</button>
+    </view>
   </block>
 
   <view wx:else class="card empty">

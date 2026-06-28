@@ -21,3 +21,11 @@
 .primary-action-btn {
   width: 100%;
 }
+
+.share-head {
+  align-items: flex-start;
+}
+
+.share-btn {
+  margin-top: 20rpx;
+}
