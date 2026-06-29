@@ -23,6 +23,7 @@ const C = {
 
 const MATCHMAKER_CERTIFICATION_STATUSES = new Set([0, 1, 2]);
 const SALON_REVIEW_STATUSES = new Set(['upcoming', 'rejected']);
+const MEMBER_PHOTO_LIMIT = 3;
 
 const SEEDED_MEMBER_GROUPS = [
   [
@@ -266,11 +267,26 @@ function defaultMemberMedia(data = {}) {
   };
 }
 
+function normalizeMemberPhotos(photos) {
+  if (!Array.isArray(photos)) return [];
+  const seen = new Set();
+  const normalized = [];
+  photos.forEach(photo => {
+    if (typeof photo !== 'string') return;
+    const value = photo.trim();
+    if (!value || seen.has(value) || normalized.length >= MEMBER_PHOTO_LIMIT) return;
+    seen.add(value);
+    normalized.push(value);
+  });
+  return normalized;
+}
+
 function withMemberMedia(data = {}) {
   const defaults = defaultMemberMedia(data);
+  const photos = normalizeMemberPhotos(data.photos);
   return {
     avatarUrl: data.avatarUrl || defaults.avatarUrl,
-    photos: Array.isArray(data.photos) && data.photos.length ? clone(data.photos).slice(0, 3) : defaults.photos
+    photos: photos.length ? photos : defaults.photos
   };
 }
 
@@ -1491,6 +1507,7 @@ const member = {
     }
     const profile = await getOne(C.profiles, { userId: row.userId });
     const profilePatch = { ...data };
+    if (data.photos !== undefined) profilePatch.photos = normalizeMemberPhotos(data.photos);
     if (data.displayEnabled !== undefined) {
       profilePatch.displayEnabled = isTrue(data.displayEnabled);
       profilePatch.displayUpdatedAt = nowIso();
@@ -1958,6 +1975,7 @@ exports.main = async (event = {}) => {
       const updatedUser = Object.keys(userPatch).length ? await updateRow(C.users, user, userPatch) : user;
       let profile = await getOne(C.profiles, { userId: Number(session.userId) });
       const profilePatch = { ...data, userId: Number(session.userId) };
+      if (data.photos !== undefined) profilePatch.photos = normalizeMemberPhotos(data.photos);
       if (data.displayEnabled !== undefined) {
         profilePatch.displayEnabled = isTrue(data.displayEnabled);
         profilePatch.displayUpdatedAt = nowIso();

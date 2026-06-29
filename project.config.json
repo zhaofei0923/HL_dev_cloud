@@ -40,7 +40,7 @@
     "localPlugins": false,
     "disableUseStrict": false,
     "useCompilerPlugins": false,
-    "condition": false,
+    "condition": true,
     "swc": false,
     "disableSWC": true
   },
@@ -48,7 +48,24 @@
   "projectname": "HL_dev_cloud",
   "libVersion": "3.16.1",
   "cloudfunctionTemplateRoot": "cloudfunctionTemplate/",
-  "condition": {},
+  "condition": {
+    "miniprogram": {
+      "list": [
+        {
+          "name": "首页",
+          "pathName": "pages/index/index",
+          "query": "",
+          "scene": null
+        },
+        {
+          "name": "会员展示",
+          "pathName": "pages/user/members",
+          "query": "",
+          "scene": null
+        }
+      ]
+    }
+  },
   "compileType": "miniprogram",
   "packOptions": {
     "ignore": [],

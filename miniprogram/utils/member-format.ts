@@ -19,6 +19,8 @@ const LIFESTYLE_PHOTOS = [
   `${ASSET_ROOT}lifestyle-sport.png`
 ]
 
+export const PHOTO_WALL_LIMIT = 3
+
 type MemberRow = Record<string, any>
 
 type LabelValue = {
@@ -106,16 +108,31 @@ export function defaultPhotos(row: MemberRow) {
 }
 
 export function photosFromText(value: string) {
-  return value
+  return normalizePhotoList(value
     .split(/\r?\n/)
     .map(item => item.trim())
-    .filter(Boolean)
-    .slice(0, 3)
+    .filter(Boolean))
+}
+
+export function normalizePhotoList(values: string[]) {
+  const seen = new Set<string>()
+  const photos: string[] = []
+  values.forEach(value => {
+    const photo = String(value || '').trim()
+    if (!photo || seen.has(photo) || photos.length >= PHOTO_WALL_LIMIT) return
+    seen.add(photo)
+    photos.push(photo)
+  })
+  return photos
+}
+
+export function mergePhotoLists(existing: string[], next: string[]) {
+  return normalizePhotoList([...existing, ...next])
 }
 
 export function normalizeMemberProfile(row: MemberRow, internal = false) {
   const avatarUrl = row.avatarUrl || defaultAvatar(row)
-  const photos = Array.isArray(row.photos) && row.photos.length ? row.photos.slice(0, 3) : defaultPhotos(row)
+  const photos = Array.isArray(row.photos) && row.photos.length ? normalizePhotoList(row.photos) : defaultPhotos(row)
   const profileCompletion = completionFor({ ...row, photos })
   const city = row.city || row.province || '城市待确认'
   const age = valueWithUnit(row.age, '岁', '年龄保密')

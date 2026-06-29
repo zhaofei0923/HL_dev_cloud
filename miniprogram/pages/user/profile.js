@@ -47,7 +47,24 @@ const COMPLETION_FIELDS = [
     'partnerRequirement'
 ];
 function photosToText(photos) {
-    return Array.isArray(photos) ? photos.slice(0, 3).join('\n') : '';
+    return Array.isArray(photos) ? (0, member_format_1.photosFromText)(photos.join('\n')).join('\n') : '';
+}
+function appendChosenPhotos(form, images) {
+    const existingPhotos = (0, member_format_1.photosFromText)(String(form.photoText || ''));
+    const existingDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : [];
+    const displayUrlByPhoto = existingPhotos.reduce((map, photo, index) => {
+        map[photo] = String(existingDisplayUrls[index] || photo);
+        return map;
+    }, {});
+    images.forEach(image => {
+        if (!displayUrlByPhoto[image.fileID])
+            displayUrlByPhoto[image.fileID] = image.displayUrl;
+    });
+    const photos = (0, member_format_1.mergePhotoLists)(existingPhotos, images.map(item => item.fileID));
+    return {
+        photoText: photos.join('\n'),
+        photoDisplayUrls: photos.map(photo => displayUrlByPhoto[photo] || photo)
+    };
 }
 function normalizeForm(raw, user) {
     const form = {
@@ -328,15 +345,22 @@ Page({
         }
     },
     async choosePhotos() {
+        let added = false;
         try {
+            const existingPhotos = (0, member_format_1.photosFromText)(String(this.data.form.photoText || ''));
+            const remaining = member_format_1.PHOTO_WALL_LIMIT - existingPhotos.length;
+            if (remaining <= 0) {
+                wx.showToast({ title: '照片墙最多3张', icon: 'none' });
+                return;
+            }
             wx.showLoading({ title: '上传中' });
-            const images = await (0, local_image_1.chooseLocalImages)(3);
+            const images = await (0, local_image_1.chooseLocalImages)(remaining);
             if (images.length) {
                 this.setForm({
                     ...this.data.form,
-                    photoText: images.map(item => item.fileID).join('\n'),
-                    photoDisplayUrls: images.map(item => item.displayUrl)
+                    ...appendChosenPhotos(this.data.form, images)
                 });
+                added = true;
             }
         }
         catch (err) {
@@ -347,6 +371,8 @@ Page({
         }
         finally {
             wx.hideLoading();
+            if (added)
+                wx.showToast({ title: '已添加，请点保存资料', icon: 'none' });
         }
     },
     onGenderChange(e) {

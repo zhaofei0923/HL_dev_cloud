@@ -1,6 +1,6 @@
 import { memberApi } from '../../services/member'
-import { chooseLocalImages, isImageChooseCancel } from '../../utils/local-image'
-import { defaultAvatar, defaultPhotos, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
+import { chooseLocalImages, isImageChooseCancel, type ChosenImage } from '../../utils/local-image'
+import { PHOTO_WALL_LIMIT, defaultAvatar, defaultPhotos, mergePhotoLists, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
 import {
   AGE_OPTIONS,
   EDUCATION_OPTIONS,
@@ -25,6 +25,25 @@ function payloadFromForm(form: Record<string, any>) {
   delete payload.avatarDisplayUrl
   delete payload.photoDisplayUrls
   return payload
+}
+
+function appendChosenPhotos(form: Record<string, any>, images: ChosenImage[]) {
+  const existingPhotos = photosFromText(String(form.photoText || ''))
+  const existingDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : []
+  const displayUrlByPhoto = existingPhotos.reduce<Record<string, string>>((map, photo, index) => {
+    map[photo] = String(existingDisplayUrls[index] || photo)
+    return map
+  }, {})
+
+  images.forEach(image => {
+    if (!displayUrlByPhoto[image.fileID]) displayUrlByPhoto[image.fileID] = image.displayUrl
+  })
+
+  const photos = mergePhotoLists(existingPhotos, images.map(item => item.fileID))
+  return {
+    photoText: photos.join('\n'),
+    photoDisplayUrls: photos.map(photo => displayUrlByPhoto[photo] || photo)
+  }
 }
 
 function previewFor(form: Record<string, any>) {
@@ -210,20 +229,28 @@ Page({
   },
 
   async choosePhotos() {
+    let added = false
     try {
+      const existingPhotos = photosFromText(String(this.data.form.photoText || ''))
+      const remaining = PHOTO_WALL_LIMIT - existingPhotos.length
+      if (remaining <= 0) {
+        wx.showToast({ title: '照片墙最多3张', icon: 'none' })
+        return
+      }
+
       wx.showLoading({ title: '上传中' })
-      const images = await chooseLocalImages(3)
+      const images = await chooseLocalImages(remaining)
       if (!images.length) return
       const form = {
         ...this.data.form,
-        photoText: images.map(item => item.fileID).join('\n'),
-        photoDisplayUrls: images.map(item => item.displayUrl)
+        ...appendChosenPhotos(this.data.form, images)
       }
       this.setData({
         form,
         preview: previewFor(form),
         ...selectorTextFor(form)
       })
+      added = true
     } catch (err) {
       if (!isImageChooseCancel(err)) {
         console.warn('upload photos failed', err)
@@ -231,6 +258,7 @@ Page({
       }
     } finally {
       wx.hideLoading()
+      if (added) wx.showToast({ title: '已添加，请点保存资料', icon: 'none' })
     }
   },
 

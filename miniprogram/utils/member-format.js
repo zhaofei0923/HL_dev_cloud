@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.normalizeMemberProfile = exports.photosFromText = exports.defaultPhotos = exports.defaultAvatar = exports.memberTypeText = exports.genderText = void 0;
+exports.normalizeMemberProfile = exports.mergePhotoLists = exports.normalizePhotoList = exports.photosFromText = exports.defaultPhotos = exports.defaultAvatar = exports.memberTypeText = exports.genderText = exports.PHOTO_WALL_LIMIT = void 0;
 const ASSET_ROOT = '/assets/members/';
 const MALE_AVATARS = [
     `${ASSET_ROOT}avatar-male-1.png`,
@@ -18,6 +18,7 @@ const LIFESTYLE_PHOTOS = [
     `${ASSET_ROOT}lifestyle-reading.png`,
     `${ASSET_ROOT}lifestyle-sport.png`
 ];
+exports.PHOTO_WALL_LIMIT = 3;
 function hashKey(value) {
     let hash = 0;
     for (let index = 0; index < value.length; index += 1) {
@@ -99,16 +100,32 @@ function defaultPhotos(row) {
 }
 exports.defaultPhotos = defaultPhotos;
 function photosFromText(value) {
-    return value
+    return normalizePhotoList(value
         .split(/\r?\n/)
         .map(item => item.trim())
-        .filter(Boolean)
-        .slice(0, 3);
+        .filter(Boolean));
 }
 exports.photosFromText = photosFromText;
+function normalizePhotoList(values) {
+    const seen = new Set();
+    const photos = [];
+    values.forEach(value => {
+        const photo = String(value || '').trim();
+        if (!photo || seen.has(photo) || photos.length >= exports.PHOTO_WALL_LIMIT)
+            return;
+        seen.add(photo);
+        photos.push(photo);
+    });
+    return photos;
+}
+exports.normalizePhotoList = normalizePhotoList;
+function mergePhotoLists(existing, next) {
+    return normalizePhotoList([...existing, ...next]);
+}
+exports.mergePhotoLists = mergePhotoLists;
 function normalizeMemberProfile(row, internal = false) {
     const avatarUrl = row.avatarUrl || defaultAvatar(row);
-    const photos = Array.isArray(row.photos) && row.photos.length ? row.photos.slice(0, 3) : defaultPhotos(row);
+    const photos = Array.isArray(row.photos) && row.photos.length ? normalizePhotoList(row.photos) : defaultPhotos(row);
     const profileCompletion = completionFor({ ...row, photos });
     const city = row.city || row.province || '城市待确认';
     const age = valueWithUnit(row.age, '岁', '年龄保密');
