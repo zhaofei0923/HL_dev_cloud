@@ -1,19 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resolveImageUrls = exports.chooseLocalImages = void 0;
-function saveLocalImage(tempFilePath) {
-    return new Promise(resolve => {
-        wx.saveFile({
-            tempFilePath,
-            success(res) {
-                resolve(res.savedFilePath);
-            },
-            fail() {
-                resolve(tempFilePath);
-            }
-        });
-    });
-}
+exports.resolveImageUrls = exports.isImageChooseCancel = exports.chooseLocalImages = void 0;
 function extensionFromPath(path) {
     const cleanPath = path.split('?')[0] || '';
     const match = cleanPath.match(/\.([a-zA-Z0-9]+)$/);
@@ -38,6 +25,8 @@ async function uploadImage(tempFilePath) {
         cloudPath: cloudPathFor(tempFilePath),
         filePath: tempFilePath
     });
+    if (!result.fileID)
+        throw new Error('uploadFile returned empty fileID');
     return result.fileID;
 }
 async function chooseImages(count) {
@@ -56,28 +45,33 @@ async function chooseImages(count) {
     });
 }
 async function uploadOrSave(tempFilePath) {
-    try {
-        const fileID = await uploadImage(tempFilePath);
-        return {
-            fileID,
-            tempFilePath,
-            displayUrl: tempFilePath
-        };
-    }
-    catch (err) {
-        const savedFilePath = await saveLocalImage(tempFilePath);
-        return {
-            fileID: savedFilePath,
-            tempFilePath,
-            displayUrl: savedFilePath
-        };
-    }
+    const fileID = await uploadImage(tempFilePath);
+    return {
+        fileID,
+        tempFilePath,
+        displayUrl: tempFilePath
+    };
 }
 async function chooseLocalImages(count = 1) {
     const paths = await chooseImages(count);
     return Promise.all(paths.map(path => uploadOrSave(path)));
 }
 exports.chooseLocalImages = chooseLocalImages;
+function errorText(err) {
+    if (!err)
+        return '';
+    if (typeof err === 'string')
+        return err;
+    if (typeof err === 'object') {
+        const value = err;
+        return String(value.errMsg || value.message || '');
+    }
+    return String(err);
+}
+function isImageChooseCancel(err) {
+    return /cancel/i.test(errorText(err));
+}
+exports.isImageChooseCancel = isImageChooseCancel;
 async function resolveImageUrls(paths) {
     const safePaths = paths.filter(Boolean);
     const cloudPaths = safePaths.filter(isCloudFileID);

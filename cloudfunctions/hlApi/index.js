@@ -477,6 +477,67 @@ function paginate(rows, page = 1, pageSize = 20) {
   };
 }
 
+function isCloudFileID(value) {
+  return /^cloud:\/\//.test(String(value || ''));
+}
+
+function collectMemberMediaFileIDs(row) {
+  const fileIDs = [];
+  if (isCloudFileID(row.avatarUrl)) fileIDs.push(row.avatarUrl);
+  if (isCloudFileID(row.coverUrl)) fileIDs.push(row.coverUrl);
+  if (Array.isArray(row.photos)) {
+    row.photos.forEach(photo => {
+      if (isCloudFileID(photo)) fileIDs.push(photo);
+    });
+  }
+  return fileIDs;
+}
+
+async function memberMediaURLMap(fileIDs = []) {
+  const uniqueFileIDs = Array.from(new Set(fileIDs.filter(isCloudFileID)));
+  const urlMap = {};
+  for (let index = 0; index < uniqueFileIDs.length; index += 50) {
+    const fileList = uniqueFileIDs.slice(index, index + 50);
+    try {
+      const result = await cloud.getTempFileURL({ fileList });
+      (result.fileList || []).forEach(item => {
+        if (item.fileID && item.tempFileURL && Number(item.status) === 0) {
+          urlMap[item.fileID] = item.tempFileURL;
+        }
+      });
+    } catch (err) {
+      console.warn('resolve member media temp urls failed', err);
+    }
+  }
+  return urlMap;
+}
+
+function applyMemberMediaURLMap(row, urlMap) {
+  const next = { ...row };
+  if (isCloudFileID(next.avatarUrl) && urlMap[next.avatarUrl]) {
+    next.avatarUrl = urlMap[next.avatarUrl];
+  }
+  if (isCloudFileID(next.coverUrl) && urlMap[next.coverUrl]) {
+    next.coverUrl = urlMap[next.coverUrl];
+  }
+  if (Array.isArray(next.photos)) {
+    next.photos = next.photos.map(photo => (isCloudFileID(photo) && urlMap[photo] ? urlMap[photo] : photo));
+  }
+  return next;
+}
+
+async function resolveMemberMediaPage(page) {
+  const list = Array.isArray(page.list) ? page.list : [];
+  const fileIDs = list.reduce((ids, row) => ids.concat(collectMemberMediaFileIDs(row)), []);
+  if (!fileIDs.length) return page;
+  const urlMap = await memberMediaURLMap(fileIDs);
+  if (!Object.keys(urlMap).length) return page;
+  return {
+    ...page,
+    list: list.map(row => applyMemberMediaURLMap(row, urlMap))
+  };
+}
+
 function publicUser(user) {
   const safe = stripInternal(user) || {};
   delete safe.openid;
@@ -1360,7 +1421,9 @@ const member = {
     }
     const matchRecords = await getAll(C.matchRecords, { matchmakerId: mm.id });
     const views = await Promise.all(rows.map(row => memberView(row, { matchRecords })));
-    return paginate(views.filter(row => matchesMemberFilters(row, filters)).sort((a, b) => b.id - a.id), filters.page, filters.pageSize);
+    return resolveMemberMediaPage(
+      paginate(views.filter(row => matchesMemberFilters(row, filters)).sort((a, b) => b.id - a.id), filters.page, filters.pageSize)
+    );
   },
 
   async resources(matchmakerUserId, filters = {}) {
@@ -1375,13 +1438,13 @@ const member = {
     const memberViews = await Promise.all(rows.filter(row => row.matchmakerId !== mm.id).map(row => memberView(row, { matchRecords })));
     const profileViews = await Promise.all(profileRows.map(row => profileMemberView(row, { matchRecords })));
     const views = [...memberViews, ...profileViews];
-    return paginate(
+    return resolveMemberMediaPage(paginate(
       views
         .filter(row => Number(row.status) === 1 && row.displayEnabled && matchesMemberFilters(row, filters))
         .sort(sortMemberRowsDesc),
       filters.page,
       filters.pageSize
-    );
+    ));
   },
 
   async showcase(filters = {}) {
@@ -1397,13 +1460,13 @@ const member = {
       if (!view.displayEnabled) return null;
       return sanitizePublicMemberRow(view);
     }));
-    return paginate(
+    return resolveMemberMediaPage(paginate(
       [...memberViews, ...profileViews]
         .filter(row => row && Number(row.status) === 1 && matchesMemberFilters(row, filters))
         .sort(sortMemberRowsDesc),
       filters.page,
       filters.pageSize
-    );
+    ));
   },
 
   async update(matchmakerUserId, memberId, data = {}) {

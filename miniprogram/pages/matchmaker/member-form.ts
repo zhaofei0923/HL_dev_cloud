@@ -1,5 +1,5 @@
 import { memberApi } from '../../services/member'
-import { chooseLocalImages } from '../../utils/local-image'
+import { chooseLocalImages, isImageChooseCancel } from '../../utils/local-image'
 import { defaultAvatar, defaultPhotos, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
 import {
   AGE_OPTIONS,
@@ -200,7 +200,10 @@ Page({
         ...selectorTextFor(form)
       })
     } catch (err) {
-      // 用户取消选择时无需提示。
+      if (!isImageChooseCancel(err)) {
+        console.warn('upload avatar failed', err)
+        wx.showToast({ title: '图片上传失败，请重试', icon: 'none' })
+      }
     } finally {
       wx.hideLoading()
     }
@@ -222,7 +225,10 @@ Page({
         ...selectorTextFor(form)
       })
     } catch (err) {
-      // 用户取消选择时无需提示。
+      if (!isImageChooseCancel(err)) {
+        console.warn('upload photos failed', err)
+        wx.showToast({ title: '图片上传失败，请重试', icon: 'none' })
+      }
     } finally {
       wx.hideLoading()
     }

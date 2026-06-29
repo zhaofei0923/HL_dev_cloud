@@ -4,20 +4,6 @@ export type ChosenImage = {
   displayUrl: string
 }
 
-function saveLocalImage(tempFilePath: string) {
-  return new Promise<string>(resolve => {
-    wx.saveFile({
-      tempFilePath,
-      success(res) {
-        resolve(res.savedFilePath)
-      },
-      fail() {
-        resolve(tempFilePath)
-      }
-    })
-  })
-}
-
 function extensionFromPath(path: string) {
   const cleanPath = path.split('?')[0] || ''
   const match = cleanPath.match(/\.([a-zA-Z0-9]+)$/)
@@ -44,6 +30,7 @@ async function uploadImage(tempFilePath: string) {
     cloudPath: cloudPathFor(tempFilePath),
     filePath: tempFilePath
   })
+  if (!result.fileID) throw new Error('uploadFile returned empty fileID')
   return result.fileID
 }
 
@@ -64,26 +51,31 @@ async function chooseImages(count: number) {
 }
 
 async function uploadOrSave(tempFilePath: string): Promise<ChosenImage> {
-  try {
-    const fileID = await uploadImage(tempFilePath)
-    return {
-      fileID,
-      tempFilePath,
-      displayUrl: tempFilePath
-    }
-  } catch (err) {
-    const savedFilePath = await saveLocalImage(tempFilePath)
-    return {
-      fileID: savedFilePath,
-      tempFilePath,
-      displayUrl: savedFilePath
-    }
+  const fileID = await uploadImage(tempFilePath)
+  return {
+    fileID,
+    tempFilePath,
+    displayUrl: tempFilePath
   }
 }
 
 export async function chooseLocalImages(count = 1) {
   const paths = await chooseImages(count)
   return Promise.all(paths.map(path => uploadOrSave(path)))
+}
+
+function errorText(err: unknown) {
+  if (!err) return ''
+  if (typeof err === 'string') return err
+  if (typeof err === 'object') {
+    const value = err as { errMsg?: unknown; message?: unknown }
+    return String(value.errMsg || value.message || '')
+  }
+  return String(err)
+}
+
+export function isImageChooseCancel(err: unknown) {
+  return /cancel/i.test(errorText(err))
 }
 
 export async function resolveImageUrls(paths: string[]) {

@@ -173,7 +173,10 @@ Page({
             });
         }
         catch (err) {
-            // 用户取消选择时无需提示。
+            if (!(0, local_image_1.isImageChooseCancel)(err)) {
+                console.warn('upload avatar failed', err);
+                wx.showToast({ title: '图片上传失败，请重试', icon: 'none' });
+            }
         }
         finally {
             wx.hideLoading();
@@ -197,7 +200,10 @@ Page({
             });
         }
         catch (err) {
-            // 用户取消选择时无需提示。
+            if (!(0, local_image_1.isImageChooseCancel)(err)) {
+                console.warn('upload photos failed', err);
+                wx.showToast({ title: '图片上传失败，请重试', icon: 'none' });
+            }
         }
         finally {
             wx.hideLoading();
