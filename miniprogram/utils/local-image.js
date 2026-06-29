@@ -44,7 +44,7 @@ async function chooseImages(count, sizeType) {
         });
     });
 }
-function cropImage(tempFilePath, mode) {
+function cropImage(tempFilePath) {
     return new Promise((resolve, reject) => {
         wx.navigateTo({
             url: '/pages/common/image-cropper',
@@ -60,20 +60,19 @@ function cropImage(tempFilePath, mode) {
                 });
                 channel.once('crop:cancel', () => reject(new Error('crop cancel')));
                 channel.emit('crop:init', {
-                    sourcePath: tempFilePath,
-                    mode
+                    sourcePath: tempFilePath
                 });
             },
             fail: reject
         });
     });
 }
-async function cropImages(paths, mode) {
-    if (!mode)
+async function cropImages(paths, crop) {
+    if (!crop)
         return paths;
     const croppedPaths = [];
     for (let index = 0; index < paths.length; index += 1) {
-        croppedPaths.push(await cropImage(paths[index], mode));
+        croppedPaths.push(await cropImage(paths[index]));
     }
     return croppedPaths;
 }
@@ -86,8 +85,8 @@ async function uploadOrSave(tempFilePath) {
     };
 }
 async function chooseLocalImages(count = 1, options = {}) {
-    const paths = await chooseImages(count, options.cropMode ? ['original'] : ['compressed']);
-    const uploadPaths = await cropImages(paths, options.cropMode);
+    const paths = await chooseImages(count, options.crop ? ['original'] : ['compressed']);
+    const uploadPaths = await cropImages(paths, options.crop);
     if (!uploadPaths.length)
         return [];
     wx.showLoading({ title: '上传中' });

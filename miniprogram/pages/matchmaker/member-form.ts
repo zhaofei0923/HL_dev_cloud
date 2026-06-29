@@ -1,6 +1,6 @@
 import { memberApi } from '../../services/member'
 import { chooseLocalImages, isImageChooseCancel, type ChosenImage } from '../../utils/local-image'
-import { PHOTO_WALL_LIMIT, defaultAvatar, defaultPhotos, mergePhotoLists, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
+import { PHOTO_WALL_LIMIT, defaultPhotos, mergePhotoLists, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
 import {
   AGE_OPTIONS,
   EDUCATION_OPTIONS,
@@ -18,10 +18,10 @@ function payloadFromForm(form: Record<string, any>) {
   const photos = photosFromText(form.photoText)
   const payload: Record<string, any> = {
     ...form,
-    avatarUrl: form.avatarUrl || defaultAvatar(form),
     photos
   }
   delete payload.photoText
+  delete payload.avatarUrl
   delete payload.avatarDisplayUrl
   delete payload.photoDisplayUrls
   return payload
@@ -67,11 +67,16 @@ function previewFor(form: Record<string, any>) {
   const displayPhotos = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
     ? form.photoDisplayUrls.slice(0, PHOTO_WALL_LIMIT)
     : (payload.photos.length ? payload.photos : defaultPhotos(form))
-  return normalizeMemberProfile({
+  const preview = normalizeMemberProfile({
     ...payload,
-    avatarUrl: form.avatarDisplayUrl || payload.avatarUrl,
-    photos: displayPhotos
+    photos: payload.photos
   })
+  return {
+    ...preview,
+    avatarUrl: Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length ? form.photoDisplayUrls[0] : preview.avatarUrl,
+    photos: displayPhotos,
+    coverUrl: Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length ? form.photoDisplayUrls[0] : preview.coverUrl
+  }
 }
 
 function selectorTextFor(form: Record<string, any>) {
@@ -88,8 +93,6 @@ function selectorTextFor(form: Record<string, any>) {
 
 const FORM_DEFAULTS: Record<string, any> = {
   realName: '',
-  avatarUrl: '',
-  avatarDisplayUrl: '',
   photoText: '',
   photoDisplayUrls: [],
   gender: '2',
@@ -218,29 +221,6 @@ Page({
     this.updateForm('carStatus', this.data.carOptions[Number(e.detail.value)])
   },
 
-  async chooseAvatar() {
-    try {
-      const images = await chooseLocalImages(1, { cropMode: 'avatar' })
-      const image = images[0]
-      if (!image) return
-      const form = {
-        ...this.data.form,
-        avatarUrl: image.fileID,
-        avatarDisplayUrl: image.displayUrl
-      }
-      this.setData({
-        form,
-        preview: previewFor(form),
-        ...selectorTextFor(form)
-      })
-    } catch (err) {
-      if (!isImageChooseCancel(err)) {
-        console.warn('upload avatar failed', err)
-        wx.showToast({ title: '图片上传失败，请重试', icon: 'none' })
-      }
-    }
-  },
-
   async choosePhotos() {
     try {
       const existingPhotos = photosFromText(String(this.data.form.photoText || ''))
@@ -250,7 +230,7 @@ Page({
         return
       }
 
-      const images = await chooseLocalImages(remaining, { cropMode: 'photo' })
+      const images = await chooseLocalImages(remaining, { crop: true })
       if (!images.length) return
       const form = {
         ...this.data.form,

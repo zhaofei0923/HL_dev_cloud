@@ -80,15 +80,7 @@
   <view class="card form-card">
     <view class="form-section">
       <text class="section-title">形象资料</text>
-      <text class="section-note">可从本地相册选择头像和照片墙；未选择时会自动使用预设图片。</text>
-      <view class="image-upload-panel">
-        <image class="upload-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
-        <view class="upload-copy">
-          <text class="field-label">头像图片</text>
-          <text class="item-meta">建议使用清晰正面照，系统会同步到个人档案预览。</text>
-          <button class="btn secondary upload-btn" bindtap="chooseAvatar">上传头像</button>
-        </view>
-      </view>
+      <text class="section-note">只需维护照片墙，第一张照片会自动作为头像和封面；未选择时会自动使用预设图片。</text>
       <view wx:if="{{photoCount}}" class="photo-grid">
         <view wx:for="{{form.photoDisplayUrls}}" wx:key="*this" class="photo-tile">
           <image class="photo-thumb" src="{{item}}" mode="aspectFill"></image>

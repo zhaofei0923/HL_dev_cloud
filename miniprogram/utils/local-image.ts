@@ -4,10 +4,8 @@ export type ChosenImage = {
   displayUrl: string
 }
 
-export type ImageCropMode = 'avatar' | 'photo'
-
 type ChooseImageOptions = {
-  cropMode?: ImageCropMode
+  crop?: boolean
 }
 
 type CropResult = {
@@ -60,7 +58,7 @@ async function chooseImages(count: number, sizeType: Array<'original' | 'compres
   })
 }
 
-function cropImage(tempFilePath: string, mode: ImageCropMode) {
+function cropImage(tempFilePath: string) {
   return new Promise<string>((resolve, reject) => {
     wx.navigateTo({
       url: '/pages/common/image-cropper',
@@ -75,8 +73,7 @@ function cropImage(tempFilePath: string, mode: ImageCropMode) {
         })
         channel.once('crop:cancel', () => reject(new Error('crop cancel')))
         channel.emit('crop:init', {
-          sourcePath: tempFilePath,
-          mode
+          sourcePath: tempFilePath
         })
       },
       fail: reject
@@ -84,11 +81,11 @@ function cropImage(tempFilePath: string, mode: ImageCropMode) {
   })
 }
 
-async function cropImages(paths: string[], mode?: ImageCropMode) {
-  if (!mode) return paths
+async function cropImages(paths: string[], crop?: boolean) {
+  if (!crop) return paths
   const croppedPaths: string[] = []
   for (let index = 0; index < paths.length; index += 1) {
-    croppedPaths.push(await cropImage(paths[index], mode))
+    croppedPaths.push(await cropImage(paths[index]))
   }
   return croppedPaths
 }
@@ -103,8 +100,8 @@ async function uploadOrSave(tempFilePath: string): Promise<ChosenImage> {
 }
 
 export async function chooseLocalImages(count = 1, options: ChooseImageOptions = {}) {
-  const paths = await chooseImages(count, options.cropMode ? ['original'] : ['compressed'])
-  const uploadPaths = await cropImages(paths, options.cropMode)
+  const paths = await chooseImages(count, options.crop ? ['original'] : ['compressed'])
+  const uploadPaths = await cropImages(paths, options.crop)
   if (!uploadPaths.length) return []
 
   wx.showLoading({ title: '上传中' })

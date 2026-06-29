@@ -1,9 +1,6 @@
 "use strict";
 const CANVAS_ID = 'cropCanvas';
 const EXPORT_LONG_EDGE = 1200;
-const AVATAR_RATIOS = [
-    { key: '1:1', label: '1:1 方图', help: '头像固定使用 1:1 方图，适合正面头像展示。', width: 1, height: 1 }
-];
 const PHOTO_RATIOS = [
     { key: '1:1', label: '1:1 方图', help: '方图适合头像式生活照，列表和详情都会居中展示。', width: 1, height: 1 },
     { key: '3:2', label: '3:2 横图', help: '3:2 横图推荐用于生活照和封面，展示裁切最稳。', width: 3, height: 2 },
@@ -12,7 +9,6 @@ const PHOTO_RATIOS = [
 function defaultState() {
     return {
         sourcePath: '',
-        mode: 'photo',
         ratio: PHOTO_RATIOS[1],
         ratios: PHOTO_RATIOS,
         canvasWidth: 320,
@@ -144,14 +140,12 @@ Page({
         }
     },
     async initCrop(payload) {
-        const mode = payload.mode === 'avatar' ? 'avatar' : 'photo';
-        const ratios = mode === 'avatar' ? AVATAR_RATIOS : PHOTO_RATIOS;
-        const ratio = ratioByKey(ratios, payload.ratioKey || (mode === 'avatar' ? '1:1' : '3:2'));
+        const ratios = PHOTO_RATIOS;
+        const ratio = ratioByKey(ratios, payload.ratioKey || '3:2');
         const layout = layoutForRatio(ratio);
         cropState = {
             ...defaultState(),
             sourcePath: payload.sourcePath,
-            mode,
             ratio,
             ratios,
             canvasWidth: layout.canvasWidth,
@@ -160,7 +154,7 @@ Page({
             channel: cropState.channel
         };
         this.setData({
-            title: mode === 'avatar' ? '裁剪头像' : '裁剪照片墙图片',
+            title: '裁剪照片墙图片',
             ratios,
             ratioKey: ratio.key,
             ratioHelp: ratio.help,
@@ -227,7 +221,7 @@ Page({
         ctx.draw(false, callback);
     },
     selectRatio(e) {
-        if (cropState.mode === 'avatar' || this.data.saving)
+        if (this.data.saving)
             return;
         const key = String(e.currentTarget.dataset.key || '');
         const ratio = ratioByKey(cropState.ratios, key);

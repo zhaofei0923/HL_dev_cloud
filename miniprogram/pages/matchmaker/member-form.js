@@ -8,10 +8,10 @@ function payloadFromForm(form) {
     const photos = (0, member_format_1.photosFromText)(form.photoText);
     const payload = {
         ...form,
-        avatarUrl: form.avatarUrl || (0, member_format_1.defaultAvatar)(form),
         photos
     };
     delete payload.photoText;
+    delete payload.avatarUrl;
     delete payload.avatarDisplayUrl;
     delete payload.photoDisplayUrls;
     return payload;
@@ -52,11 +52,16 @@ function previewFor(form) {
     const displayPhotos = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
         ? form.photoDisplayUrls.slice(0, member_format_1.PHOTO_WALL_LIMIT)
         : (payload.photos.length ? payload.photos : (0, member_format_1.defaultPhotos)(form));
-    return (0, member_format_1.normalizeMemberProfile)({
+    const preview = (0, member_format_1.normalizeMemberProfile)({
         ...payload,
-        avatarUrl: form.avatarDisplayUrl || payload.avatarUrl,
-        photos: displayPhotos
+        photos: payload.photos
     });
+    return {
+        ...preview,
+        avatarUrl: Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length ? form.photoDisplayUrls[0] : preview.avatarUrl,
+        photos: displayPhotos,
+        coverUrl: Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length ? form.photoDisplayUrls[0] : preview.coverUrl
+    };
 }
 function selectorTextFor(form) {
     return {
@@ -71,8 +76,6 @@ function selectorTextFor(form) {
 }
 const FORM_DEFAULTS = {
     realName: '',
-    avatarUrl: '',
-    avatarDisplayUrl: '',
     photoText: '',
     photoDisplayUrls: [],
     gender: '2',
@@ -185,30 +188,6 @@ Page({
     onCarChange(e) {
         this.updateForm('carStatus', this.data.carOptions[Number(e.detail.value)]);
     },
-    async chooseAvatar() {
-        try {
-            const images = await (0, local_image_1.chooseLocalImages)(1, { cropMode: 'avatar' });
-            const image = images[0];
-            if (!image)
-                return;
-            const form = {
-                ...this.data.form,
-                avatarUrl: image.fileID,
-                avatarDisplayUrl: image.displayUrl
-            };
-            this.setData({
-                form,
-                preview: previewFor(form),
-                ...selectorTextFor(form)
-            });
-        }
-        catch (err) {
-            if (!(0, local_image_1.isImageChooseCancel)(err)) {
-                console.warn('upload avatar failed', err);
-                wx.showToast({ title: '图片上传失败，请重试', icon: 'none' });
-            }
-        }
-    },
     async choosePhotos() {
         try {
             const existingPhotos = (0, member_format_1.photosFromText)(String(this.data.form.photoText || ''));
@@ -217,7 +196,7 @@ Page({
                 wx.showToast({ title: '照片墙最多3张', icon: 'none' });
                 return;
             }
-            const images = await (0, local_image_1.chooseLocalImages)(remaining, { cropMode: 'photo' });
+            const images = await (0, local_image_1.chooseLocalImages)(remaining, { crop: true });
             if (!images.length)
                 return;
             const form = {

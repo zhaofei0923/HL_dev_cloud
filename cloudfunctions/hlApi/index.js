@@ -285,8 +285,8 @@ function withMemberMedia(data = {}) {
   const defaults = defaultMemberMedia(data);
   const photos = normalizeMemberPhotos(data.photos);
   return {
-    avatarUrl: data.avatarUrl || defaults.avatarUrl,
-    photos: photos.length ? photos : defaults.photos
+    avatarUrl: photos[0] || defaults.avatarUrl,
+    photos
   };
 }
 
@@ -578,9 +578,8 @@ function profileCompletionFor(row) {
     'partnerRequirement'
   ];
   const filled = fields.filter(field => String(row[field] || '').trim()).length
-    + (Array.isArray(row.photos) && row.photos.length ? 1 : 0)
-    + (row.avatarUrl ? 1 : 0);
-  const total = fields.length + 2;
+    + (Array.isArray(row.photos) && row.photos.length ? 1 : 0);
+  const total = fields.length + 1;
   const percent = Math.round((filled / total) * 100);
   return {
     percent,
@@ -615,11 +614,13 @@ function sortMemberRowsDesc(a, b) {
 async function memberView(member, context = {}) {
   const user = await getById(C.users, member.userId) || {};
   const profile = await getOne(C.profiles, { userId: Number(member.userId) }) || {};
+  const photos = normalizeMemberPhotos(profile.photos);
+  const media = withMemberMedia({ ...profile, gender: profile.gender || user.gender, photos });
   const row = {
     ...stripInternal(member),
     nickname: user.nickname || profile.realName || '',
     phone: user.phone || '',
-    avatarUrl: user.avatarUrl || '',
+    avatarUrl: photos[0] || media.avatarUrl,
     gender: user.gender || 0,
     isVerified: user.isVerified || 0,
     realName: profile.realName || user.nickname || '',
@@ -636,7 +637,7 @@ async function memberView(member, context = {}) {
     carStatus: profile.carStatus || '',
     selfIntro: profile.selfIntro || '',
     partnerRequirement: profile.partnerRequirement || '',
-    photos: Array.isArray(profile.photos) ? clone(profile.photos) : [],
+    photos,
     displayEnabled: isTrue(profile.displayEnabled),
     displayUpdatedAt: profile.displayUpdatedAt || ''
   };
@@ -652,6 +653,8 @@ async function memberView(member, context = {}) {
 async function profileMemberView(profile, context = {}) {
   const user = await getById(C.users, profile.userId) || {};
   const profileId = Number(profile.id || profile.userId || 0);
+  const photos = normalizeMemberPhotos(profile.photos);
+  const media = withMemberMedia({ ...profile, gender: profile.gender || user.gender, photos });
   const row = {
     id: `profile_${profileId || Number(profile.userId)}`,
     sortId: profileId || Number(profile.userId) || 0,
@@ -665,7 +668,7 @@ async function profileMemberView(profile, context = {}) {
     status: user.status === undefined ? 1 : Number(user.status),
     nickname: user.nickname || profile.realName || '',
     phone: user.phone || '',
-    avatarUrl: user.avatarUrl || profile.avatarUrl || '',
+    avatarUrl: photos[0] || media.avatarUrl,
     gender: user.gender || profile.gender || 0,
     isVerified: user.isVerified || 0,
     realName: profile.realName || user.nickname || '',
@@ -682,7 +685,7 @@ async function profileMemberView(profile, context = {}) {
     carStatus: profile.carStatus || '',
     selfIntro: profile.selfIntro || '',
     partnerRequirement: profile.partnerRequirement || '',
-    photos: Array.isArray(profile.photos) ? clone(profile.photos) : [],
+    photos,
     displayEnabled: isTrue(profile.displayEnabled),
     displayUpdatedAt: profile.displayUpdatedAt || ''
   };
@@ -1502,7 +1505,6 @@ const member = {
       const userPatch = {};
       if (data.realName || data.nickname) userPatch.nickname = data.realName || data.nickname;
       if (data.gender !== undefined) userPatch.gender = Number(data.gender);
-      if (data.avatarUrl !== undefined) userPatch.avatarUrl = data.avatarUrl;
       if (Object.keys(userPatch).length) await updateRow(C.users, user, userPatch);
     }
     const profile = await getOne(C.profiles, { userId: row.userId });
@@ -1970,7 +1972,6 @@ exports.main = async (event = {}) => {
       const user = await getUserOrThrow(session.userId);
       const userPatch = {};
       if (data.realName || data.nickname) userPatch.nickname = data.realName || data.nickname;
-      if (data.avatarUrl !== undefined) userPatch.avatarUrl = data.avatarUrl;
       if (data.gender !== undefined) userPatch.gender = Number(data.gender);
       const updatedUser = Object.keys(userPatch).length ? await updateRow(C.users, user, userPatch) : user;
       let profile = await getOne(C.profiles, { userId: Number(session.userId) });

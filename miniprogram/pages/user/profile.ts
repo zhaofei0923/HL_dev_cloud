@@ -2,7 +2,7 @@ import { currentUser, request } from '../../services/api'
 import { memberApi } from '../../services/member'
 import { matchmakerApi } from '../../services/matchmaker'
 import { chooseLocalImages, isImageChooseCancel, resolveImageUrls, type ChosenImage } from '../../utils/local-image'
-import { PHOTO_WALL_LIMIT, defaultAvatar, defaultPhotos, mergePhotoLists, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
+import { PHOTO_WALL_LIMIT, defaultPhotos, mergePhotoLists, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
 import { extractInviteCode, invitePath } from '../../utils/invite'
 import {
   AGE_OPTIONS,
@@ -21,8 +21,6 @@ type ProfileForm = Record<string, any>
 
 const FORM_DEFAULTS: ProfileForm = {
   realName: '',
-  avatarUrl: '',
-  avatarDisplayUrl: '',
   photoText: '',
   photoDisplayUrls: [],
   displayEnabled: false,
@@ -42,7 +40,6 @@ const FORM_DEFAULTS: ProfileForm = {
 }
 
 const COMPLETION_FIELDS = [
-  'avatarUrl',
   'photoText',
   'realName',
   'gender',
@@ -109,8 +106,6 @@ function normalizeForm(raw: ProfileForm, user: any) {
     ...(raw || {})
   }
   form.realName = form.realName || (user && user.nickname) || ''
-  form.avatarUrl = form.avatarUrl || (user && user.avatarUrl) || defaultAvatar(form)
-  form.avatarDisplayUrl = form.avatarDisplayUrl || form.avatarUrl
   form.displayEnabled = form.displayEnabled === true || form.displayEnabled === 1 || form.displayEnabled === '1' || form.displayEnabled === 'true'
   form.gender = String(form.gender || (user && user.gender) || '2')
   form.photoText = form.photoText ? photosFromText(String(form.photoText)).join('\n') : photosToText(form.photos)
@@ -124,10 +119,10 @@ function payloadFromForm(form: ProfileForm) {
   const photos = photosFromText(form.photoText)
   const payload: ProfileForm = {
     ...form,
-    avatarUrl: form.avatarUrl || defaultAvatar(form),
     photos
   }
   delete payload.photoText
+  delete payload.avatarUrl
   delete payload.avatarDisplayUrl
   delete payload.photoDisplayUrls
   return payload
@@ -149,21 +144,26 @@ function completionFor(form: ProfileForm) {
 
 function previewFor(form: ProfileForm) {
   const payload = payloadFromForm(form)
+  const photoDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls.slice(0, PHOTO_WALL_LIMIT) : []
   const displayPhotos = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
-    ? form.photoDisplayUrls.slice(0, PHOTO_WALL_LIMIT)
+    ? photoDisplayUrls
     : (payload.photos.length ? payload.photos : defaultPhotos(form))
-  return normalizeMemberProfile({
+  const preview = normalizeMemberProfile({
     ...payload,
-    avatarUrl: form.avatarDisplayUrl || payload.avatarUrl,
-    photos: displayPhotos
+    photos: payload.photos
   })
+  return {
+    ...preview,
+    avatarUrl: photoDisplayUrls[0] || preview.avatarUrl,
+    photos: displayPhotos,
+    coverUrl: photoDisplayUrls[0] || preview.coverUrl
+  }
 }
 
 function hydrateImageDisplay(form: ProfileForm) {
   const payload = payloadFromForm(form)
   return {
     ...form,
-    avatarDisplayUrl: form.avatarDisplayUrl || payload.avatarUrl,
     photoDisplayUrls: Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
       ? form.photoDisplayUrls.slice(0, PHOTO_WALL_LIMIT)
       : payload.photos.slice(0, PHOTO_WALL_LIMIT)
@@ -184,21 +184,16 @@ function preserveImageDisplay(form: ProfileForm, source?: ProfileForm) {
 
   return {
     ...form,
-    avatarDisplayUrl: form.avatarUrl && form.avatarUrl === source.avatarUrl
-      ? source.avatarDisplayUrl || form.avatarDisplayUrl
-      : form.avatarDisplayUrl,
     photoDisplayUrls: photos.map((photo, index) => displayUrlByPhoto[photo] || currentDisplayUrls[index] || photo)
   }
 }
 
 async function resolveFormDisplayUrls(form: ProfileForm) {
   const photoDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : []
-  const avatarDisplayUrl = form.avatarDisplayUrl || form.avatarUrl || defaultAvatar(form)
-  const resolved = await resolveImageUrls([avatarDisplayUrl, ...photoDisplayUrls])
+  const resolved = await resolveImageUrls(photoDisplayUrls)
   return {
     ...form,
-    avatarDisplayUrl: resolved[0] || avatarDisplayUrl,
-    photoDisplayUrls: resolved.slice(1)
+    photoDisplayUrls: resolved
   }
 }
 
@@ -411,25 +406,6 @@ Page({
     })
   },
 
-  async chooseAvatar() {
-    try {
-      const images = await chooseLocalImages(1, { cropMode: 'avatar' })
-      const image = images[0]
-      if (image) {
-        this.setForm({
-          ...this.data.form,
-          avatarUrl: image.fileID,
-          avatarDisplayUrl: image.displayUrl
-        })
-      }
-    } catch (err) {
-      if (!isImageChooseCancel(err)) {
-        console.warn('upload avatar failed', err)
-        wx.showToast({ title: '图片上传失败，请重试', icon: 'none' })
-      }
-    }
-  },
-
   async choosePhotos() {
     if (this.data.saving) return
     try {
@@ -440,7 +416,7 @@ Page({
         return
       }
 
-      const images = await chooseLocalImages(remaining, { cropMode: 'photo' })
+      const images = await chooseLocalImages(remaining, { crop: true })
       if (images.length) {
         const nextForm = {
           ...this.data.form,
@@ -533,7 +509,7 @@ Page({
         ...(currentUser() || {}),
         ...(result.user || {}),
         nickname: payload.realName || (result.user && result.user.nickname) || ((currentUser() || {}).nickname) || '',
-        avatarUrl: payload.avatarUrl,
+        avatarUrl: (result.user && result.user.avatarUrl) || ((currentUser() || {}).avatarUrl) || '',
         gender: Number(payload.gender || 0)
       }
       wx.setStorageSync('user', user)
@@ -569,7 +545,7 @@ Page({
         ...(currentUser() || {}),
         ...(result.user || {}),
         nickname: payload.realName || (result.user && result.user.nickname) || ((currentUser() || {}).nickname) || '',
-        avatarUrl: payload.avatarUrl,
+        avatarUrl: (result.user && result.user.avatarUrl) || ((currentUser() || {}).avatarUrl) || '',
         gender: Number(payload.gender || 0)
       }
       wx.setStorageSync('user', user)

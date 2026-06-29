@@ -9,8 +9,6 @@ const invite_1 = require("../../utils/invite");
 const profile_options_1 = require("../../utils/profile-options");
 const FORM_DEFAULTS = {
     realName: '',
-    avatarUrl: '',
-    avatarDisplayUrl: '',
     photoText: '',
     photoDisplayUrls: [],
     displayEnabled: false,
@@ -29,7 +27,6 @@ const FORM_DEFAULTS = {
     partnerRequirement: ''
 };
 const COMPLETION_FIELDS = [
-    'avatarUrl',
     'photoText',
     'realName',
     'gender',
@@ -89,8 +86,6 @@ function normalizeForm(raw, user) {
         ...(raw || {})
     };
     form.realName = form.realName || (user && user.nickname) || '';
-    form.avatarUrl = form.avatarUrl || (user && user.avatarUrl) || (0, member_format_1.defaultAvatar)(form);
-    form.avatarDisplayUrl = form.avatarDisplayUrl || form.avatarUrl;
     form.displayEnabled = form.displayEnabled === true || form.displayEnabled === 1 || form.displayEnabled === '1' || form.displayEnabled === 'true';
     form.gender = String(form.gender || (user && user.gender) || '2');
     form.photoText = form.photoText ? (0, member_format_1.photosFromText)(String(form.photoText)).join('\n') : photosToText(form.photos);
@@ -103,10 +98,10 @@ function payloadFromForm(form) {
     const photos = (0, member_format_1.photosFromText)(form.photoText);
     const payload = {
         ...form,
-        avatarUrl: form.avatarUrl || (0, member_format_1.defaultAvatar)(form),
         photos
     };
     delete payload.photoText;
+    delete payload.avatarUrl;
     delete payload.avatarDisplayUrl;
     delete payload.photoDisplayUrls;
     return payload;
@@ -127,20 +122,25 @@ function completionFor(form) {
 }
 function previewFor(form) {
     const payload = payloadFromForm(form);
+    const photoDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls.slice(0, member_format_1.PHOTO_WALL_LIMIT) : [];
     const displayPhotos = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
-        ? form.photoDisplayUrls.slice(0, member_format_1.PHOTO_WALL_LIMIT)
+        ? photoDisplayUrls
         : (payload.photos.length ? payload.photos : (0, member_format_1.defaultPhotos)(form));
-    return (0, member_format_1.normalizeMemberProfile)({
+    const preview = (0, member_format_1.normalizeMemberProfile)({
         ...payload,
-        avatarUrl: form.avatarDisplayUrl || payload.avatarUrl,
-        photos: displayPhotos
+        photos: payload.photos
     });
+    return {
+        ...preview,
+        avatarUrl: photoDisplayUrls[0] || preview.avatarUrl,
+        photos: displayPhotos,
+        coverUrl: photoDisplayUrls[0] || preview.coverUrl
+    };
 }
 function hydrateImageDisplay(form) {
     const payload = payloadFromForm(form);
     return {
         ...form,
-        avatarDisplayUrl: form.avatarDisplayUrl || payload.avatarUrl,
         photoDisplayUrls: Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
             ? form.photoDisplayUrls.slice(0, member_format_1.PHOTO_WALL_LIMIT)
             : payload.photos.slice(0, member_format_1.PHOTO_WALL_LIMIT)
@@ -159,20 +159,15 @@ function preserveImageDisplay(form, source) {
     }, {});
     return {
         ...form,
-        avatarDisplayUrl: form.avatarUrl && form.avatarUrl === source.avatarUrl
-            ? source.avatarDisplayUrl || form.avatarDisplayUrl
-            : form.avatarDisplayUrl,
         photoDisplayUrls: photos.map((photo, index) => displayUrlByPhoto[photo] || currentDisplayUrls[index] || photo)
     };
 }
 async function resolveFormDisplayUrls(form) {
     const photoDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : [];
-    const avatarDisplayUrl = form.avatarDisplayUrl || form.avatarUrl || (0, member_format_1.defaultAvatar)(form);
-    const resolved = await (0, local_image_1.resolveImageUrls)([avatarDisplayUrl, ...photoDisplayUrls]);
+    const resolved = await (0, local_image_1.resolveImageUrls)(photoDisplayUrls);
     return {
         ...form,
-        avatarDisplayUrl: resolved[0] || avatarDisplayUrl,
-        photoDisplayUrls: resolved.slice(1)
+        photoDisplayUrls: resolved
     };
 }
 async function prepareProfileForm(raw, user, source) {
@@ -375,25 +370,6 @@ Page({
             confirmText: '知道了'
         });
     },
-    async chooseAvatar() {
-        try {
-            const images = await (0, local_image_1.chooseLocalImages)(1, { cropMode: 'avatar' });
-            const image = images[0];
-            if (image) {
-                this.setForm({
-                    ...this.data.form,
-                    avatarUrl: image.fileID,
-                    avatarDisplayUrl: image.displayUrl
-                });
-            }
-        }
-        catch (err) {
-            if (!(0, local_image_1.isImageChooseCancel)(err)) {
-                console.warn('upload avatar failed', err);
-                wx.showToast({ title: '图片上传失败，请重试', icon: 'none' });
-            }
-        }
-    },
     async choosePhotos() {
         if (this.data.saving)
             return;
@@ -404,7 +380,7 @@ Page({
                 wx.showToast({ title: '照片墙最多3张', icon: 'none' });
                 return;
             }
-            const images = await (0, local_image_1.chooseLocalImages)(remaining, { cropMode: 'photo' });
+            const images = await (0, local_image_1.chooseLocalImages)(remaining, { crop: true });
             if (images.length) {
                 const nextForm = {
                     ...this.data.form,
@@ -491,7 +467,7 @@ Page({
                 ...((0, api_1.currentUser)() || {}),
                 ...(result.user || {}),
                 nickname: payload.realName || (result.user && result.user.nickname) || (((0, api_1.currentUser)() || {}).nickname) || '',
-                avatarUrl: payload.avatarUrl,
+                avatarUrl: (result.user && result.user.avatarUrl) || (((0, api_1.currentUser)() || {}).avatarUrl) || '',
                 gender: Number(payload.gender || 0)
             };
             wx.setStorageSync('user', user);
@@ -529,7 +505,7 @@ Page({
                 ...((0, api_1.currentUser)() || {}),
                 ...(result.user || {}),
                 nickname: payload.realName || (result.user && result.user.nickname) || (((0, api_1.currentUser)() || {}).nickname) || '',
-                avatarUrl: payload.avatarUrl,
+                avatarUrl: (result.user && result.user.avatarUrl) || (((0, api_1.currentUser)() || {}).avatarUrl) || '',
                 gender: Number(payload.gender || 0)
             };
             wx.setStorageSync('user', user);

@@ -70,8 +70,7 @@ function completionFor(row: MemberRow) {
   ]
   const filled = fields.filter(field => String(row[field] || '').trim()).length
     + (Array.isArray(row.photos) && row.photos.length ? 1 : 0)
-    + (row.avatarUrl ? 1 : 0)
-  const total = fields.length + 2
+  const total = fields.length + 1
   const percent = Math.round((filled / total) * 100)
   return {
     percent,
@@ -131,9 +130,10 @@ export function mergePhotoLists(existing: string[], next: string[]) {
 }
 
 export function normalizeMemberProfile(row: MemberRow, internal = false) {
-  const avatarUrl = row.avatarUrl || defaultAvatar(row)
-  const photos = Array.isArray(row.photos) && row.photos.length ? normalizePhotoList(row.photos) : defaultPhotos(row)
-  const profileCompletion = completionFor({ ...row, photos })
+  const memberPhotos = Array.isArray(row.photos) && row.photos.length ? normalizePhotoList(row.photos) : []
+  const avatarUrl = memberPhotos[0] || defaultAvatar(row)
+  const photos = memberPhotos.length ? memberPhotos : defaultPhotos(row)
+  const profileCompletion = completionFor({ ...row, photos: memberPhotos })
   const city = row.city || row.province || '城市待确认'
   const age = valueWithUnit(row.age, '岁', '年龄保密')
   const height = valueWithUnit(row.height, 'cm', '身高保密')
@@ -182,7 +182,7 @@ export function normalizeMemberProfile(row: MemberRow, internal = false) {
     ...row,
     avatarUrl,
     photos,
-    coverUrl: photos[0] || avatarUrl,
+    coverUrl: memberPhotos[0] || avatarUrl,
     displayName,
     metaText: `${age} · ${height} · ${city}`,
     workText: `${education} · ${occupation}`,
