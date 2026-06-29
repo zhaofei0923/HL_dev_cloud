@@ -61,23 +61,11 @@ function safeIndex(list, index) {
     const normalized = Number(index) || 0;
     return ((normalized % list.length) + list.length) % list.length;
 }
-function avatarPreviews(list, currentIndex) {
-    const count = Math.min(list.length, 3);
-    return Array.from({ length: count }, (_, offset) => {
-        const member = list[(currentIndex + offset) % list.length];
-        return {
-            key: `${member.id || member.userId || offset}-${offset}`,
-            url: member.avatarUrl,
-            className: `stack-${offset}`
-        };
-    });
-}
 function selectionState(list, index) {
     const currentIndex = safeIndex(list, index);
     return {
         currentIndex,
         currentMember: list[currentIndex] || null,
-        previewAvatars: avatarPreviews(list, currentIndex),
         positionText: list.length ? `${currentIndex + 1}/${list.length}` : ''
     };
 }
@@ -90,7 +78,6 @@ Page({
         list: [],
         currentIndex: 0,
         currentMember: null,
-        previewAvatars: [],
         positionText: '',
         total: 0,
         countText: '正在整理会员资料',

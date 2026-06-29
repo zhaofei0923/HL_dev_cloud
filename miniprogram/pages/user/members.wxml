@@ -5,15 +5,6 @@
       <text class="recommend-note">{{loading ? '正在整理会员资料' : countText}}</text>
     </view>
     <view class="topbar-actions">
-      <view wx:if="{{previewAvatars.length}}" class="avatar-stack">
-        <image
-          wx:for="{{previewAvatars}}"
-          wx:key="key"
-          class="stack-avatar {{item.className}}"
-          src="{{item.url}}"
-          mode="aspectFill"
-        ></image>
-      </view>
       <button
         class="filter-trigger {{filterOpen ? 'active' : ''}}"
         aria-label="筛选"

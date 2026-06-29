@@ -42,38 +42,6 @@
   gap: 18rpx;
 }
 
-.avatar-stack {
-  position: relative;
-  width: 112rpx;
-  height: 54rpx;
-}
-
-.stack-avatar {
-  position: absolute;
-  top: 3rpx;
-  width: 48rpx;
-  height: 48rpx;
-  border: 3rpx solid #f5f0e8;
-  border-radius: 50%;
-  background: rgba(177, 134, 83, 0.14);
-  box-shadow: 0 8rpx 18rpx rgba(36, 31, 27, 0.12);
-}
-
-.stack-0 {
-  left: 0;
-  z-index: 3;
-}
-
-.stack-1 {
-  left: 32rpx;
-  z-index: 2;
-}
-
-.stack-2 {
-  left: 64rpx;
-  z-index: 1;
-}
-
 .filter-trigger {
   display: flex;
   align-items: center;

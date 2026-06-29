@@ -23,8 +23,8 @@
         <text class="tag gold">{{member.photos.length}} 张</text>
       </view>
       <swiper class="photo-swiper" indicator-dots circular>
-        <swiper-item wx:for="{{member.photos}}" wx:key="*this">
-          <image class="photo-item" src="{{item}}" mode="aspectFill"></image>
+        <swiper-item wx:for="{{member.photos}}" wx:key="*this" class="photo-slide">
+          <image class="photo-item" src="{{item}}" mode="aspectFit"></image>
         </swiper-item>
       </swiper>
     </view>
