@@ -49,6 +49,9 @@ const COMPLETION_FIELDS = [
 function photosToText(photos) {
     return Array.isArray(photos) ? (0, member_format_1.photosFromText)(photos.join('\n')).join('\n') : '';
 }
+function photoCountFor(form) {
+    return (0, member_format_1.photosFromText)(String(form.photoText || '')).length;
+}
 function appendChosenPhotos(form, images) {
     const existingPhotos = (0, member_format_1.photosFromText)(String(form.photoText || ''));
     const existingDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : [];
@@ -66,6 +69,20 @@ function appendChosenPhotos(form, images) {
         photoDisplayUrls: photos.map(photo => displayUrlByPhoto[photo] || photo)
     };
 }
+function removePhotoAt(form, index) {
+    const existingPhotos = (0, member_format_1.photosFromText)(String(form.photoText || ''));
+    const existingDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : [];
+    const entries = existingPhotos
+        .map((photo, photoIndex) => ({
+        photo,
+        displayUrl: String(existingDisplayUrls[photoIndex] || photo)
+    }))
+        .filter((_, photoIndex) => photoIndex !== index);
+    return {
+        photoText: entries.map(item => item.photo).join('\n'),
+        photoDisplayUrls: entries.map(item => item.displayUrl)
+    };
+}
 function normalizeForm(raw, user) {
     const form = {
         ...FORM_DEFAULTS,
@@ -76,9 +93,9 @@ function normalizeForm(raw, user) {
     form.avatarDisplayUrl = form.avatarDisplayUrl || form.avatarUrl;
     form.displayEnabled = form.displayEnabled === true || form.displayEnabled === 1 || form.displayEnabled === '1' || form.displayEnabled === 'true';
     form.gender = String(form.gender || (user && user.gender) || '2');
-    form.photoText = form.photoText || photosToText(form.photos) || (0, member_format_1.defaultPhotos)(form).join('\n');
+    form.photoText = form.photoText ? (0, member_format_1.photosFromText)(String(form.photoText)).join('\n') : photosToText(form.photos);
     form.photoDisplayUrls = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
-        ? form.photoDisplayUrls.slice(0, 3)
+        ? form.photoDisplayUrls.slice(0, member_format_1.PHOTO_WALL_LIMIT)
         : (0, member_format_1.photosFromText)(form.photoText);
     return form;
 }
@@ -87,7 +104,7 @@ function payloadFromForm(form) {
     const payload = {
         ...form,
         avatarUrl: form.avatarUrl || (0, member_format_1.defaultAvatar)(form),
-        photos: photos.length ? photos : (0, member_format_1.defaultPhotos)(form)
+        photos
     };
     delete payload.photoText;
     delete payload.avatarDisplayUrl;
@@ -111,8 +128,8 @@ function completionFor(form) {
 function previewFor(form) {
     const payload = payloadFromForm(form);
     const displayPhotos = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
-        ? form.photoDisplayUrls.slice(0, 3)
-        : payload.photos;
+        ? form.photoDisplayUrls.slice(0, member_format_1.PHOTO_WALL_LIMIT)
+        : (payload.photos.length ? payload.photos : (0, member_format_1.defaultPhotos)(form));
     return (0, member_format_1.normalizeMemberProfile)({
         ...payload,
         avatarUrl: form.avatarDisplayUrl || payload.avatarUrl,
@@ -125,9 +142,42 @@ function hydrateImageDisplay(form) {
         ...form,
         avatarDisplayUrl: form.avatarDisplayUrl || payload.avatarUrl,
         photoDisplayUrls: Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
-            ? form.photoDisplayUrls.slice(0, 3)
-            : payload.photos.slice(0, 3)
+            ? form.photoDisplayUrls.slice(0, member_format_1.PHOTO_WALL_LIMIT)
+            : payload.photos.slice(0, member_format_1.PHOTO_WALL_LIMIT)
     };
+}
+function preserveImageDisplay(form, source) {
+    if (!source)
+        return form;
+    const photos = (0, member_format_1.photosFromText)(String(form.photoText || ''));
+    const sourcePhotos = (0, member_format_1.photosFromText)(String(source.photoText || ''));
+    const sourceDisplayUrls = Array.isArray(source.photoDisplayUrls) ? source.photoDisplayUrls : [];
+    const currentDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : [];
+    const displayUrlByPhoto = sourcePhotos.reduce((map, photo, index) => {
+        map[photo] = String(sourceDisplayUrls[index] || photo);
+        return map;
+    }, {});
+    return {
+        ...form,
+        avatarDisplayUrl: form.avatarUrl && form.avatarUrl === source.avatarUrl
+            ? source.avatarDisplayUrl || form.avatarDisplayUrl
+            : form.avatarDisplayUrl,
+        photoDisplayUrls: photos.map((photo, index) => displayUrlByPhoto[photo] || currentDisplayUrls[index] || photo)
+    };
+}
+async function resolveFormDisplayUrls(form) {
+    const photoDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : [];
+    const avatarDisplayUrl = form.avatarDisplayUrl || form.avatarUrl || (0, member_format_1.defaultAvatar)(form);
+    const resolved = await (0, local_image_1.resolveImageUrls)([avatarDisplayUrl, ...photoDisplayUrls]);
+    return {
+        ...form,
+        avatarDisplayUrl: resolved[0] || avatarDisplayUrl,
+        photoDisplayUrls: resolved.slice(1)
+    };
+}
+async function prepareProfileForm(raw, user, source) {
+    const form = preserveImageDisplay(hydrateImageDisplay(normalizeForm(raw, user)), source);
+    return resolveFormDisplayUrls(form);
 }
 function selectorTextFor(form) {
     return {
@@ -200,19 +250,21 @@ Page({
         referralLoading: false,
         ...selectorTextFor(FORM_DEFAULTS),
         form: { ...FORM_DEFAULTS },
-        preview: previewFor(FORM_DEFAULTS)
+        preview: previewFor(FORM_DEFAULTS),
+        photoCount: 0
     },
     async onShow() {
         this.setData({ loading: true });
         try {
             const result = await (0, api_1.request)('/user/profile');
             const user = (0, api_1.currentUser)() || result;
-            const form = hydrateImageDisplay(normalizeForm(result.profile || {}, user));
+            const form = await prepareProfileForm(result.profile || {}, user);
             const completion = completionFor(form);
             this.setData({
                 user,
                 form,
                 preview: previewFor(form),
+                photoCount: photoCountFor(form),
                 ...selectorTextFor(form),
                 completionText: completion.text,
                 completionNote: completion.note
@@ -222,12 +274,13 @@ Page({
         }
         catch (err) {
             console.warn('load user profile failed', err);
-            const form = hydrateImageDisplay(normalizeForm({}, (0, api_1.currentUser)() || {}));
+            const form = await prepareProfileForm({}, (0, api_1.currentUser)() || {});
             const completion = completionFor(form);
             this.setData({
                 user: (0, api_1.currentUser)() || {},
                 form,
                 preview: previewFor(form),
+                photoCount: photoCountFor(form),
                 ...selectorTextFor(form),
                 completionText: completion.text,
                 completionNote: completion.note
@@ -265,6 +318,7 @@ Page({
         this.setData({
             form,
             preview: previewFor(form),
+            photoCount: photoCountFor(form),
             ...selectorTextFor(form),
             completionText: completion.text,
             completionNote: completion.note
@@ -323,8 +377,7 @@ Page({
     },
     async chooseAvatar() {
         try {
-            wx.showLoading({ title: '上传中' });
-            const images = await (0, local_image_1.chooseLocalImages)(1);
+            const images = await (0, local_image_1.chooseLocalImages)(1, { cropMode: 'avatar' });
             const image = images[0];
             if (image) {
                 this.setForm({
@@ -340,12 +393,10 @@ Page({
                 wx.showToast({ title: '图片上传失败，请重试', icon: 'none' });
             }
         }
-        finally {
-            wx.hideLoading();
-        }
     },
     async choosePhotos() {
-        let added = false;
+        if (this.data.saving)
+            return;
         try {
             const existingPhotos = (0, member_format_1.photosFromText)(String(this.data.form.photoText || ''));
             const remaining = member_format_1.PHOTO_WALL_LIMIT - existingPhotos.length;
@@ -353,14 +404,15 @@ Page({
                 wx.showToast({ title: '照片墙最多3张', icon: 'none' });
                 return;
             }
-            wx.showLoading({ title: '上传中' });
-            const images = await (0, local_image_1.chooseLocalImages)(remaining);
+            const images = await (0, local_image_1.chooseLocalImages)(remaining, { cropMode: 'photo' });
             if (images.length) {
-                this.setForm({
+                const nextForm = {
                     ...this.data.form,
                     ...appendChosenPhotos(this.data.form, images)
-                });
-                added = true;
+                };
+                const saved = await this.saveProfile(nextForm, '照片已保存');
+                if (!saved)
+                    wx.showToast({ title: '保存失败，照片未写入资料', icon: 'none' });
             }
         }
         catch (err) {
@@ -369,11 +421,31 @@ Page({
                 wx.showToast({ title: '图片上传失败，请重试', icon: 'none' });
             }
         }
-        finally {
-            wx.hideLoading();
-            if (added)
-                wx.showToast({ title: '已添加，请点保存资料', icon: 'none' });
-        }
+    },
+    deletePhoto(e) {
+        if (this.data.saving)
+            return;
+        const index = Number(e.currentTarget.dataset.index);
+        if (!Number.isInteger(index) || index < 0)
+            return;
+        wx.showModal({
+            title: '删除照片',
+            content: '确定从照片墙删除这张照片吗？',
+            confirmText: '删除',
+            confirmColor: '#8b332c',
+            success: res => {
+                if (!res.confirm)
+                    return;
+                const nextForm = {
+                    ...this.data.form,
+                    ...removePhotoAt(this.data.form, index)
+                };
+                void this.saveProfile(nextForm, '照片已删除').then((saved) => {
+                    if (!saved)
+                        wx.showToast({ title: '删除失败，请重试', icon: 'none' });
+                });
+            }
+        });
     },
     onGenderChange(e) {
         this.updateForm('gender', String(Number(e.detail.value) + 1));
@@ -410,7 +482,7 @@ Page({
     },
     async saveProfile(form, toastTitle = '已保存') {
         if (this.data.saving)
-            return;
+            return false;
         this.setData({ saving: true });
         try {
             const payload = payloadFromForm(form);
@@ -424,20 +496,23 @@ Page({
             };
             wx.setStorageSync('user', user);
             getApp().globalData.user = user;
-            const nextForm = hydrateImageDisplay(normalizeForm(result.profile || payload, user));
+            const nextForm = await prepareProfileForm(result.profile || payload, user, form);
             const completion = completionFor(nextForm);
             this.setData({
                 user,
                 form: nextForm,
                 preview: previewFor(nextForm),
+                photoCount: photoCountFor(nextForm),
                 ...selectorTextFor(nextForm),
                 completionText: completion.text,
                 completionNote: completion.note
             });
             wx.showToast({ title: toastTitle });
+            return true;
         }
         catch (err) {
             console.warn('save user profile failed', err);
+            return false;
         }
         finally {
             this.setData({ saving: false });
@@ -459,12 +534,13 @@ Page({
             };
             wx.setStorageSync('user', user);
             getApp().globalData.user = user;
-            const form = hydrateImageDisplay(normalizeForm(result.profile || payload, user));
+            const form = await prepareProfileForm(result.profile || payload, user, this.data.form);
             const completion = completionFor(form);
             this.setData({
                 user,
                 form,
                 preview: previewFor(form),
+                photoCount: photoCountFor(form),
                 ...selectorTextFor(form),
                 completionText: completion.text,
                 completionNote: completion.note

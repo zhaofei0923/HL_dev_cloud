@@ -6,6 +6,7 @@
     "pages/user/salon",
     "pages/user/salon-detail",
     "pages/user/profile",
+    "pages/common/image-cropper",
     "pages/user/matchmaker-invite",
     "pages/matchmaker/dashboard",
     "pages/matchmaker/members",

@@ -29,11 +29,11 @@ async function uploadImage(tempFilePath) {
         throw new Error('uploadFile returned empty fileID');
     return result.fileID;
 }
-async function chooseImages(count) {
+async function chooseImages(count, sizeType) {
     return new Promise((resolve, reject) => {
         wx.chooseImage({
             count,
-            sizeType: ['compressed'],
+            sizeType,
             sourceType: ['album'],
             success(res) {
                 resolve((res.tempFilePaths || []).slice(0, count));
@@ -44,6 +44,39 @@ async function chooseImages(count) {
         });
     });
 }
+function cropImage(tempFilePath, mode) {
+    return new Promise((resolve, reject) => {
+        wx.navigateTo({
+            url: '/pages/common/image-cropper',
+            success(res) {
+                const channel = res.eventChannel;
+                channel.once('crop:done', (result) => {
+                    if (result && result.tempFilePath) {
+                        resolve(result.tempFilePath);
+                    }
+                    else {
+                        reject(new Error('crop failed'));
+                    }
+                });
+                channel.once('crop:cancel', () => reject(new Error('crop cancel')));
+                channel.emit('crop:init', {
+                    sourcePath: tempFilePath,
+                    mode
+                });
+            },
+            fail: reject
+        });
+    });
+}
+async function cropImages(paths, mode) {
+    if (!mode)
+        return paths;
+    const croppedPaths = [];
+    for (let index = 0; index < paths.length; index += 1) {
+        croppedPaths.push(await cropImage(paths[index], mode));
+    }
+    return croppedPaths;
+}
 async function uploadOrSave(tempFilePath) {
     const fileID = await uploadImage(tempFilePath);
     return {
@@ -52,9 +85,18 @@ async function uploadOrSave(tempFilePath) {
         displayUrl: tempFilePath
     };
 }
-async function chooseLocalImages(count = 1) {
-    const paths = await chooseImages(count);
-    return Promise.all(paths.map(path => uploadOrSave(path)));
+async function chooseLocalImages(count = 1, options = {}) {
+    const paths = await chooseImages(count, options.cropMode ? ['original'] : ['compressed']);
+    const uploadPaths = await cropImages(paths, options.cropMode);
+    if (!uploadPaths.length)
+        return [];
+    wx.showLoading({ title: '上传中' });
+    try {
+        return await Promise.all(uploadPaths.map(path => uploadOrSave(path)));
+    }
+    finally {
+        wx.hideLoading();
+    }
 }
 exports.chooseLocalImages = chooseLocalImages;
 function errorText(err) {

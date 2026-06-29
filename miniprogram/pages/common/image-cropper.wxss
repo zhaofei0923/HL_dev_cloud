@@ -1,0 +1,98 @@
+.crop-page {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 28rpx 28rpx 48rpx;
+  background: #241f1b;
+  color: #fff8ed;
+}
+
+.crop-header {
+  padding: 14rpx 4rpx 24rpx;
+}
+
+.crop-title {
+  display: block;
+  font-size: 38rpx;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.crop-tip {
+  display: block;
+  margin-top: 12rpx;
+  color: rgba(255, 248, 237, 0.72);
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+
+.canvas-shell {
+  display: flex;
+  justify-content: center;
+  padding: 14rpx 0 22rpx;
+}
+
+.crop-canvas {
+  display: block;
+  border-radius: 18rpx;
+  background: #151210;
+  overflow: hidden;
+}
+
+.ratio-tabs {
+  display: flex;
+  gap: 12rpx;
+  margin-top: 12rpx;
+}
+
+.ratio-tab {
+  flex: 1;
+  height: 72rpx;
+  padding: 0 12rpx;
+  border: 1rpx solid rgba(255, 248, 237, 0.22);
+  border-radius: 10rpx;
+  background: rgba(255, 248, 237, 0.08);
+  color: rgba(255, 248, 237, 0.78);
+  font-size: 24rpx;
+  line-height: 72rpx;
+}
+
+.ratio-tab.active {
+  border-color: #d3a15e;
+  background: #d3a15e;
+  color: #241f1b;
+  font-weight: 800;
+}
+
+.crop-note {
+  display: block;
+  margin-top: 22rpx;
+  color: rgba(255, 248, 237, 0.64);
+  font-size: 23rpx;
+  line-height: 1.55;
+}
+
+.crop-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 30rpx;
+}
+
+.crop-btn {
+  flex: 1;
+  height: 82rpx;
+  border-radius: 10rpx;
+  font-size: 28rpx;
+  font-weight: 800;
+  line-height: 82rpx;
+}
+
+.crop-btn.secondary {
+  border: 1rpx solid rgba(255, 248, 237, 0.26);
+  background: rgba(255, 248, 237, 0.08);
+  color: #fff8ed;
+}
+
+.crop-btn.primary {
+  background: #d3a15e;
+  color: #241f1b;
+}

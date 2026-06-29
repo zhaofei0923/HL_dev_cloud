@@ -17,9 +17,17 @@
           <button class="btn secondary upload-btn" bindtap="chooseAvatar">上传头像</button>
         </view>
       </view>
-      <view class="photo-grid">
-        <image wx:for="{{preview.photos}}" wx:key="*this" class="photo-thumb" src="{{item}}" mode="aspectFill"></image>
+      <view wx:if="{{form.photoDisplayUrls.length}}" class="photo-grid">
+        <view wx:for="{{form.photoDisplayUrls}}" wx:key="*this" class="photo-tile">
+          <image class="photo-thumb" src="{{item}}" mode="aspectFill"></image>
+          <view class="photo-delete" data-index="{{index}}" catchtap="deletePhoto" aria-role="button" aria-label="删除照片">
+            <view class="photo-delete-line photo-delete-line-a"></view>
+            <view class="photo-delete-line photo-delete-line-b"></view>
+          </view>
+        </view>
       </view>
+      <view wx:else class="photo-empty">暂无照片墙照片，保存后展示页会先使用默认图兜底。</view>
+      <text class="photo-ratio-note">支持 1:1 方图、3:2 横图（推荐生活照/封面）、4:5 竖图；上传后可拖动选择截取区域。</text>
       <button class="btn ghost upload-wall-btn" bindtap="choosePhotos">上传照片墙</button>
     </view>
 

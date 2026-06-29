@@ -9,7 +9,7 @@ function payloadFromForm(form) {
     const payload = {
         ...form,
         avatarUrl: form.avatarUrl || (0, member_format_1.defaultAvatar)(form),
-        photos: photos.length ? photos : (0, member_format_1.defaultPhotos)(form)
+        photos
     };
     delete payload.photoText;
     delete payload.avatarDisplayUrl;
@@ -33,11 +33,25 @@ function appendChosenPhotos(form, images) {
         photoDisplayUrls: photos.map(photo => displayUrlByPhoto[photo] || photo)
     };
 }
+function removePhotoAt(form, index) {
+    const existingPhotos = (0, member_format_1.photosFromText)(String(form.photoText || ''));
+    const existingDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : [];
+    const entries = existingPhotos
+        .map((photo, photoIndex) => ({
+        photo,
+        displayUrl: String(existingDisplayUrls[photoIndex] || photo)
+    }))
+        .filter((_, photoIndex) => photoIndex !== index);
+    return {
+        photoText: entries.map(item => item.photo).join('\n'),
+        photoDisplayUrls: entries.map(item => item.displayUrl)
+    };
+}
 function previewFor(form) {
     const payload = payloadFromForm(form);
     const displayPhotos = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
-        ? form.photoDisplayUrls.slice(0, 3)
-        : payload.photos;
+        ? form.photoDisplayUrls.slice(0, member_format_1.PHOTO_WALL_LIMIT)
+        : (payload.photos.length ? payload.photos : (0, member_format_1.defaultPhotos)(form));
     return (0, member_format_1.normalizeMemberProfile)({
         ...payload,
         avatarUrl: form.avatarDisplayUrl || payload.avatarUrl,
@@ -173,8 +187,7 @@ Page({
     },
     async chooseAvatar() {
         try {
-            wx.showLoading({ title: '上传中' });
-            const images = await (0, local_image_1.chooseLocalImages)(1);
+            const images = await (0, local_image_1.chooseLocalImages)(1, { cropMode: 'avatar' });
             const image = images[0];
             if (!image)
                 return;
@@ -195,12 +208,8 @@ Page({
                 wx.showToast({ title: '图片上传失败，请重试', icon: 'none' });
             }
         }
-        finally {
-            wx.hideLoading();
-        }
     },
     async choosePhotos() {
-        let added = false;
         try {
             const existingPhotos = (0, member_format_1.photosFromText)(String(this.data.form.photoText || ''));
             const remaining = member_format_1.PHOTO_WALL_LIMIT - existingPhotos.length;
@@ -208,8 +217,7 @@ Page({
                 wx.showToast({ title: '照片墙最多3张', icon: 'none' });
                 return;
             }
-            wx.showLoading({ title: '上传中' });
-            const images = await (0, local_image_1.chooseLocalImages)(remaining);
+            const images = await (0, local_image_1.chooseLocalImages)(remaining, { cropMode: 'photo' });
             if (!images.length)
                 return;
             const form = {
@@ -221,7 +229,7 @@ Page({
                 preview: previewFor(form),
                 ...selectorTextFor(form)
             });
-            added = true;
+            wx.showToast({ title: '已添加，保存会员后生效', icon: 'none' });
         }
         catch (err) {
             if (!(0, local_image_1.isImageChooseCancel)(err)) {
@@ -229,11 +237,30 @@ Page({
                 wx.showToast({ title: '图片上传失败，请重试', icon: 'none' });
             }
         }
-        finally {
-            wx.hideLoading();
-            if (added)
-                wx.showToast({ title: '已添加，请点保存资料', icon: 'none' });
-        }
+    },
+    deletePhoto(e) {
+        const index = Number(e.currentTarget.dataset.index);
+        if (!Number.isInteger(index) || index < 0)
+            return;
+        wx.showModal({
+            title: '删除照片',
+            content: '确定从照片墙删除这张照片吗？',
+            confirmText: '删除',
+            confirmColor: '#8b332c',
+            success: res => {
+                if (!res.confirm)
+                    return;
+                const form = {
+                    ...this.data.form,
+                    ...removePhotoAt(this.data.form, index)
+                };
+                this.setData({
+                    form,
+                    preview: previewFor(form),
+                    ...selectorTextFor(form)
+                });
+            }
+        });
     },
     async save() {
         if (this.data.saving)

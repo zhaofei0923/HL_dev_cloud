@@ -1,7 +1,7 @@
 import { currentUser, request } from '../../services/api'
 import { memberApi } from '../../services/member'
 import { matchmakerApi } from '../../services/matchmaker'
-import { chooseLocalImages, isImageChooseCancel, type ChosenImage } from '../../utils/local-image'
+import { chooseLocalImages, isImageChooseCancel, resolveImageUrls, type ChosenImage } from '../../utils/local-image'
 import { PHOTO_WALL_LIMIT, defaultAvatar, defaultPhotos, mergePhotoLists, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
 import { extractInviteCode, invitePath } from '../../utils/invite'
 import {
@@ -64,6 +64,10 @@ function photosToText(photos: string[] | undefined) {
   return Array.isArray(photos) ? photosFromText(photos.join('\n')).join('\n') : ''
 }
 
+function photoCountFor(form: ProfileForm) {
+  return photosFromText(String(form.photoText || '')).length
+}
+
 function appendChosenPhotos(form: ProfileForm, images: ChosenImage[]) {
   const existingPhotos = photosFromText(String(form.photoText || ''))
   const existingDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : []
@@ -83,6 +87,22 @@ function appendChosenPhotos(form: ProfileForm, images: ChosenImage[]) {
   }
 }
 
+function removePhotoAt(form: ProfileForm, index: number) {
+  const existingPhotos = photosFromText(String(form.photoText || ''))
+  const existingDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : []
+  const entries = existingPhotos
+    .map((photo, photoIndex) => ({
+      photo,
+      displayUrl: String(existingDisplayUrls[photoIndex] || photo)
+    }))
+    .filter((_, photoIndex) => photoIndex !== index)
+
+  return {
+    photoText: entries.map(item => item.photo).join('\n'),
+    photoDisplayUrls: entries.map(item => item.displayUrl)
+  }
+}
+
 function normalizeForm(raw: ProfileForm, user: any) {
   const form: ProfileForm = {
     ...FORM_DEFAULTS,
@@ -93,9 +113,9 @@ function normalizeForm(raw: ProfileForm, user: any) {
   form.avatarDisplayUrl = form.avatarDisplayUrl || form.avatarUrl
   form.displayEnabled = form.displayEnabled === true || form.displayEnabled === 1 || form.displayEnabled === '1' || form.displayEnabled === 'true'
   form.gender = String(form.gender || (user && user.gender) || '2')
-  form.photoText = form.photoText || photosToText(form.photos) || defaultPhotos(form).join('\n')
+  form.photoText = form.photoText ? photosFromText(String(form.photoText)).join('\n') : photosToText(form.photos)
   form.photoDisplayUrls = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
-    ? form.photoDisplayUrls.slice(0, 3)
+    ? form.photoDisplayUrls.slice(0, PHOTO_WALL_LIMIT)
     : photosFromText(form.photoText)
   return form
 }
@@ -105,7 +125,7 @@ function payloadFromForm(form: ProfileForm) {
   const payload: ProfileForm = {
     ...form,
     avatarUrl: form.avatarUrl || defaultAvatar(form),
-    photos: photos.length ? photos : defaultPhotos(form)
+    photos
   }
   delete payload.photoText
   delete payload.avatarDisplayUrl
@@ -130,8 +150,8 @@ function completionFor(form: ProfileForm) {
 function previewFor(form: ProfileForm) {
   const payload = payloadFromForm(form)
   const displayPhotos = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
-    ? form.photoDisplayUrls.slice(0, 3)
-    : payload.photos
+    ? form.photoDisplayUrls.slice(0, PHOTO_WALL_LIMIT)
+    : (payload.photos.length ? payload.photos : defaultPhotos(form))
   return normalizeMemberProfile({
     ...payload,
     avatarUrl: form.avatarDisplayUrl || payload.avatarUrl,
@@ -145,9 +165,46 @@ function hydrateImageDisplay(form: ProfileForm) {
     ...form,
     avatarDisplayUrl: form.avatarDisplayUrl || payload.avatarUrl,
     photoDisplayUrls: Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
-      ? form.photoDisplayUrls.slice(0, 3)
-      : payload.photos.slice(0, 3)
+      ? form.photoDisplayUrls.slice(0, PHOTO_WALL_LIMIT)
+      : payload.photos.slice(0, PHOTO_WALL_LIMIT)
   }
+}
+
+function preserveImageDisplay(form: ProfileForm, source?: ProfileForm) {
+  if (!source) return form
+
+  const photos = photosFromText(String(form.photoText || ''))
+  const sourcePhotos = photosFromText(String(source.photoText || ''))
+  const sourceDisplayUrls = Array.isArray(source.photoDisplayUrls) ? source.photoDisplayUrls : []
+  const currentDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : []
+  const displayUrlByPhoto = sourcePhotos.reduce<Record<string, string>>((map, photo, index) => {
+    map[photo] = String(sourceDisplayUrls[index] || photo)
+    return map
+  }, {})
+
+  return {
+    ...form,
+    avatarDisplayUrl: form.avatarUrl && form.avatarUrl === source.avatarUrl
+      ? source.avatarDisplayUrl || form.avatarDisplayUrl
+      : form.avatarDisplayUrl,
+    photoDisplayUrls: photos.map((photo, index) => displayUrlByPhoto[photo] || currentDisplayUrls[index] || photo)
+  }
+}
+
+async function resolveFormDisplayUrls(form: ProfileForm) {
+  const photoDisplayUrls = Array.isArray(form.photoDisplayUrls) ? form.photoDisplayUrls : []
+  const avatarDisplayUrl = form.avatarDisplayUrl || form.avatarUrl || defaultAvatar(form)
+  const resolved = await resolveImageUrls([avatarDisplayUrl, ...photoDisplayUrls])
+  return {
+    ...form,
+    avatarDisplayUrl: resolved[0] || avatarDisplayUrl,
+    photoDisplayUrls: resolved.slice(1)
+  }
+}
+
+async function prepareProfileForm(raw: ProfileForm, user: ProfileForm, source?: ProfileForm) {
+  const form = preserveImageDisplay(hydrateImageDisplay(normalizeForm(raw, user)), source)
+  return resolveFormDisplayUrls(form)
 }
 
 function selectorTextFor(form: ProfileForm) {
@@ -223,7 +280,8 @@ Page({
     referralLoading: false,
     ...selectorTextFor(FORM_DEFAULTS),
     form: { ...FORM_DEFAULTS },
-    preview: previewFor(FORM_DEFAULTS)
+    preview: previewFor(FORM_DEFAULTS),
+    photoCount: 0
   },
 
   async onShow() {
@@ -231,12 +289,13 @@ Page({
     try {
       const result: any = await request('/user/profile')
       const user = currentUser() || result
-      const form = hydrateImageDisplay(normalizeForm(result.profile || {}, user))
+      const form = await prepareProfileForm(result.profile || {}, user)
       const completion = completionFor(form)
       this.setData({
         user,
         form,
         preview: previewFor(form),
+        photoCount: photoCountFor(form),
         ...selectorTextFor(form),
         completionText: completion.text,
         completionNote: completion.note
@@ -245,12 +304,13 @@ Page({
       void this.loadReferralCard()
     } catch (err) {
       console.warn('load user profile failed', err)
-      const form = hydrateImageDisplay(normalizeForm({}, currentUser() || {}))
+      const form = await prepareProfileForm({}, currentUser() || {})
       const completion = completionFor(form)
       this.setData({
         user: currentUser() || {},
         form,
         preview: previewFor(form),
+        photoCount: photoCountFor(form),
         ...selectorTextFor(form),
         completionText: completion.text,
         completionNote: completion.note
@@ -287,6 +347,7 @@ Page({
     this.setData({
       form,
       preview: previewFor(form),
+      photoCount: photoCountFor(form),
       ...selectorTextFor(form),
       completionText: completion.text,
       completionNote: completion.note
@@ -352,8 +413,7 @@ Page({
 
   async chooseAvatar() {
     try {
-      wx.showLoading({ title: '上传中' })
-      const images = await chooseLocalImages(1)
+      const images = await chooseLocalImages(1, { cropMode: 'avatar' })
       const image = images[0]
       if (image) {
         this.setForm({
@@ -367,13 +427,11 @@ Page({
         console.warn('upload avatar failed', err)
         wx.showToast({ title: '图片上传失败，请重试', icon: 'none' })
       }
-    } finally {
-      wx.hideLoading()
     }
   },
 
   async choosePhotos() {
-    let added = false
+    if (this.data.saving) return
     try {
       const existingPhotos = photosFromText(String(this.data.form.photoText || ''))
       const remaining = PHOTO_WALL_LIMIT - existingPhotos.length
@@ -382,24 +440,43 @@ Page({
         return
       }
 
-      wx.showLoading({ title: '上传中' })
-      const images = await chooseLocalImages(remaining)
+      const images = await chooseLocalImages(remaining, { cropMode: 'photo' })
       if (images.length) {
-        this.setForm({
+        const nextForm = {
           ...this.data.form,
           ...appendChosenPhotos(this.data.form, images)
-        })
-        added = true
+        }
+        const saved = await this.saveProfile(nextForm, '照片已保存')
+        if (!saved) wx.showToast({ title: '保存失败，照片未写入资料', icon: 'none' })
       }
     } catch (err) {
       if (!isImageChooseCancel(err)) {
         console.warn('upload photos failed', err)
         wx.showToast({ title: '图片上传失败，请重试', icon: 'none' })
       }
-    } finally {
-      wx.hideLoading()
-      if (added) wx.showToast({ title: '已添加，请点保存资料', icon: 'none' })
     }
+  },
+
+  deletePhoto(e: WechatMiniprogram.TouchEvent) {
+    if (this.data.saving) return
+    const index = Number(e.currentTarget.dataset.index)
+    if (!Number.isInteger(index) || index < 0) return
+    wx.showModal({
+      title: '删除照片',
+      content: '确定从照片墙删除这张照片吗？',
+      confirmText: '删除',
+      confirmColor: '#8b332c',
+      success: res => {
+        if (!res.confirm) return
+        const nextForm = {
+          ...this.data.form,
+          ...removePhotoAt(this.data.form, index)
+        }
+        void this.saveProfile(nextForm, '照片已删除').then((saved: boolean) => {
+          if (!saved) wx.showToast({ title: '删除失败，请重试', icon: 'none' })
+        })
+      }
+    })
   },
 
   onGenderChange(e: any) {
@@ -447,7 +524,7 @@ Page({
   },
 
   async saveProfile(form: ProfileForm, toastTitle = '已保存') {
-    if (this.data.saving) return
+    if (this.data.saving) return false
     this.setData({ saving: true })
     try {
       const payload = payloadFromForm(form)
@@ -461,19 +538,22 @@ Page({
       }
       wx.setStorageSync('user', user)
       getApp<IAppOption>().globalData.user = user
-      const nextForm = hydrateImageDisplay(normalizeForm(result.profile || payload, user))
+      const nextForm = await prepareProfileForm(result.profile || payload, user, form)
       const completion = completionFor(nextForm)
       this.setData({
         user,
         form: nextForm,
         preview: previewFor(nextForm),
+        photoCount: photoCountFor(nextForm),
         ...selectorTextFor(nextForm),
         completionText: completion.text,
         completionNote: completion.note
       })
       wx.showToast({ title: toastTitle })
+      return true
     } catch (err) {
       console.warn('save user profile failed', err)
+      return false
     } finally {
       this.setData({ saving: false })
     }
@@ -494,12 +574,13 @@ Page({
       }
       wx.setStorageSync('user', user)
       getApp<IAppOption>().globalData.user = user
-      const form = hydrateImageDisplay(normalizeForm(result.profile || payload, user))
+      const form = await prepareProfileForm(result.profile || payload, user, this.data.form)
       const completion = completionFor(form)
       this.setData({
         user,
         form,
         preview: previewFor(form),
+        photoCount: photoCountFor(form),
         ...selectorTextFor(form),
         completionText: completion.text,
         completionNote: completion.note

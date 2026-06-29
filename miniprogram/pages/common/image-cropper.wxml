@@ -1,0 +1,36 @@
+<view class="crop-page">
+  <view class="crop-header">
+    <text class="crop-title">{{title}}</text>
+    <text class="crop-tip">{{ratioHelp}}</text>
+  </view>
+
+  <view class="canvas-shell">
+    <canvas
+      canvas-id="cropCanvas"
+      class="crop-canvas"
+      style="width: {{canvasWidth}}px; height: {{canvasHeight}}px;"
+      disable-scroll="true"
+      bindtouchstart="onTouchStart"
+      bindtouchmove="onTouchMove"
+      bindtouchend="onTouchEnd"
+      bindtouchcancel="onTouchEnd"
+    ></canvas>
+  </view>
+
+  <view wx:if="{{ratios.length > 1}}" class="ratio-tabs">
+    <button
+      wx:for="{{ratios}}"
+      wx:key="key"
+      class="ratio-tab {{item.key === ratioKey ? 'active' : ''}}"
+      data-key="{{item.key}}"
+      bindtap="selectRatio"
+    >{{item.label}}</button>
+  </view>
+
+  <text class="crop-note">支持拖动选择截取区域，双指缩放照片；照片墙支持 1:1 方图、3:2 横图、4:5 竖图。</text>
+
+  <view class="crop-actions">
+    <button class="crop-btn secondary" bindtap="cancelCrop" disabled="{{saving}}">取消</button>
+    <button class="crop-btn primary" bindtap="confirmCrop" loading="{{saving}}" disabled="{{!ready || saving}}">使用照片</button>
+  </view>
+</view>
