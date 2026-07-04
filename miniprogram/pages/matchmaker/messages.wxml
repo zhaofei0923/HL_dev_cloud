@@ -1,0 +1,56 @@
+<view class="page with-bottom-nav messages-page">
+  <view class="card hero messages-hero">
+    <text class="eyebrow">消息</text>
+    <text class="title">会员沟通</text>
+    <text class="subtitle">集中处理名下会员服务消息和配对后的沟通跟进。</text>
+    <view class="summary-strip">
+      <view class="summary-item">
+        <text class="summary-value">{{total}}</text>
+        <text class="summary-label">会话</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">文字</text>
+        <text class="summary-label">第一版</text>
+      </view>
+      <view class="summary-item">
+        <text class="summary-value">跟进</text>
+        <text class="summary-label">会员服务</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="card list-shell conversation-shell">
+    <view class="row list-header">
+      <view>
+        <text class="section-title">会话列表</text>
+        <text class="section-note">{{loading ? '正在加载消息' : '按最新消息排序'}}</text>
+      </view>
+      <text class="tag gold">{{loading ? '刷新中' : total + ' 条'}}</text>
+    </view>
+
+    <block wx:if="{{list.length}}">
+      <view wx:for="{{list}}" wx:key="id" class="list-card conversation-card" data-id="{{item.id}}" bindtap="openChat">
+        <image class="conversation-avatar" src="{{item.peerAvatar}}" mode="aspectFill"></image>
+        <view class="conversation-copy">
+          <view class="row conversation-title-row">
+            <text class="item-title conversation-title">{{item.peerName}}</text>
+            <text class="conversation-time">{{item.timeText}}</text>
+          </view>
+          <text class="item-meta conversation-preview">{{item.preview}}</text>
+          <view class="tag-row conversation-tags">
+            <text class="tag gold">{{item.typeText}}</text>
+          </view>
+        </view>
+        <text wx:if="{{item.hasUnread}}" class="unread-badge">{{item.unreadText}}</text>
+      </view>
+    </block>
+
+    <view wx:else class="empty">
+      <text class="empty-title">{{loading ? '正在加载消息' : emptyTitle}}</text>
+      <text class="empty-note">{{loading ? '请稍候，正在整理你的会话。' : emptyNote}}</text>
+      <button class="btn ghost empty-action" bindtap="goMembers">去会员经营</button>
+    </view>
+  </view>
+
+  <bottom-nav role="matchmaker" active="messages"></bottom-nav>
+</view>

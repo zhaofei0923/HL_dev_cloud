@@ -18,6 +18,8 @@ const C = {
   matchRecords: 'hl_match_records',
   memberRequests: 'hl_member_matchmaker_requests',
   messages: 'hl_messages',
+  conversations: 'hl_conversations',
+  chatMessages: 'hl_chat_messages',
   counters: 'hl_counters'
 };
 
@@ -345,6 +347,9 @@ function collectionsForPath(path) {
   }
   if (path.startsWith('/salon')) {
     return [...common, C.matchmakers, C.members, C.salonEvents, C.registrations, C.messages];
+  }
+  if (path.startsWith('/chat')) {
+    return [...common, C.matchmakers, C.members, C.matchRecords, C.conversations, C.chatMessages];
   }
   return common;
 }
@@ -717,6 +722,357 @@ async function publicMemberView(member, context = {}) {
   return sanitizePublicMemberRow(row);
 }
 
+function chatParticipantKey(userIds) {
+  return Array.from(new Set(userIds.map(id => Number(id)).filter(id => Number.isFinite(id))))
+    .sort((a, b) => a - b)
+    .join(':');
+}
+
+function chatParticipantIds(conversation) {
+  return Array.isArray(conversation.participantIds)
+    ? conversation.participantIds.map(id => Number(id)).filter(id => Number.isFinite(id))
+    : [];
+}
+
+function chatUnreadMap(conversation) {
+  return conversation && conversation.unreadBy && typeof conversation.unreadBy === 'object'
+    ? { ...conversation.unreadBy }
+    : {};
+}
+
+function chatUnreadCount(conversation, userId) {
+  return Number(chatUnreadMap(conversation)[String(userId)] || 0);
+}
+
+function normalizeChatText(value) {
+  const content = String(value || '').replace(/\r\n/g, '\n').trim();
+  if (!content) throw createHttpError('请输入消息内容');
+  if (content.length > 500) throw createHttpError('消息不能超过 500 字');
+  return content;
+}
+
+function assertChatParticipant(conversation, userId) {
+  if (!conversation || Number(conversation.status || 1) === 0) {
+    throw createHttpError('conversation not found', 404, 40400);
+  }
+  if (!chatParticipantIds(conversation).includes(Number(userId))) {
+    throw createHttpError('conversation forbidden', 403, 40300);
+  }
+}
+
+function isCertifiedActiveMatchmaker(row) {
+  return row && Number(row.status) === 1 && Number(row.certificationStatus) === 2;
+}
+
+async function chatParticipantView(userId) {
+  const user = await getById(C.users, userId);
+  const profile = await getOne(C.profiles, { userId: Number(userId) }) || {};
+  const photos = normalizeMemberPhotos(profile.photos);
+  const media = withMemberMedia({ ...profile, gender: profile.gender || (user && user.gender), photos });
+  return {
+    id: Number(userId),
+    nickname: profile.realName || (user && user.nickname) || `User ${userId}`,
+    avatarUrl: (user && user.avatarUrl) || photos[0] || media.avatarUrl
+  };
+}
+
+async function chatConversationView(conversation, currentUserId) {
+  const ids = chatParticipantIds(conversation);
+  const peerId = ids.find(id => Number(id) !== Number(currentUserId));
+  const peer = peerId ? await chatParticipantView(peerId) : null;
+  const unreadCount = chatUnreadCount(conversation, currentUserId);
+  return {
+    ...stripInternal(conversation),
+    participantIds: ids,
+    peer,
+    title: peer ? peer.nickname : 'Conversation',
+    unreadCount,
+    hasUnread: unreadCount > 0,
+    lastMessageContent: conversation.lastMessageContent || '',
+    lastMessageAt: conversation.lastMessageAt || conversation.updatedAt || conversation.createdAt || ''
+  };
+}
+
+async function chatMessageView(message, currentUserId) {
+  return {
+    ...stripInternal(message),
+    isMine: Number(message.senderId) === Number(currentUserId),
+    sender: await chatParticipantView(message.senderId)
+  };
+}
+
+async function resolveTargetUserId(data = {}) {
+  if (data.targetUserId !== undefined && data.targetUserId !== '') {
+    const targetUserId = Number(data.targetUserId);
+    if (!Number.isFinite(targetUserId)) throw createHttpError('聊天对象无效');
+    return targetUserId;
+  }
+  const memberId = data.targetMemberId !== undefined ? data.targetMemberId : data.memberId;
+  if (memberId !== undefined && memberId !== '') {
+    const memberRow = await getById(C.members, memberId);
+    if (!memberRow) throw createHttpError('未找到会员档案', 404, 40400);
+    return Number(memberRow.userId);
+  }
+  throw createHttpError('请选择聊天对象');
+}
+
+async function resolveMemberMatchmakerChatAccess(userId, targetUserId) {
+  const ownAssignment = await activeMemberAssignment(userId);
+  if (ownAssignment) {
+    const matchmakerRow = await getById(C.matchmakers, ownAssignment.matchmakerId);
+    if (isCertifiedActiveMatchmaker(matchmakerRow) && Number(matchmakerRow.userId) === Number(targetUserId)) {
+      return {
+        conversationType: 'member_matchmaker',
+        memberId: Number(ownAssignment.id),
+        matchmakerId: Number(matchmakerRow.id),
+        matchmakerUserId: Number(targetUserId)
+      };
+    }
+  }
+
+  const targetAssignment = await activeMemberAssignment(targetUserId);
+  if (targetAssignment) {
+    const matchmakerRow = await getById(C.matchmakers, targetAssignment.matchmakerId);
+    if (isCertifiedActiveMatchmaker(matchmakerRow) && Number(matchmakerRow.userId) === Number(userId)) {
+      return {
+        conversationType: 'member_matchmaker',
+        memberId: Number(targetAssignment.id),
+        matchmakerId: Number(matchmakerRow.id),
+        matchmakerUserId: Number(userId)
+      };
+    }
+  }
+  return null;
+}
+
+async function resolveMemberPairChatAccess(userId, targetUserId) {
+  const records = await getAll(C.matchRecords);
+  const record = records
+    .filter(row => {
+      const users = [Number(row.userAId), Number(row.userBId)];
+      return users.includes(Number(userId)) && users.includes(Number(targetUserId))
+        && !['rejected', 'cancelled'].includes(String(row.status || ''));
+    })
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0) || Number(b.id || 0) - Number(a.id || 0))[0];
+  if (!record) return null;
+  return {
+    conversationType: 'member_pair',
+    matchRecordId: Number(record.id),
+    matchmakerId: record.matchmakerId ? Number(record.matchmakerId) : null
+  };
+}
+
+async function resolveChatAccess(userId, targetUserId) {
+  if (!targetUserId || Number(userId) === Number(targetUserId)) {
+    throw createHttpError('不能和自己聊天');
+  }
+  const targetUser = await getById(C.users, targetUserId);
+  if (!targetUser || Number(targetUser.status || 1) === 0) {
+    throw createHttpError('未找到聊天对象', 404, 40400);
+  }
+
+  const memberMatchmakerAccess = await resolveMemberMatchmakerChatAccess(userId, targetUserId);
+  if (memberMatchmakerAccess) return memberMatchmakerAccess;
+
+  const memberPairAccess = await resolveMemberPairChatAccess(userId, targetUserId);
+  if (memberPairAccess) return memberPairAccess;
+
+  throw createHttpError('需要建立服务关系或配对后才能聊天', 403, 40300);
+}
+
+async function getChatConversationOrThrow(userId, conversationId) {
+  const conversation = await getById(C.conversations, conversationId);
+  assertChatParticipant(conversation, userId);
+  return conversation;
+}
+
+async function ensureChatConversation(participantIds, conversationType, metadata = {}) {
+  const normalizedIds = participantIds.map(id => Number(id)).filter(id => Number.isFinite(id));
+  if (normalizedIds.length !== 2 || normalizedIds[0] === normalizedIds[1]) return null;
+  const participantKey = chatParticipantKey(normalizedIds);
+  const existingRows = await getAll(C.conversations, { participantKey, conversationType });
+  const existing = existingRows.find(row => Number(row.status || 1) !== 0);
+  if (existing) return existing;
+
+  const unreadBy = {};
+  normalizedIds.forEach(id => { unreadBy[String(id)] = 0; });
+  return addRow(C.conversations, {
+    id: await nextId('conversation'),
+    conversationType,
+    participantIds: normalizedIds.sort((a, b) => a - b),
+    participantKey,
+    memberId: metadata.memberId || null,
+    matchmakerId: metadata.matchmakerId || null,
+    matchmakerUserId: metadata.matchmakerUserId || null,
+    matchRecordId: metadata.matchRecordId || null,
+    lastMessageContent: '',
+    lastMessageAt: '',
+    lastSenderId: null,
+    unreadBy,
+    status: 'active'
+  });
+}
+
+async function ensureMemberMatchmakerConversation(memberRow, matchmakerRow) {
+  if (!memberRow || !matchmakerRow) return null;
+  return ensureChatConversation(
+    [Number(memberRow.userId), Number(matchmakerRow.userId)],
+    'member_matchmaker',
+    {
+      memberId: Number(memberRow.id),
+      matchmakerId: Number(matchmakerRow.id),
+      matchmakerUserId: Number(matchmakerRow.userId)
+    }
+  );
+}
+
+async function ensureMemberPairConversation(matchRecord) {
+  if (!matchRecord) return null;
+  return ensureChatConversation(
+    [Number(matchRecord.userAId), Number(matchRecord.userBId)],
+    'member_pair',
+    {
+      matchRecordId: Number(matchRecord.id),
+      matchmakerId: matchRecord.matchmakerId ? Number(matchRecord.matchmakerId) : null
+    }
+  );
+}
+
+async function ensureDefaultChatConversationsForUser(userId) {
+  const assignment = await activeMemberAssignment(userId);
+  if (assignment) {
+    const matchmakerRow = await getById(C.matchmakers, assignment.matchmakerId);
+    if (isCertifiedActiveMatchmaker(matchmakerRow)) {
+      await ensureMemberMatchmakerConversation(assignment, matchmakerRow);
+    }
+  }
+
+  const matchmakerRow = await getOne(C.matchmakers, { userId: Number(userId) });
+  if (isCertifiedActiveMatchmaker(matchmakerRow)) {
+    const members = await getAll(C.members, { matchmakerId: Number(matchmakerRow.id), status: 1 });
+    await Promise.all(members.map(memberRow => ensureMemberMatchmakerConversation(memberRow, matchmakerRow)));
+  }
+
+  const matchRecords = (await getAll(C.matchRecords))
+    .filter(record => {
+      const users = [Number(record.userAId), Number(record.userBId)];
+      return users.includes(Number(userId))
+        && !['rejected', 'cancelled'].includes(String(record.status || ''));
+    });
+  await Promise.all(matchRecords.map(record => ensureMemberPairConversation(record)));
+}
+
+async function markChatRead(userId, conversationId) {
+  const conversation = await getChatConversationOrThrow(userId, conversationId);
+  const unreadBy = chatUnreadMap(conversation);
+  unreadBy[String(userId)] = 0;
+  const messages = await getAll(C.chatMessages, { conversationId: Number(conversation.id) });
+  await Promise.all(messages
+    .filter(message => Number(message.receiverId) === Number(userId)
+      && !(Array.isArray(message.readBy) && message.readBy.map(id => Number(id)).includes(Number(userId))))
+    .map(message => updateRow(C.chatMessages, message, {
+      readBy: Array.from(new Set([...(Array.isArray(message.readBy) ? message.readBy : []), Number(userId)])),
+      readAt: nowIso()
+    })));
+  const updated = await updateRow(C.conversations, conversation, { unreadBy });
+  return chatConversationView(updated, userId);
+}
+
+const chat = {
+  async listConversations(userId, filters = {}) {
+    await ensureDefaultChatConversationsForUser(userId);
+    const rows = (await getAll(C.conversations, { status: 'active' }))
+      .filter(row => chatParticipantIds(row).includes(Number(userId)))
+      .sort((a, b) => {
+        const aTime = new Date(a.lastMessageAt || a.updatedAt || a.createdAt || 0).getTime();
+        const bTime = new Date(b.lastMessageAt || b.updatedAt || b.createdAt || 0).getTime();
+        return bTime - aTime || Number(b.id || 0) - Number(a.id || 0);
+      });
+    const views = await Promise.all(rows.map(row => chatConversationView(row, userId)));
+    return paginate(views, filters.page, filters.pageSize || 50);
+  },
+
+  async getOrCreateConversation(userId, data = {}) {
+    const targetUserId = await resolveTargetUserId(data);
+    const access = await resolveChatAccess(userId, targetUserId);
+    const participantIds = [Number(userId), Number(targetUserId)];
+    const participantKey = chatParticipantKey(participantIds);
+    const existingRows = await getAll(C.conversations, {
+      participantKey,
+      conversationType: access.conversationType
+    });
+    const existing = existingRows.find(row => Number(row.status || 1) !== 0);
+    if (existing) return chatConversationView(existing, userId);
+
+    const unreadBy = {};
+    participantIds.forEach(id => { unreadBy[String(id)] = 0; });
+    const conversation = await addRow(C.conversations, {
+      id: await nextId('conversation'),
+      conversationType: access.conversationType,
+      participantIds: participantIds.sort((a, b) => a - b),
+      participantKey,
+      memberId: access.memberId || null,
+      matchmakerId: access.matchmakerId || null,
+      matchmakerUserId: access.matchmakerUserId || null,
+      matchRecordId: access.matchRecordId || null,
+      lastMessageContent: '',
+      lastMessageAt: '',
+      lastSenderId: null,
+      unreadBy,
+      status: 'active'
+    });
+    return chatConversationView(conversation, userId);
+  },
+
+  async listMessages(userId, conversationId, filters = {}) {
+    const conversation = await getChatConversationOrThrow(userId, conversationId);
+    const rows = (await getAll(C.chatMessages, { conversationId: Number(conversation.id) }))
+      .filter(row => Number(row.status || 1) !== 0)
+      .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0) || Number(a.id || 0) - Number(b.id || 0));
+    const conversationView = await markChatRead(userId, conversation.id);
+    const page = paginate(rows, filters.page, filters.pageSize || 80);
+    return {
+      conversation: conversationView,
+      messages: await Promise.all(page.list.map(row => chatMessageView(row, userId))),
+      total: page.total,
+      page: page.page,
+      pageSize: page.pageSize
+    };
+  },
+
+  async sendMessage(userId, conversationId, data = {}) {
+    if (data.contentType && data.contentType !== 'text') throw createHttpError('第一版仅支持文字消息');
+    const content = normalizeChatText(data.content);
+    const conversation = await getChatConversationOrThrow(userId, conversationId);
+    const receiverId = chatParticipantIds(conversation).find(id => Number(id) !== Number(userId));
+    if (!receiverId) throw createHttpError('receiver not found');
+    const message = await addRow(C.chatMessages, {
+      id: await nextId('chatMessage'),
+      conversationId: Number(conversation.id),
+      senderId: Number(userId),
+      receiverId: Number(receiverId),
+      contentType: 'text',
+      content,
+      readBy: [Number(userId)],
+      status: 'active'
+    });
+    const unreadBy = chatUnreadMap(conversation);
+    unreadBy[String(receiverId)] = Number(unreadBy[String(receiverId)] || 0) + 1;
+    unreadBy[String(userId)] = 0;
+    await updateRow(C.conversations, conversation, {
+      lastMessageContent: content,
+      lastMessageAt: message.createdAt,
+      lastSenderId: Number(userId),
+      unreadBy
+    });
+    return chatMessageView(message, userId);
+  },
+
+  async markRead(userId, conversationId) {
+    return markChatRead(userId, conversationId);
+  }
+};
+
 async function eventView(event, currentUserId = null) {
   const organizer = await getById(C.users, event.organizerId);
   const allRegistrations = await getAll(C.registrations, { eventId: event.id });
@@ -940,6 +1296,7 @@ async function approveMemberMatchmakerRequest(matchmakerUserId, requestId) {
     content: '红娘已通过您的添加申请。',
     isRead: 0
   });
+  await ensureMemberMatchmakerConversation(memberRow, mm);
   return {
     request: await memberRequestView(reviewed),
     member: await memberView(memberRow)
@@ -1026,6 +1383,7 @@ async function acceptMemberMatchmakerInvite(userId, data = {}) {
       isRead: 0
     });
   }
+  await ensureMemberMatchmakerConversation(memberRow, matchmaker);
 
   return {
     status: 'approved',
@@ -1429,6 +1787,7 @@ const member = {
         status: 1
       });
     }
+    await ensureMemberMatchmakerConversation(row, mm);
     return memberView(row);
   },
 
@@ -1552,6 +1911,7 @@ const member = {
           && Number(record.userAId) === Number(userAId)
           && Number(record.userBId) === Number(userBId));
       if (pending) {
+        await ensureMemberPairConversation(pending);
         return { matchRecord: stripInternal(pending), messages: [], duplicated: true };
       }
 
@@ -1571,6 +1931,7 @@ const member = {
         note: data.note || '',
         status: 'pending'
       });
+      await ensureMemberPairConversation(matchRecord);
       const messages = await Promise.all([
         addRow(C.messages, {
           id: await nextId('message'),
@@ -1608,6 +1969,7 @@ const member = {
       compatibilityScore: null,
       status: 'pending'
     });
+    await ensureMemberPairConversation(matchRecord);
     const ownUser = await getById(C.users, own.userId);
     const message = await addRow(C.messages, {
       id: await nextId('message'),
@@ -1997,6 +2359,14 @@ exports.main = async (event = {}) => {
     if (matchmakerRequestApproveMatch && method === 'POST') return ok(await matchmaker.approveMemberRequest(session.userId, matchmakerRequestApproveMatch[1]));
     const matchmakerRequestRejectMatch = path.match(/^\/matchmaker\/member-requests\/(\d+)\/reject$/);
     if (matchmakerRequestRejectMatch && method === 'POST') return ok(await matchmaker.rejectMemberRequest(session.userId, matchmakerRequestRejectMatch[1], data.remark || ''));
+
+    if (method === 'GET' && path === '/chat/conversations') return ok(await chat.listConversations(session.userId, data));
+    if (method === 'POST' && path === '/chat/conversations') return ok(await chat.getOrCreateConversation(session.userId, data));
+    const chatMessagesMatch = path.match(/^\/chat\/conversations\/(\d+)\/messages$/);
+    if (chatMessagesMatch && method === 'GET') return ok(await chat.listMessages(session.userId, chatMessagesMatch[1], data));
+    if (chatMessagesMatch && method === 'POST') return ok(await chat.sendMessage(session.userId, chatMessagesMatch[1], data));
+    const chatReadMatch = path.match(/^\/chat\/conversations\/(\d+)\/read$/);
+    if (chatReadMatch && method === 'POST') return ok(await chat.markRead(session.userId, chatReadMatch[1]));
 
     if (method === 'GET' && path === '/member/list') return ok(await member.listOwn(session.userId, data));
     if (method === 'GET' && path === '/member/resources') return ok(await member.resources(session.userId, data));

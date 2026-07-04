@@ -1,0 +1,47 @@
+<view class="page chat-page">
+  <view class="chat-header">
+    <view class="chat-peer">
+      <image class="chat-peer-avatar" src="{{conversation.peer.avatarUrl || '/assets/members/avatar-female-1.png'}}" mode="aspectFill"></image>
+      <view class="chat-peer-copy">
+        <text class="section-title">{{conversation.title || '会话'}}</text>
+        <text class="section-note">{{conversation.conversationType === 'member_pair' ? '配对沟通' : '红娘服务'}}</text>
+      </view>
+    </view>
+  </view>
+
+  <scroll-view class="chat-scroll" scroll-y scroll-into-view="{{scrollIntoView}}" scroll-with-animation>
+    <view wx:if="{{loading && !messages.length}}" class="empty chat-empty">
+      <text class="empty-title">正在加载消息</text>
+      <text class="empty-note">请稍候。</text>
+    </view>
+
+    <block wx:elif="{{messages.length}}">
+      <view wx:for="{{messages}}" wx:key="id" id="{{item.anchorId}}" class="message-row {{item.isMine ? 'mine' : 'peer'}}">
+        <image wx:if="{{!item.isMine}}" class="message-avatar" src="{{item.senderAvatar}}" mode="aspectFill"></image>
+        <view class="message-stack">
+          <text class="message-time">{{item.timeText}}</text>
+          <view class="message-bubble">
+            <text class="message-text">{{item.content}}</text>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <view wx:else class="empty chat-empty">
+      <text class="empty-title">还没有消息</text>
+      <text class="empty-note">发送第一条文字消息开始沟通。</text>
+    </view>
+  </scroll-view>
+
+  <view class="chat-input-bar">
+    <textarea
+      class="chat-input"
+      value="{{inputValue}}"
+      auto-height
+      maxlength="500"
+      placeholder="输入消息"
+      bindinput="onInput"
+    ></textarea>
+    <button class="send-button" loading="{{sending}}" disabled="{{sending}}" bindtap="send">发送</button>
+  </view>
+</view>

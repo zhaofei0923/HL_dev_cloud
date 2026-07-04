@@ -63,6 +63,7 @@
     <view wx:if="{{isOwn}}" class="card notice-card">
       <text class="section-title">红娘备注</text>
       <text class="section-note">{{member.remarkText}}</text>
+      <button class="btn gold chat-btn" loading="{{chatStarting}}" disabled="{{chatStarting}}" bindtap="startChat">发消息</button>
     </view>
 
     <view wx:else class="card notice-card">

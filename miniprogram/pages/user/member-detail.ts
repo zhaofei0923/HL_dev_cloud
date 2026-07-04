@@ -1,11 +1,13 @@
 import { memberApi } from '../../services/member'
+import { chatApi } from '../../services/chat'
 import { normalizeMemberProfile } from '../../utils/member-format'
 
 Page({
   data: {
     id: '',
     member: null as any,
-    loading: false
+    loading: false,
+    chatStarting: false
   },
 
   onLoad(options: Record<string, string | undefined>) {
@@ -39,5 +41,24 @@ Page({
 
   goProfile() {
     wx.navigateTo({ url: '/pages/user/profile' })
+  },
+
+  async startChat() {
+    const member = this.data.member
+    const memberId = String(member && member.id ? member.id : '')
+    if (!/^\d+$/.test(memberId)) {
+      wx.showToast({ title: '配对后才能聊天', icon: 'none' })
+      return
+    }
+    if (this.data.chatStarting) return
+    this.setData({ chatStarting: true })
+    try {
+      const conversation = await chatApi.getOrCreateConversation({ targetMemberId: memberId })
+      wx.navigateTo({ url: `/pages/user/chat?id=${conversation.id}` })
+    } catch (err) {
+      console.warn('start user chat failed', err)
+    } finally {
+      this.setData({ chatStarting: false })
+    }
   }
 })

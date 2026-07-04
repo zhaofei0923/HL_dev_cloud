@@ -1,0 +1,78 @@
+.messages-page {
+  padding-top: 24rpx;
+}
+
+.messages-hero {
+  min-height: 260rpx;
+}
+
+.conversation-shell {
+  padding: 22rpx;
+}
+
+.conversation-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 92rpx minmax(0, 1fr);
+  gap: 20rpx;
+  align-items: center;
+  min-height: 132rpx;
+}
+
+.conversation-avatar {
+  width: 92rpx;
+  height: 92rpx;
+  border: 4rpx solid #fffdf8;
+  border-radius: 50%;
+  background: rgba(177, 134, 83, 0.12);
+}
+
+.conversation-copy {
+  min-width: 0;
+}
+
+.conversation-title-row {
+  align-items: flex-start;
+}
+
+.conversation-title,
+.conversation-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-title {
+  max-width: 360rpx;
+}
+
+.conversation-time {
+  flex: 0 0 auto;
+  color: #9b7b5d;
+  font-size: 21rpx;
+  line-height: 1.4;
+}
+
+.conversation-tags {
+  margin-top: 10rpx;
+}
+
+.unread-badge {
+  position: absolute;
+  top: 22rpx;
+  right: 18rpx;
+  min-width: 32rpx;
+  height: 32rpx;
+  padding: 0 8rpx;
+  border-radius: 999rpx;
+  background: #963b35;
+  color: #fff8ed;
+  font-size: 20rpx;
+  font-weight: 800;
+  line-height: 32rpx;
+  text-align: center;
+}
+
+.empty-action {
+  margin-top: 22rpx;
+}

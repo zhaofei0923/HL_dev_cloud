@@ -6,6 +6,8 @@
     "pages/user/salon",
     "pages/user/salon-detail",
     "pages/user/profile",
+    "pages/user/messages",
+    "pages/user/chat",
     "pages/common/image-cropper",
     "pages/user/matchmaker-invite",
     "pages/matchmaker/dashboard",
@@ -13,6 +15,8 @@
     "pages/matchmaker/member-detail",
     "pages/matchmaker/member-form",
     "pages/matchmaker/resources",
+    "pages/matchmaker/messages",
+    "pages/matchmaker/chat",
     "pages/matchmaker/salon",
     "pages/matchmaker/mine",
     "pages/matchmaker/salon-form"

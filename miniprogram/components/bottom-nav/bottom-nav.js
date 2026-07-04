@@ -2,11 +2,13 @@
 const USER_TABS = [
     { key: 'members', label: '推荐', path: '/pages/user/members', icon: 'members' },
     { key: 'salon', label: '沙龙', path: '/pages/user/salon', icon: 'salon' },
+    { key: 'messages', label: '消息', path: '/pages/user/messages', icon: 'messages' },
     { key: 'mine', label: '我的', path: '/pages/user/profile', icon: 'mine' }
 ];
 const MATCHMAKER_TABS = [
     { key: 'dashboard', label: '看板', path: '/pages/matchmaker/dashboard', icon: 'dashboard' },
     { key: 'members', label: '会员', path: '/pages/matchmaker/members', icon: 'members' },
+    { key: 'messages', label: '消息', path: '/pages/matchmaker/messages', icon: 'messages' },
     { key: 'salon', label: '沙龙', path: '/pages/matchmaker/salon', icon: 'salon' },
     { key: 'mine', label: '我的', path: '/pages/matchmaker/mine', icon: 'mine' }
 ];

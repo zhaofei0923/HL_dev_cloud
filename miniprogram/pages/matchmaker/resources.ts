@@ -1,4 +1,5 @@
 import { memberApi } from '../../services/member'
+import { chatApi } from '../../services/chat'
 import { normalizeMemberProfile } from '../../utils/member-format'
 
 function normalizeResource(row: any) {
@@ -87,7 +88,15 @@ Page({
         resourceUserId,
         note: `${myMember.realName || myMember.nickname} 与对方条件较匹配`
       })
-      wx.showToast({ title: '互推成功' })
+      wx.showModal({
+        title: '互推成功',
+        content: '已创建互推记录，可继续和自己的会员跟进沟通。',
+        confirmText: '去聊天',
+        cancelText: '留在此页',
+        success: res => {
+          if (res.confirm) this.openChatForMember(myMember)
+        }
+      })
     } catch (err) {
       console.warn('recommend member failed', err)
     } finally {
@@ -101,5 +110,19 @@ Page({
     if (!member) return
     wx.setStorageSync('selectedMatchmakerMember', member)
     wx.navigateTo({ url: `/pages/matchmaker/member-detail?id=${id}&scope=resource` })
+  },
+
+  async openChatForMember(member: any) {
+    const targetUserId = member && member.userId ? String(member.userId) : ''
+    if (!targetUserId) {
+      wx.showToast({ title: '会员账号暂不可用', icon: 'none' })
+      return
+    }
+    try {
+      const conversation = await chatApi.getOrCreateConversation({ targetUserId })
+      wx.navigateTo({ url: `/pages/matchmaker/chat?id=${conversation.id}` })
+    } catch (err) {
+      console.warn('open recommend follow-up chat failed', err)
+    }
   }
 })

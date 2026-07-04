@@ -63,7 +63,10 @@
     <view class="card notice-card">
       <text class="section-title">隐私保护</text>
       <text class="section-note">公开档案仅展示必要画像信息，手机号、红娘备注和内部服务记录不会公开。</text>
-      <button class="btn ghost profile-btn" bindtap="goProfile">完善我的资料</button>
+      <view class="button-row detail-actions">
+        <button class="btn gold" loading="{{chatStarting}}" disabled="{{chatStarting}}" bindtap="startChat">发消息</button>
+        <button class="btn ghost profile-btn" bindtap="goProfile">完善我的资料</button>
+      </view>
     </view>
   </block>
 

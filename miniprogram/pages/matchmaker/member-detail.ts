@@ -1,4 +1,5 @@
 import { memberApi } from '../../services/member'
+import { chatApi } from '../../services/chat'
 import { normalizeMemberProfile } from '../../utils/member-format'
 
 Page({
@@ -7,7 +8,8 @@ Page({
     scope: 'own',
     isOwn: true,
     member: null as any,
-    loading: false
+    loading: false,
+    chatStarting: false
   },
 
   onLoad(options: Record<string, string | undefined>) {
@@ -44,5 +46,27 @@ Page({
 
   goBack() {
     wx.navigateBack()
+  },
+
+  async startChat() {
+    const member = this.data.member
+    const targetUserId = member && member.userId ? String(member.userId) : ''
+    const memberId = member && member.id && /^\d+$/.test(String(member.id)) ? String(member.id) : ''
+    if (!targetUserId && !memberId) {
+      wx.showToast({ title: '暂不能发起聊天', icon: 'none' })
+      return
+    }
+    if (this.data.chatStarting) return
+    this.setData({ chatStarting: true })
+    try {
+      const conversation = await chatApi.getOrCreateConversation(targetUserId
+        ? { targetUserId }
+        : { targetMemberId: memberId })
+      wx.navigateTo({ url: `/pages/matchmaker/chat?id=${conversation.id}` })
+    } catch (err) {
+      console.warn('start matchmaker chat failed', err)
+    } finally {
+      this.setData({ chatStarting: false })
+    }
   }
 })
