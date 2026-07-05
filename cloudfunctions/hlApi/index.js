@@ -20,6 +20,8 @@ const C = {
   messages: 'hl_messages',
   conversations: 'hl_conversations',
   chatMessages: 'hl_chat_messages',
+  memberInteractions: 'hl_member_interactions',
+  giftRecords: 'hl_gift_records',
   counters: 'hl_counters'
 };
 
@@ -163,6 +165,13 @@ const MEMBER_PHOTOS = [
   `${MEMBER_IMAGE_ROOT}lifestyle-travel.png`,
   `${MEMBER_IMAGE_ROOT}lifestyle-reading.png`,
   `${MEMBER_IMAGE_ROOT}lifestyle-sport.png`
+];
+
+const GIFT_CATALOG = [
+  { id: 'flower', name: '鲜花', description: '表达一份认真好感', symbol: '花', tone: 'rose' },
+  { id: 'coffee', name: '咖啡', description: '邀请对方轻松聊聊', symbol: '咖', tone: 'coffee' },
+  { id: 'star', name: '星光', description: '送出特别关注', symbol: '星', tone: 'star' },
+  { id: 'candy', name: '糖果', description: '传递轻松甜意', symbol: '糖', tone: 'sweet' }
 ];
 
 let collectionsReady;
@@ -343,13 +352,16 @@ function collectionsForPath(path) {
     return [...common, C.matchmakers, C.members, C.memberRequests, C.salonEvents, C.registrations, C.matchRecords, C.messages];
   }
   if (path.startsWith('/member')) {
-    return [...common, C.matchmakers, C.members, C.memberRequests, C.matchRecords, C.salonEvents, C.messages];
+    return [...common, C.matchmakers, C.members, C.memberRequests, C.matchRecords, C.salonEvents, C.messages, C.memberInteractions, C.giftRecords];
   }
   if (path.startsWith('/salon')) {
     return [...common, C.matchmakers, C.members, C.salonEvents, C.registrations, C.messages];
   }
   if (path.startsWith('/chat')) {
     return [...common, C.matchmakers, C.members, C.matchRecords, C.conversations, C.chatMessages];
+  }
+  if (path.startsWith('/messages')) {
+    return [...common, C.messages, C.conversations, C.memberInteractions];
   }
   return common;
 }
@@ -716,10 +728,164 @@ function sanitizePublicMemberRow(row, options = {}) {
   return safe;
 }
 
-async function publicMemberView(member, context = {}) {
+async function publicMemberView(member, context = {}, options = {}) {
   const row = await memberView(member, context);
   if (!row.displayEnabled) return null;
-  return sanitizePublicMemberRow(row);
+  return sanitizePublicMemberRow(row, options);
+}
+
+function giftCatalogView(gift) {
+  return { ...gift };
+}
+
+function giftById(giftId) {
+  const id = String(giftId || '').trim();
+  return GIFT_CATALOG.find(item => item.id === id) || null;
+}
+
+async function publicShowcaseRows(options = {}) {
+  const rows = await getAll(C.members, { status: 1 });
+  const matchRecords = await getAll(C.matchRecords);
+  const memberUserIds = new Set(rows.map(row => Number(row.userId)));
+  const profileRows = (await getAll(C.profiles))
+    .filter(row => isTrue(row.displayEnabled))
+    .filter(row => !memberUserIds.has(Number(row.userId)));
+  const memberViews = await Promise.all(rows.map(row => publicMemberView(row, { matchRecords }, options)));
+  const profileViews = await Promise.all(profileRows.map(async row => {
+    const view = await profileMemberView(row, { matchRecords });
+    if (!view.displayEnabled) return null;
+    return sanitizePublicMemberRow(view, options);
+  }));
+  return [...memberViews, ...profileViews]
+    .filter(row => row && Number(row.status) === 1);
+}
+
+async function memberInteractionStateMap(userId, targetUserIds = []) {
+  const targets = new Set(
+    targetUserIds
+      .map(id => Number(id))
+      .filter(id => Number.isFinite(id) && id > 0)
+  );
+  if (!Number(userId) || !targets.size) return {};
+
+  const rows = await getAll(C.memberInteractions, { userId: Number(userId) }, 2000);
+  return rows.reduce((map, row) => {
+    const targetUserId = Number(row.targetUserId);
+    if (!targets.has(targetUserId) || row.active === false) return map;
+    const key = String(targetUserId);
+    map[key] = map[key] || {};
+    map[key][row.actionType] = true;
+    return map;
+  }, {});
+}
+
+async function withMemberViewerState(rows, userId) {
+  const stateMap = await memberInteractionStateMap(userId, rows.map(row => row.userId));
+  return rows.map(row => {
+    const state = stateMap[String(row.userId)] || {};
+    return {
+      ...row,
+      viewerState: {
+        isFavorite: !!state.favorite,
+        isHidden: !!state.hide
+      }
+    };
+  });
+}
+
+function interactionTargetUserId(data = {}) {
+  const targetUserId = Number(data.targetUserId || data.receiverId || data.userId);
+  if (!Number.isFinite(targetUserId) || targetUserId <= 0) {
+    throw createHttpError('targetUserId is required');
+  }
+  return targetUserId;
+}
+
+async function publicShowcaseTarget(data = {}) {
+  const targetUserId = interactionTargetUserId(data);
+  const rows = await publicShowcaseRows({ keepUserId: true });
+  const target = rows.find(row => Number(row.userId) === targetUserId);
+  if (!target) throw createHttpError('target member not found', 404, 40400);
+  return target;
+}
+
+async function upsertMemberInteraction(userId, targetUserId, actionType, active) {
+  const payload = {
+    userId: Number(userId),
+    targetUserId: Number(targetUserId),
+    actionType,
+    active: !!active,
+    status: active ? 'active' : 'inactive'
+  };
+  const existing = await getOne(C.memberInteractions, {
+    userId: payload.userId,
+    targetUserId: payload.targetUserId,
+    actionType
+  });
+  if (existing) return updateRow(C.memberInteractions, existing, payload);
+  return addRow(C.memberInteractions, {
+    id: await nextId('memberInteraction'),
+    ...payload
+  });
+}
+
+function isActiveInteraction(row) {
+  return !!row && row.active !== false && String(row.status || 'active') !== 'inactive';
+}
+
+async function activeInteraction(userId, targetUserId, actionType) {
+  const row = await getOne(C.memberInteractions, {
+    userId: Number(userId),
+    targetUserId: Number(targetUserId),
+    actionType
+  });
+  return isActiveInteraction(row) ? row : null;
+}
+
+async function hasActiveFavorite(userId, targetUserId) {
+  return !!(await activeInteraction(userId, targetUserId, 'favorite'));
+}
+
+async function areMutualFavorites(userAId, userBId) {
+  if (!Number(userAId) || !Number(userBId) || Number(userAId) === Number(userBId)) return false;
+  const [aToB, bToA] = await Promise.all([
+    hasActiveFavorite(userAId, userBId),
+    hasActiveFavorite(userBId, userAId)
+  ]);
+  return aToB && bToA;
+}
+
+async function createFavoriteNotification(senderId, target, conversation = null) {
+  const sender = await chatParticipantView(senderId);
+  const senderName = sender.nickname || '会员';
+  return addRow(C.messages, {
+    id: await nextId('message'),
+    senderId: Number(senderId),
+    receiverId: Number(target.userId),
+    contentType: 'interaction',
+    messageType: 'member_favorite',
+    content: `${senderName} 关注了你，互相关注后即可聊天。`,
+    targetUserId: Number(senderId),
+    targetMemberId: '',
+    conversationId: conversation ? Number(conversation.id) : null,
+    isRead: 0,
+    status: 'active'
+  });
+}
+
+async function findActiveConversation(participantIds, conversationType = 'member_pair') {
+  const participantKey = chatParticipantKey(participantIds);
+  const rows = await getAll(C.conversations, { participantKey, conversationType });
+  return rows.find(row => Number(row.status || 1) !== 0) || null;
+}
+
+async function ensureMutualFavoriteConversation(userAId, userBId) {
+  if (!(await areMutualFavorites(userAId, userBId))) return null;
+  return ensureChatConversation(
+    [Number(userAId), Number(userBId)],
+    'member_pair',
+    { chatOpenReason: 'mutual_favorite' }
+  );
 }
 
 function chatParticipantKey(userIds) {
@@ -862,6 +1028,14 @@ async function resolveMemberPairChatAccess(userId, targetUserId) {
   };
 }
 
+async function resolveMutualFavoriteChatAccess(userId, targetUserId) {
+  if (!(await areMutualFavorites(userId, targetUserId))) return null;
+  return {
+    conversationType: 'member_pair',
+    chatOpenReason: 'mutual_favorite'
+  };
+}
+
 async function resolveChatAccess(userId, targetUserId) {
   if (!targetUserId || Number(userId) === Number(targetUserId)) {
     throw createHttpError('不能和自己聊天');
@@ -876,6 +1050,9 @@ async function resolveChatAccess(userId, targetUserId) {
 
   const memberPairAccess = await resolveMemberPairChatAccess(userId, targetUserId);
   if (memberPairAccess) return memberPairAccess;
+
+  const mutualFavoriteAccess = await resolveMutualFavoriteChatAccess(userId, targetUserId);
+  if (mutualFavoriteAccess) return mutualFavoriteAccess;
 
   throw createHttpError('需要建立服务关系或配对后才能聊天', 403, 40300);
 }
@@ -905,6 +1082,7 @@ async function ensureChatConversation(participantIds, conversationType, metadata
     matchmakerId: metadata.matchmakerId || null,
     matchmakerUserId: metadata.matchmakerUserId || null,
     matchRecordId: metadata.matchRecordId || null,
+    chatOpenReason: metadata.chatOpenReason || null,
     lastMessageContent: '',
     lastMessageAt: '',
     lastSenderId: null,
@@ -960,6 +1138,12 @@ async function ensureDefaultChatConversationsForUser(userId) {
         && !['rejected', 'cancelled'].includes(String(record.status || ''));
     });
   await Promise.all(matchRecords.map(record => ensureMemberPairConversation(record)));
+
+  const favoriteRows = (await getAll(C.memberInteractions, {
+    userId: Number(userId),
+    actionType: 'favorite'
+  }, 2000)).filter(isActiveInteraction);
+  await Promise.all(favoriteRows.map(row => ensureMutualFavoriteConversation(userId, row.targetUserId)));
 }
 
 async function markChatRead(userId, conversationId) {
@@ -1015,6 +1199,7 @@ const chat = {
       matchmakerId: access.matchmakerId || null,
       matchmakerUserId: access.matchmakerUserId || null,
       matchRecordId: access.matchRecordId || null,
+      chatOpenReason: access.chatOpenReason || null,
       lastMessageContent: '',
       lastMessageAt: '',
       lastSenderId: null,
@@ -1070,6 +1255,54 @@ const chat = {
 
   async markRead(userId, conversationId) {
     return markChatRead(userId, conversationId);
+  }
+};
+
+function isMessageRead(row) {
+  return Number(row.isRead) === 1 || row.isRead === true;
+}
+
+async function notificationMessageView(row, currentUserId) {
+  const sender = row.senderId ? await chatParticipantView(row.senderId) : null;
+  let conversationId = row.conversationId ? Number(row.conversationId) : null;
+  if (!conversationId && String(row.messageType || '') === 'member_favorite' && row.senderId) {
+    const conversation = await findActiveConversation([Number(row.senderId), Number(currentUserId)], 'member_pair');
+    if (conversation) conversationId = Number(conversation.id);
+  }
+  return {
+    ...stripInternal(row),
+    sender,
+    isRead: isMessageRead(row),
+    hasUnread: !isMessageRead(row),
+    conversationId,
+    canChat: !!conversationId,
+    createdAt: row.createdAt || ''
+  };
+}
+
+const messages = {
+  async list(userId, filters = {}) {
+    const rows = (await getAll(C.messages, { receiverId: Number(userId) }, 2000))
+      .filter(row => Number(row.status || 1) !== 0)
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0) || Number(b.id || 0) - Number(a.id || 0));
+    const page = paginate(rows, filters.page, filters.pageSize || 20);
+    return {
+      ...page,
+      unreadCount: rows.filter(row => !isMessageRead(row)).length,
+      list: await Promise.all(page.list.map(row => notificationMessageView(row, userId)))
+    };
+  },
+
+  async markRead(userId, messageId) {
+    const row = await getById(C.messages, messageId);
+    if (!row) throw createHttpError('message not found', 404, 40400);
+    if (Number(row.receiverId) !== Number(userId)) {
+      throw createHttpError('message forbidden', 403, 40300);
+    }
+    const updated = isMessageRead(row)
+      ? row
+      : await updateRow(C.messages, row, { isRead: 1, readAt: nowIso() });
+    return notificationMessageView(updated, userId);
   }
 };
 
@@ -1825,26 +2058,102 @@ const member = {
     ));
   },
 
-  async showcase(filters = {}) {
-    const rows = await getAll(C.members, { status: 1 });
-    const matchRecords = await getAll(C.matchRecords);
-    const memberUserIds = new Set(rows.map(row => Number(row.userId)));
-    const profileRows = (await getAll(C.profiles))
-      .filter(row => isTrue(row.displayEnabled))
-      .filter(row => !memberUserIds.has(Number(row.userId)));
-    const memberViews = await Promise.all(rows.map(row => publicMemberView(row, { matchRecords })));
-    const profileViews = await Promise.all(profileRows.map(async row => {
-      const view = await profileMemberView(row, { matchRecords });
-      if (!view.displayEnabled) return null;
-      return sanitizePublicMemberRow(view);
-    }));
+  async showcase(userId, filters = {}) {
+    const rows = await withMemberViewerState(await publicShowcaseRows({ keepUserId: true }), userId);
     return resolveMemberMediaPage(paginate(
-      [...memberViews, ...profileViews]
-        .filter(row => row && Number(row.status) === 1 && matchesMemberFilters(row, filters))
+      rows
+        .filter(row => Number(row.userId) !== Number(userId))
+        .filter(row => !row.viewerState.isHidden && matchesMemberFilters(row, filters))
         .sort(sortMemberRowsDesc),
       filters.page,
       filters.pageSize
     ));
+  },
+
+  async gifts() {
+    return GIFT_CATALOG.map(giftCatalogView);
+  },
+
+  async interact(userId, data = {}) {
+    const actionType = String(data.actionType || '').trim();
+    if (!['favorite', 'hide'].includes(actionType)) {
+      throw createHttpError('unsupported interaction action');
+    }
+    const target = await publicShowcaseTarget(data);
+    if (Number(target.userId) === Number(userId)) {
+      throw createHttpError('cannot interact with yourself');
+    }
+    const active = actionType === 'hide'
+      ? true
+      : (data.active === undefined ? true : isTrue(data.active));
+    const existingFavorite = actionType === 'favorite'
+      ? await getOne(C.memberInteractions, {
+        userId: Number(userId),
+        targetUserId: Number(target.userId),
+        actionType: 'favorite'
+      })
+      : null;
+    const wasFavoriteActive = isActiveInteraction(existingFavorite);
+    const interaction = await upsertMemberInteraction(userId, target.userId, actionType, active);
+    let notification = null;
+    let conversation = null;
+    let conversationView = null;
+    let mutualFavorite = false;
+    if (actionType === 'favorite' && active) {
+      mutualFavorite = await areMutualFavorites(userId, target.userId);
+      if (mutualFavorite) {
+        conversation = await ensureMutualFavoriteConversation(userId, target.userId);
+        conversationView = conversation ? await chatConversationView(conversation, userId) : null;
+      }
+      if (!wasFavoriteActive) {
+        notification = await createFavoriteNotification(userId, target, conversation);
+      }
+    }
+    const stateMap = await memberInteractionStateMap(userId, [target.userId]);
+    const viewerState = stateMap[String(target.userId)] || {};
+    return {
+      interaction: stripInternal(interaction),
+      targetUserId: Number(target.userId),
+      actionType,
+      active,
+      mutualFavorite,
+      canChat: !!conversationView,
+      conversation: conversationView,
+      notification: notification ? stripInternal(notification) : null,
+      viewerState: {
+        isFavorite: !!viewerState.favorite,
+        isHidden: !!viewerState.hide
+      }
+    };
+  },
+
+  async sendGift(userId, data = {}) {
+    const gift = giftById(data.giftId);
+    if (!gift) throw createHttpError('gift not found', 404, 40400);
+
+    const target = await publicShowcaseTarget(data);
+    if (Number(target.userId) === Number(userId)) {
+      throw createHttpError('cannot send gift to yourself');
+    }
+
+    const record = await addRow(C.giftRecords, {
+      id: await nextId('giftRecord'),
+      senderId: Number(userId),
+      receiverId: Number(target.userId),
+      targetUserId: Number(target.userId),
+      targetMemberId: String(data.targetMemberId || data.memberId || target.id || ''),
+      giftId: gift.id,
+      giftName: gift.name,
+      status: 'sent'
+    });
+    return {
+      record: stripInternal(record),
+      gift: giftCatalogView(gift),
+      target: {
+        userId: Number(target.userId),
+        displayName: target.realName || target.nickname || '会员'
+      }
+    };
   },
 
   async update(matchmakerUserId, memberId, data = {}) {
@@ -2368,9 +2677,16 @@ exports.main = async (event = {}) => {
     const chatReadMatch = path.match(/^\/chat\/conversations\/(\d+)\/read$/);
     if (chatReadMatch && method === 'POST') return ok(await chat.markRead(session.userId, chatReadMatch[1]));
 
+    if (method === 'GET' && path === '/messages') return ok(await messages.list(session.userId, data));
+    const messageReadMatch = path.match(/^\/messages\/(\d+)\/read$/);
+    if (messageReadMatch && method === 'POST') return ok(await messages.markRead(session.userId, messageReadMatch[1]));
+
     if (method === 'GET' && path === '/member/list') return ok(await member.listOwn(session.userId, data));
     if (method === 'GET' && path === '/member/resources') return ok(await member.resources(session.userId, data));
-    if (method === 'GET' && path === '/member/showcase') return ok(await member.showcase(data));
+    if (method === 'GET' && path === '/member/showcase') return ok(await member.showcase(session.userId, data));
+    if (method === 'GET' && path === '/member/gifts') return ok(await member.gifts());
+    if (method === 'POST' && path === '/member/interactions') return ok(await member.interact(session.userId, data));
+    if (method === 'POST' && path === '/member/gifts/send') return ok(await member.sendGift(session.userId, data));
     if (method === 'GET' && path === '/member/matchmaker-invite/resolve') return ok(await member.resolveMatchmakerInvite(session.userId, data));
     if (method === 'POST' && path === '/member/matchmaker-requests') return ok(await member.requestMatchmaker(session.userId, data));
     if (method === 'POST' && path === '/member/matchmaker-invite/accept') return ok(await member.acceptMatchmakerInvite(session.userId, data));

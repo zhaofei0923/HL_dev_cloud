@@ -44,16 +44,19 @@ Page({
     },
     async startChat() {
         const member = this.data.member;
+        const targetUserId = Number(member && member.userId ? member.userId : 0);
         const memberId = String(member && member.id ? member.id : '');
-        if (!/^\d+$/.test(memberId)) {
-            wx.showToast({ title: '配对后才能聊天', icon: 'none' });
+        if (!targetUserId && !/^\d+$/.test(memberId)) {
+            wx.showToast({ title: '互相关注或配对后才能聊天', icon: 'none' });
             return;
         }
         if (this.data.chatStarting)
             return;
         this.setData({ chatStarting: true });
         try {
-            const conversation = await chat_1.chatApi.getOrCreateConversation({ targetMemberId: memberId });
+            const conversation = await chat_1.chatApi.getOrCreateConversation(targetUserId
+                ? { targetUserId }
+                : { targetMemberId: memberId });
             wx.navigateTo({ url: `/pages/user/chat?id=${conversation.id}` });
         }
         catch (err) {

@@ -1,4 +1,13 @@
 <view class="page safe-bottom with-bottom-nav">
+  <view class="card switch-card">
+    <text class="section-title">{{matchmakerEntryTitle}}</text>
+    <text class="section-note">{{matchmakerEntryNote}}</text>
+    <view class="button-row">
+      <button class="btn {{matchmakerApproved ? 'gold' : 'secondary'}}" bindtap="goMatchmaker">{{matchmakerEntryButton}}</button>
+      <button class="btn ghost" bindtap="logout">退出登录</button>
+    </view>
+  </view>
+
   <view class="card hero profile-hero">
     <image class="hero-cover" src="{{preview.coverUrl}}" mode="aspectFill"></image>
     <view class="hero-mask"></view>
@@ -241,15 +250,6 @@
       <view class="divider"></view>
       <text class="member-label">择偶期待</text>
       <text class="item-desc">{{preview.partnerText}}</text>
-    </view>
-  </view>
-
-  <view class="card switch-card">
-    <text class="section-title">{{matchmakerEntryTitle}}</text>
-    <text class="section-note">{{matchmakerEntryNote}}</text>
-    <view class="button-row">
-      <button class="btn {{matchmakerApproved ? 'gold' : 'secondary'}}" bindtap="goMatchmaker">{{matchmakerEntryButton}}</button>
-      <button class="btn ghost" bindtap="logout">退出登录</button>
     </view>
   </view>
 

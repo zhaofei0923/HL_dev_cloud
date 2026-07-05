@@ -10,6 +10,15 @@ export const memberApi = {
   showcase(data?: Record<string, any>) {
     return request('/member/showcase', { data })
   },
+  gifts() {
+    return request('/member/gifts')
+  },
+  interact(data: Record<string, any>) {
+    return request('/member/interactions', { method: 'POST', data })
+  },
+  sendGift(data: Record<string, any>) {
+    return request('/member/gifts/send', { method: 'POST', data })
+  },
   resolveMatchmakerInvite(data: Record<string, any>) {
     return request('/member/matchmaker-invite/resolve', { data })
   },

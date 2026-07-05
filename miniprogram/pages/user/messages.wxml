@@ -19,6 +19,38 @@
     </view>
   </view>
 
+  <view class="card list-shell notification-shell">
+    <view class="row list-header">
+      <view>
+        <text class="section-title">互动通知</text>
+        <text class="section-note">{{loading ? '正在加载互动通知' : notificationUnreadCount ? notificationUnreadCount + ' 条未读' : '关注和系统提醒'}}</text>
+      </view>
+      <text class="tag gold">{{notificationTotal}} 条</text>
+    </view>
+
+    <block wx:if="{{notifications.length}}">
+      <view wx:for="{{notifications}}" wx:key="id" class="list-card notification-card" data-id="{{item.id}}" bindtap="openNotification">
+        <image class="notification-avatar" src="{{item.senderAvatar}}" mode="aspectFill"></image>
+        <view class="notification-copy">
+          <view class="row notification-title-row">
+            <text class="item-title notification-title">{{item.senderName}}</text>
+            <text class="notification-time">{{item.timeText}}</text>
+          </view>
+          <text class="item-meta notification-preview">{{item.preview}}</text>
+          <view class="tag-row notification-tags">
+            <text class="tag gold">{{item.typeText}}</text>
+            <text class="tag">{{item.actionText}}</text>
+          </view>
+        </view>
+        <text wx:if="{{item.hasUnread}}" class="notice-dot"></text>
+      </view>
+    </block>
+
+    <view wx:else class="notification-empty">
+      <text>{{loading ? '正在加载通知' : '暂无互动通知'}}</text>
+    </view>
+  </view>
+
   <view class="card list-shell conversation-shell">
     <view class="row list-header">
       <view>

@@ -65,11 +65,41 @@
           <text class="status-chip">{{currentMember.statusText}}</text>
           <text wx:if="{{positionText}}" class="position-chip">{{positionText}}</text>
         </view>
-        <view class="member-overlay">
-          <view class="privacy-chip">
-            <view class="privacy-dot"></view>
-            <text>公开资料已脱敏</text>
+
+        <view class="quick-actions">
+          <view
+            class="action-icon action-gift {{giftLoading || hideLoading ? 'disabled' : ''}}"
+            aria-label="赠送礼物"
+            hover-class="action-icon-hover"
+            catchtap="openGiftPanel"
+          >
+            <view class="gift-shape">
+              <view class="gift-bow"></view>
+              <view class="gift-box"></view>
+            </view>
           </view>
+          <view
+            class="action-icon action-heart {{currentMember.isFavorite ? 'active' : ''}} {{favoriteLoading || hideLoading ? 'disabled' : ''}}"
+            aria-label="关注会员"
+            hover-class="action-icon-hover"
+            catchtap="toggleFavorite"
+          >
+            <view class="heart-shape"></view>
+          </view>
+          <view
+            class="action-icon action-hide {{hideLoading || favoriteLoading ? 'disabled' : ''}}"
+            aria-label="不再看"
+            hover-class="action-icon-hover"
+            catchtap="hideCurrent"
+          >
+            <view class="x-shape">
+              <view class="x-line x-left"></view>
+              <view class="x-line x-right"></view>
+            </view>
+          </view>
+        </view>
+
+        <view class="member-overlay">
           <view class="name-line">
             <text class="recommend-name">{{currentMember.displayName}}</text>
             <text class="recommend-age">{{currentMember.ageText}}</text>
@@ -85,11 +115,6 @@
           </view>
         </view>
       </view>
-
-      <view class="recommend-toolbar">
-        <button class="toolbar-button toolbar-detail" catchtap="openCurrentDetail">查看详情</button>
-        <button class="toolbar-button toolbar-next" catchtap="nextMember">换一位</button>
-      </view>
     </block>
 
     <view wx:else class="recommend-empty">
@@ -100,6 +125,46 @@
         <button class="btn ghost" bindtap="toggleFilter">调整筛选</button>
       </view>
       <button class="btn secondary profile-entry" bindtap="goProfile">完善我的资料</button>
+    </view>
+  </view>
+
+  <view wx:if="{{giftPanelOpen}}" class="gift-mask" catchtap="closeGiftPanel" catchtouchmove="noop"></view>
+  <view wx:if="{{giftPanelOpen}}" class="gift-panel" catchtap="noop">
+    <view class="gift-panel-head">
+      <view>
+        <text class="gift-panel-title">赠送礼物</text>
+        <text class="gift-panel-subtitle">选择一个免费虚拟礼物</text>
+      </view>
+      <view
+        class="gift-close {{sendingGiftId !== '' ? 'disabled' : ''}}"
+        aria-label="关闭"
+        hover-class="gift-close-hover"
+        catchtap="closeGiftPanel"
+      >
+        <view class="x-shape small">
+          <view class="x-line x-left"></view>
+          <view class="x-line x-right"></view>
+        </view>
+      </view>
+    </view>
+    <view class="gift-list">
+      <button
+        wx:for="{{gifts}}"
+        wx:key="id"
+        class="gift-item"
+        data-gift-id="{{item.id}}"
+        loading="{{sendingGiftId === item.id}}"
+        disabled="{{giftLoading || sendingGiftId !== ''}}"
+        catchtap="sendGift"
+      >
+        <view class="gift-icon gift-{{item.tone}}">{{item.symbol}}</view>
+        <view class="gift-copy">
+          <text class="gift-name">{{item.name}}</text>
+          <text class="gift-description">{{item.description}}</text>
+        </view>
+      </button>
+      <view wx:if="{{giftLoading && !gifts.length}}" class="gift-loading">正在加载礼品库</view>
+      <view wx:if="{{!giftLoading && !gifts.length}}" class="gift-loading">礼品库暂不可用</view>
     </view>
   </view>
 

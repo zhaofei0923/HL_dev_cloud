@@ -33,6 +33,7 @@ function uniqueLocationParts(city, nativePlace) {
 }
 function normalizeMember(row) {
     const member = (0, member_format_1.normalizeMemberProfile)(row);
+    const viewerState = row.viewerState && typeof row.viewerState === 'object' ? row.viewerState : {};
     const ageText = textWithUnit(row.age, '岁', '年龄保密');
     const heightText = textWithUnit(row.height, 'cm', '');
     const city = String(member.cityText || row.city || row.province || '').trim();
@@ -46,14 +47,30 @@ function normalizeMember(row) {
     const introPreview = truncateText(row.selfIntro || member.introText, 42);
     return {
         ...member,
+        userId: row.userId,
         ageText,
         primaryMeta,
         profileLine,
         cardTags,
         partnerPreview,
         introPreview,
-        statusText: row.memberType === 'vip' ? 'VIP精选' : '精选推荐'
+        isFavorite: !!viewerState.isFavorite,
+        statusText: row.memberType === 'vip' ? 'VIP精选' : '真人认证'
     };
+}
+function normalizeGifts(result) {
+    if (!Array.isArray(result))
+        return [];
+    return result.map(item => {
+        const row = item;
+        return {
+            id: String(row.id || ''),
+            name: String(row.name || ''),
+            description: String(row.description || ''),
+            symbol: String(row.symbol || row.name || '').slice(0, 1),
+            tone: String(row.tone || 'rose')
+        };
+    }).filter(item => item.id && item.name);
 }
 function safeIndex(list, index) {
     if (!list.length)
@@ -69,6 +86,17 @@ function selectionState(list, index) {
         positionText: list.length ? `${currentIndex + 1}/${list.length}` : ''
     };
 }
+function memberTarget(member) {
+    if (!member || !member.userId)
+        return null;
+    return {
+        targetUserId: member.userId,
+        targetMemberId: member.id
+    };
+}
+function countText(total) {
+    return total ? `${total} 位会员可浏览 · 左滑/上滑换一位` : '暂无可浏览会员';
+}
 Page({
     data: {
         keyword: '',
@@ -83,6 +111,12 @@ Page({
         countText: '正在整理会员资料',
         emptyTitle: '暂无可推荐会员',
         emptyNote: '可以调整筛选条件，或稍后再查看红娘精选的公开会员。',
+        gifts: [],
+        giftPanelOpen: false,
+        giftLoading: false,
+        favoriteLoading: false,
+        hideLoading: false,
+        sendingGiftId: '',
         loading: false
     },
     onShow() {
@@ -96,20 +130,24 @@ Page({
     async load() {
         this.setData({ loading: true });
         try {
-            const result = await member_1.memberApi.showcase({
-                page: 1,
-                pageSize: 50,
-                keyword: this.data.keyword,
-                city: this.data.city,
-                gender: this.data.gender
-            });
-            const list = (result.list || []).map((row) => normalizeMember(row));
-            const total = result.total || list.length;
+            const [result] = await Promise.all([
+                member_1.memberApi.showcase({
+                    page: 1,
+                    pageSize: 50,
+                    keyword: this.data.keyword,
+                    city: this.data.city,
+                    gender: this.data.gender
+                }),
+                this.loadGifts()
+            ]);
+            const data = result;
+            const list = (data.list || []).map(row => normalizeMember(row));
+            const total = data.total || list.length;
             this.setData({
                 list,
                 ...selectionState(list, 0),
                 total,
-                countText: total ? `${total} 位会员可浏览 · 左滑/上滑换一位` : '暂无可浏览会员',
+                countText: countText(total),
                 emptyTitle: this.hasFilters() ? '暂无匹配会员' : '暂无可推荐会员',
                 emptyNote: this.hasFilters()
                     ? '可以调整城市、性别或关键词后再试。'
@@ -129,6 +167,19 @@ Page({
         }
         finally {
             this.setData({ loading: false });
+        }
+    },
+    async loadGifts(force = false) {
+        if (this.data.gifts.length && !force)
+            return this.data.gifts;
+        this.setData({ giftLoading: true });
+        try {
+            const gifts = normalizeGifts(await member_1.memberApi.gifts());
+            this.setData({ gifts });
+            return gifts;
+        }
+        finally {
+            this.setData({ giftLoading: false });
         }
     },
     onKeyword(e) {
@@ -191,6 +242,127 @@ Page({
         }
         this.previousMember();
     },
+    setCurrentFavorite(active) {
+        const list = this.data.list.map((item, index) => (index === this.data.currentIndex ? { ...item, isFavorite: active } : item));
+        this.setData({
+            list,
+            currentMember: list[this.data.currentIndex] || null
+        });
+    },
+    async toggleFavorite() {
+        if (this.data.favoriteLoading || this.data.hideLoading)
+            return;
+        const member = this.data.currentMember;
+        const target = memberTarget(member);
+        if (!member || !target) {
+            wx.showToast({ title: '暂无法关注该会员', icon: 'none' });
+            return;
+        }
+        const active = !member.isFavorite;
+        this.setData({ favoriteLoading: true });
+        try {
+            const result = await member_1.memberApi.interact({ ...target, actionType: 'favorite', active });
+            this.setCurrentFavorite(active);
+            if (active && result && result.canChat && result.conversation && result.conversation.id) {
+                wx.showModal({
+                    title: '互相关注',
+                    content: '你们已互相关注，可以开始聊天。',
+                    confirmText: '去聊天',
+                    cancelText: '继续看',
+                    success: modal => {
+                        if (modal.confirm) {
+                            wx.navigateTo({ url: `/pages/user/chat?id=${result.conversation.id}` });
+                        }
+                    }
+                });
+            }
+            else {
+                wx.showToast({ title: active ? '已关注，对方会收到通知' : '已取消关注', icon: 'none' });
+            }
+        }
+        catch (err) {
+            console.warn('toggle favorite failed', err);
+        }
+        finally {
+            this.setData({ favoriteLoading: false });
+        }
+    },
+    async hideCurrent() {
+        if (this.data.hideLoading || this.data.favoriteLoading)
+            return;
+        const member = this.data.currentMember;
+        const target = memberTarget(member);
+        if (!target) {
+            wx.showToast({ title: '暂无法处理该会员', icon: 'none' });
+            return;
+        }
+        const currentIndex = this.data.currentIndex;
+        this.setData({ hideLoading: true });
+        try {
+            await member_1.memberApi.interact({ ...target, actionType: 'hide', active: true });
+            const list = this.data.list.filter((_, index) => index !== currentIndex);
+            const total = Math.max(Number(this.data.total || this.data.list.length) - 1, 0);
+            this.setData({
+                list,
+                ...selectionState(list, currentIndex),
+                total,
+                countText: countText(total),
+                giftPanelOpen: false
+            });
+            wx.showToast({ title: '已减少此类推荐', icon: 'none' });
+        }
+        catch (err) {
+            console.warn('hide member failed', err);
+        }
+        finally {
+            this.setData({ hideLoading: false });
+        }
+    },
+    async openGiftPanel() {
+        if (this.data.giftLoading || this.data.hideLoading)
+            return;
+        const target = memberTarget(this.data.currentMember);
+        if (!target) {
+            wx.showToast({ title: '暂无法赠送礼物', icon: 'none' });
+            return;
+        }
+        this.setData({ giftPanelOpen: true });
+        try {
+            await this.loadGifts();
+        }
+        catch (err) {
+            console.warn('load gifts failed', err);
+            wx.showToast({ title: '礼品库暂不可用', icon: 'none' });
+        }
+    },
+    closeGiftPanel() {
+        if (this.data.sendingGiftId)
+            return;
+        this.setData({ giftPanelOpen: false });
+    },
+    async sendGift(e) {
+        const giftId = String(e.currentTarget.dataset.giftId || '');
+        if (!giftId || this.data.sendingGiftId)
+            return;
+        const target = memberTarget(this.data.currentMember);
+        if (!target) {
+            wx.showToast({ title: '暂无法赠送礼物', icon: 'none' });
+            return;
+        }
+        this.setData({ sendingGiftId: giftId });
+        try {
+            await member_1.memberApi.sendGift({ ...target, giftId });
+            this.setData({ giftPanelOpen: false });
+            wx.showToast({ title: '赠送成功', icon: 'success' });
+        }
+        catch (err) {
+            console.warn('send gift failed', err);
+        }
+        finally {
+            this.setData({ sendingGiftId: '' });
+        }
+    },
+    noop() { },
     goProfile() {
         wx.navigateTo({ url: '/pages/user/profile' });
     },

@@ -10,6 +10,74 @@
   padding: 22rpx;
 }
 
+.notification-shell {
+  padding: 22rpx;
+}
+
+.notification-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 82rpx minmax(0, 1fr);
+  gap: 18rpx;
+  align-items: center;
+  min-height: 118rpx;
+}
+
+.notification-avatar {
+  width: 82rpx;
+  height: 82rpx;
+  border: 4rpx solid #fffdf8;
+  border-radius: 50%;
+  background: rgba(177, 134, 83, 0.12);
+}
+
+.notification-copy {
+  min-width: 0;
+}
+
+.notification-title-row {
+  align-items: flex-start;
+}
+
+.notification-title,
+.notification-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-title {
+  max-width: 360rpx;
+}
+
+.notification-time {
+  flex: 0 0 auto;
+  color: #9b7b5d;
+  font-size: 21rpx;
+  line-height: 1.4;
+}
+
+.notification-tags {
+  margin-top: 10rpx;
+}
+
+.notice-dot {
+  position: absolute;
+  top: 24rpx;
+  right: 20rpx;
+  width: 16rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  background: #963b35;
+  box-shadow: 0 0 0 4rpx rgba(150, 59, 53, 0.12);
+}
+
+.notification-empty {
+  padding: 24rpx 8rpx 8rpx;
+  color: #9b7b5d;
+  font-size: 24rpx;
+}
+
 .conversation-card {
   position: relative;
   display: grid;
