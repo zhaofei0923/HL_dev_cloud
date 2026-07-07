@@ -1991,11 +1991,13 @@ const member = {
       partnerRequirement: data.partnerRequirement || '',
       photos: media.photos
     };
+    const profile = await getOne(C.profiles, { userId: user.id });
     if (data.displayEnabled !== undefined) {
       profilePatch.displayEnabled = isTrue(data.displayEnabled);
       profilePatch.displayUpdatedAt = nowIso();
+    } else if (!profile) {
+      profilePatch.displayEnabled = false;
     }
-    const profile = await getOne(C.profiles, { userId: user.id });
     if (profile) await updateRow(C.profiles, profile, profilePatch);
     else await addRow(C.profiles, { id: await nextId('profile'), ...profilePatch });
 

@@ -78,6 +78,7 @@ const FORM_DEFAULTS = {
     realName: '',
     photoText: '',
     photoDisplayUrls: [],
+    displayEnabled: false,
     gender: '2',
     age: '',
     height: '',
@@ -133,6 +134,15 @@ Page({
         if (!field)
             return;
         this.updateForm(field, e.detail.value);
+    },
+    onDisplayEnabledChange(e) {
+        const displayEnabled = !!e.detail.value;
+        const form = { ...this.data.form, displayEnabled };
+        this.setData({
+            'form.displayEnabled': displayEnabled,
+            preview: previewFor(form),
+            ...selectorTextFor(form)
+        });
     },
     onGenderChange(e) {
         this.updateForm('gender', String(Number(e.detail.value) + 1));

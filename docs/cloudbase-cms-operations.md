@@ -45,9 +45,9 @@
 ### 会员资料管理 `hl_profiles` + `hl_members`
 
 - `hl_profiles` 可编辑：`realName`、`gender`、`age`、`height`、`city`、`nativePlace`、`education`、`occupation`、`incomeRange`、`maritalStatus`、`houseStatus`、`carStatus`、`selfIntro`、`partnerRequirement`、`photos`、`displayEnabled`。
-- `hl_members` 可编辑：`memberType`、`serviceLevel`、`remark`、`displayEnabled`、`status`。
+- `hl_members` 可编辑：`memberType`、`serviceLevel`、`remark`、`status`。
 - 只读：`id`、`userId`、`matchmakerId`、`displayUpdatedAt`、`createdAt`、`updatedAt`。
-- 运营动作：补齐资料、调整会员类型和服务等级、协助关闭/开启展示。`displayEnabled = true` 后，会员才会进入公开会员浏览和红娘资源池。
+- 运营动作：补齐资料、调整会员类型和服务等级、协助关闭/开启展示。公开展示只看 `hl_profiles.displayEnabled`；`displayEnabled = true` 后，会员才会进入公开会员浏览和红娘资源池。
 - 注意：新增会员关系、红娘通过会员申请、微信注册链接自动注册、会员互推应走小程序或云函数，不建议在 CMS 手工新增联动记录。
 
 ### 报名管理 `hl_registrations`

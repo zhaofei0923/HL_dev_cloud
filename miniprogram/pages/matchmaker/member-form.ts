@@ -95,6 +95,7 @@ const FORM_DEFAULTS: Record<string, any> = {
   realName: '',
   photoText: '',
   photoDisplayUrls: [],
+  displayEnabled: false,
   gender: '2',
   age: '',
   height: '',
@@ -152,6 +153,16 @@ Page({
     const field = String(e.currentTarget.dataset.field || '')
     if (!field) return
     this.updateForm(field, e.detail.value)
+  },
+
+  onDisplayEnabledChange(e: any) {
+    const displayEnabled = !!e.detail.value
+    const form = { ...this.data.form, displayEnabled }
+    this.setData({
+      'form.displayEnabled': displayEnabled,
+      preview: previewFor(form),
+      ...selectorTextFor(form)
+    })
   },
 
   onGenderChange(e: any) {

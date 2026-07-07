@@ -79,6 +79,18 @@
   margin-top: 12rpx;
 }
 
+.display-control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.display-control-copy {
+  flex: 1;
+  min-width: 0;
+}
+
 .empty-btn {
   margin-top: 20rpx;
 }

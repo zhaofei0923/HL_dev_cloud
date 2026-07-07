@@ -61,6 +61,14 @@
     </view>
 
     <view wx:if="{{isOwn}}" class="card notice-card">
+      <view class="display-control-row">
+        <view class="display-control-copy">
+          <text class="section-title">展示状态</text>
+          <text class="section-note">{{member.displayEnabled ? '公开到会员浏览和红娘资源池，联系方式和红娘备注不公开。' : '仅内部服务跟进，不进入公开会员浏览和红娘资源池。'}}</text>
+        </view>
+        <switch checked="{{member.displayEnabled}}" color="#b4814f" disabled="{{displaySaving}}" bindchange="onDisplayEnabledChange"></switch>
+      </view>
+      <view class="divider"></view>
       <text class="section-title">红娘备注</text>
       <text class="section-note">{{member.remarkText}}</text>
       <button class="btn gold chat-btn" loading="{{chatStarting}}" disabled="{{chatStarting}}" bindtap="startChat">发消息</button>

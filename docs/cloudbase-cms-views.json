@@ -265,12 +265,11 @@
       "id": "member-service-management",
       "name": "会员服务管理",
       "collection": "hl_members",
-      "purpose": "维护红娘名下会员关系、服务等级、备注和展示状态。",
+      "purpose": "维护红娘名下会员关系、服务等级、备注和服务状态。",
       "editableFields": [
         "memberType",
         "serviceLevel",
         "remark",
-        "displayEnabled",
         "status"
       ],
       "readonlyFields": [
@@ -288,6 +287,7 @@
       "manualCmsAllowed": true,
       "warnings": [
         "新增会员关系应走小程序或云函数，不建议在 CMS 手工新增 hl_members。",
+        "公开展示开关只在 hl_profiles.displayEnabled 生效，不要在 hl_members 上维护展示状态。",
         "变更 status 前先确认不会影响红娘端会员池展示。"
       ]
     },

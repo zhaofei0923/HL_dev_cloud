@@ -63,6 +63,22 @@ assertRule(
   'Member-matchmaker request audit view must not expose editable fields.'
 );
 
+const profileView = viewsByCollection.get('hl_profiles');
+const memberServiceView = viewsByCollection.get('hl_members');
+assertRule(
+  Array.isArray(profileView.editableFields) && profileView.editableFields.includes('displayEnabled'),
+  'Profile view must expose hl_profiles.displayEnabled as the effective display switch.'
+);
+assertRule(
+  Array.isArray(memberServiceView.editableFields) && !memberServiceView.editableFields.includes('displayEnabled'),
+  'Member service view must not expose hl_members.displayEnabled; display uses hl_profiles.displayEnabled.'
+);
+assertRule(
+  Array.isArray(memberServiceView.warnings)
+    && memberServiceView.warnings.some(message => message.includes('hl_profiles.displayEnabled')),
+  'Member service view must warn that display uses hl_profiles.displayEnabled.'
+);
+
 [
   'invalid certification status',
   'invalid salon review status',

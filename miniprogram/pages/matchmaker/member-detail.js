@@ -10,6 +10,7 @@ Page({
         isOwn: true,
         member: null,
         loading: false,
+        displaySaving: false,
         chatStarting: false
     },
     onLoad(options) {
@@ -47,6 +48,36 @@ Page({
     },
     goBack() {
         wx.navigateBack();
+    },
+    async onDisplayEnabledChange(e) {
+        if (!this.data.isOwn || !this.data.member || this.data.displaySaving)
+            return;
+        const displayEnabled = !!e.detail.value;
+        const previousMember = this.data.member;
+        const completionPercent = Number((previousMember.profileCompletion || {}).percent || 0);
+        const nextMember = {
+            ...previousMember,
+            displayEnabled,
+            displayStatusText: displayEnabled ? (completionPercent >= 70 ? '可展示' : '待完善') : '未展示'
+        };
+        this.setData({
+            displaySaving: true,
+            member: nextMember
+        });
+        try {
+            const updated = await member_1.memberApi.update(this.data.id, { displayEnabled });
+            const member = (0, member_format_1.normalizeMemberProfile)(updated, true);
+            wx.setStorageSync('selectedMatchmakerMember', member);
+            this.setData({ member });
+            wx.showToast({ title: displayEnabled ? '已开启展示' : '已关闭展示', icon: 'none' });
+        }
+        catch (err) {
+            console.warn('update member display failed', err);
+            this.setData({ member: previousMember });
+        }
+        finally {
+            this.setData({ displaySaving: false });
+        }
     },
     async startChat() {
         const member = this.data.member;

@@ -271,14 +271,14 @@ hl_members
 | memberType | 会员类型 |
 | serviceLevel | 服务等级 |
 | remark | 内部备注 |
-| displayEnabled | 是否进入资源池 |
 | status | 服务状态 |
 
 操作边界：
 
-1. 可以维护服务等级、内部备注、展示开关。
+1. 可以维护服务等级、内部备注和服务状态。
 2. 不建议在后台手工新增会员关系。
 3. 会员申请添加红娘、红娘审批会员申请，必须走小程序端流程。
+4. 公开展示开关只在 `hl_profiles.displayEnabled` 生效，不在 `hl_members` 上维护。
 
 ## 7. 报名管理
 
