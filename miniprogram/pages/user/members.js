@@ -242,11 +242,12 @@ Page({
         }
         this.previousMember();
     },
-    setCurrentFavorite(active) {
-        const list = this.data.list.map((item, index) => (index === this.data.currentIndex ? { ...item, isFavorite: active } : item));
+    setCurrentFavoriteAndAdvance(active, currentIndex) {
+        const list = this.data.list.map((item, index) => (index === currentIndex ? { ...item, isFavorite: active } : item));
         this.setData({
             list,
-            currentMember: list[this.data.currentIndex] || null
+            ...selectionState(list, currentIndex + 1),
+            giftPanelOpen: false
         });
     },
     async toggleFavorite() {
@@ -259,10 +260,11 @@ Page({
             return;
         }
         const active = !member.isFavorite;
+        const currentIndex = this.data.currentIndex;
         this.setData({ favoriteLoading: true });
         try {
             const result = await member_1.memberApi.interact({ ...target, actionType: 'favorite', active });
-            this.setCurrentFavorite(active);
+            this.setCurrentFavoriteAndAdvance(active, currentIndex);
             if (active && result && result.canChat && result.conversation && result.conversation.id) {
                 wx.showModal({
                     title: '互相关注',
@@ -349,10 +351,14 @@ Page({
             wx.showToast({ title: '暂无法赠送礼物', icon: 'none' });
             return;
         }
+        const currentIndex = this.data.currentIndex;
         this.setData({ sendingGiftId: giftId });
         try {
             await member_1.memberApi.sendGift({ ...target, giftId });
-            this.setData({ giftPanelOpen: false });
+            this.setData({
+                giftPanelOpen: false,
+                ...selectionState(this.data.list, currentIndex + 1)
+            });
             wx.showToast({ title: '赠送成功', icon: 'success' });
         }
         catch (err) {

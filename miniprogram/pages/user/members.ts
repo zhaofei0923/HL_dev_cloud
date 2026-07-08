@@ -266,13 +266,14 @@ Page({
     this.previousMember()
   },
 
-  setCurrentFavorite(active: boolean) {
+  setCurrentFavoriteAndAdvance(active: boolean, currentIndex: number) {
     const list = this.data.list.map((item, index) => (
-      index === this.data.currentIndex ? { ...item, isFavorite: active } : item
+      index === currentIndex ? { ...item, isFavorite: active } : item
     ))
     this.setData({
       list,
-      currentMember: list[this.data.currentIndex] || null
+      ...selectionState(list, currentIndex + 1),
+      giftPanelOpen: false
     })
   },
 
@@ -286,10 +287,11 @@ Page({
     }
 
     const active = !member.isFavorite
+    const currentIndex = this.data.currentIndex
     this.setData({ favoriteLoading: true })
     try {
       const result: any = await memberApi.interact({ ...target, actionType: 'favorite', active })
-      this.setCurrentFavorite(active)
+      this.setCurrentFavoriteAndAdvance(active, currentIndex)
       if (active && result && result.canChat && result.conversation && result.conversation.id) {
         wx.showModal({
           title: '互相关注',
@@ -373,10 +375,14 @@ Page({
       return
     }
 
+    const currentIndex = this.data.currentIndex
     this.setData({ sendingGiftId: giftId })
     try {
       await memberApi.sendGift({ ...target, giftId })
-      this.setData({ giftPanelOpen: false })
+      this.setData({
+        giftPanelOpen: false,
+        ...selectionState(this.data.list, currentIndex + 1)
+      })
       wx.showToast({ title: '赠送成功', icon: 'success' })
     } catch (err) {
       console.warn('send gift failed', err)
