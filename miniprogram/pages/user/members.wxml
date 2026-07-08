@@ -62,6 +62,7 @@
         <view class="cover-shade"></view>
         <view class="card-top-meta">
           <text class="status-chip">{{currentMember.statusText}}</text>
+          <text wx:if="{{favoriteQuotaText}}" class="quota-chip">{{favoriteQuotaText}}</text>
           <text wx:if="{{positionText}}" class="position-chip">{{positionText}}</text>
         </view>
 

@@ -83,6 +83,27 @@ function normalizeGifts(result) {
         };
     }).filter(item => item.id && item.name);
 }
+function normalizeFavoriteQuota(value) {
+    if (!value || typeof value !== 'object')
+        return null;
+    const row = value;
+    const limit = Number(row.limit);
+    const used = Number(row.used);
+    const remaining = Number(row.remaining);
+    if (!Number.isFinite(limit) || limit <= 0 || !Number.isFinite(used) || !Number.isFinite(remaining))
+        return null;
+    return {
+        dateKey: String(row.dateKey || ''),
+        limit,
+        used: Math.max(used, 0),
+        remaining: Math.max(remaining, 0)
+    };
+}
+function favoriteQuotaText(quota) {
+    if (!quota)
+        return '';
+    return `今日免费爱心 ${quota.remaining}/${quota.limit}`;
+}
 function safeIndex(list, index) {
     if (!list.length)
         return 0;
@@ -130,6 +151,8 @@ Page({
         sendingGiftId: '',
         actionEffect: '',
         actionAnimating: false,
+        favoriteQuota: null,
+        favoriteQuotaText: '',
         loading: false
     },
     onShow() {
@@ -159,11 +182,14 @@ Page({
             const data = result;
             const list = (data.list || []).map(row => normalizeMember(row));
             const total = data.total || list.length;
+            const favoriteQuota = normalizeFavoriteQuota(data.favoriteQuota);
             this.setData({
                 list,
                 ...selectionState(list, 0),
                 total,
                 countText: countText(total),
+                favoriteQuota,
+                favoriteQuotaText: favoriteQuotaText(favoriteQuota),
                 emptyTitle: this.hasFilters() ? '暂无匹配会员' : '暂无可推荐会员',
                 emptyNote: this.hasFilters()
                     ? '可以调整城市、性别或关键词后再试。'
@@ -272,7 +298,7 @@ Page({
             actionEffectTimer = null;
         }, 640);
     },
-    setCurrentFavoriteAndAdvance(active, currentIndex, effect) {
+    setCurrentFavoriteAndAdvance(active, currentIndex, effect, extraState = {}) {
         const list = this.data.list.map((item, index) => (index === currentIndex ? { ...item, isFavorite: active } : item));
         if (this.data.giftPanelOpen) {
             this.setData({ giftPanelOpen: false });
@@ -281,6 +307,7 @@ Page({
             this.setData({
                 list,
                 ...selectionState(list, currentIndex + 1),
+                ...extraState,
                 giftPanelOpen: false
             });
         });
@@ -298,7 +325,11 @@ Page({
         this.setData({ favoriteLoading: true });
         try {
             const result = await member_1.memberApi.interact({ ...target, actionType: 'favorite', active: true });
-            this.setCurrentFavoriteAndAdvance(true, currentIndex, 'heart');
+            const favoriteQuota = normalizeFavoriteQuota(result && result.favoriteQuota);
+            this.setCurrentFavoriteAndAdvance(true, currentIndex, 'heart', favoriteQuota ? {
+                favoriteQuota,
+                favoriteQuotaText: favoriteQuotaText(favoriteQuota)
+            } : {});
             wx.showToast({
                 title: result && result.canChat ? '已互关，可在消息里聊天' : '已关注，对方会收到通知',
                 icon: 'none'
@@ -379,11 +410,12 @@ Page({
         const currentIndex = this.data.currentIndex;
         this.setData({ sendingGiftId: giftId });
         try {
-            await member_1.memberApi.sendGift({ ...target, giftId });
-            if (!member || !member.isFavorite) {
-                await member_1.memberApi.interact({ ...target, actionType: 'favorite', active: true });
-            }
-            this.setCurrentFavoriteAndAdvance(true, currentIndex, 'gift');
+            const result = await member_1.memberApi.sendGift({ ...target, giftId });
+            const favoriteQuota = normalizeFavoriteQuota(result && result.favorite && result.favorite.favoriteQuota);
+            this.setCurrentFavoriteAndAdvance(true, currentIndex, 'gift', favoriteQuota ? {
+                favoriteQuota,
+                favoriteQuotaText: favoriteQuotaText(favoriteQuota)
+            } : {});
             wx.showToast({ title: '赠送成功，已关注', icon: 'success' });
         }
         catch (err) {

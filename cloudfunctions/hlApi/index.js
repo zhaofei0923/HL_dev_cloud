@@ -28,6 +28,8 @@ const C = {
 const MATCHMAKER_CERTIFICATION_STATUSES = new Set([0, 1, 2]);
 const SALON_REVIEW_STATUSES = new Set(['upcoming', 'rejected']);
 const MEMBER_PHOTO_LIMIT = 3;
+const DAILY_FREE_FAVORITE_LIMIT = 8;
+const SHANGHAI_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 const SEEDED_MEMBER_GROUPS = [
   [
@@ -801,6 +803,51 @@ function interactionTargetUserId(data = {}) {
   return targetUserId;
 }
 
+function shanghaiDateKey(date = new Date()) {
+  return new Date(date.getTime() + SHANGHAI_UTC_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+async function dailyFreeFavoriteStats(userId, targetUserId = null) {
+  const dateKey = shanghaiDateKey();
+  const rows = await getAll(C.memberInteractions, {
+    userId: Number(userId),
+    actionType: 'favorite',
+    freeFavoriteDate: dateKey
+  }, 2000);
+  const targetIds = new Set();
+  rows.forEach(row => {
+    const id = Number(row.targetUserId);
+    if (Number.isFinite(id) && id > 0) targetIds.add(id);
+  });
+  const targetId = Number(targetUserId);
+  const used = targetIds.size;
+  return {
+    dateKey,
+    limit: DAILY_FREE_FAVORITE_LIMIT,
+    used,
+    remaining: Math.max(DAILY_FREE_FAVORITE_LIMIT - used, 0),
+    targetCounted: Number.isFinite(targetId) && targetIds.has(targetId)
+  };
+}
+
+async function assertDailyFreeFavoriteQuota(userId, targetUserId) {
+  const stats = await dailyFreeFavoriteStats(userId, targetUserId);
+  if (!stats.targetCounted && stats.used >= DAILY_FREE_FAVORITE_LIMIT) {
+    throw createHttpError('\u4eca\u65e5\u514d\u8d39\u7231\u5fc3\u5df2\u9001\u5b8c\uff0c\u660e\u5929\u518d\u6765\u770b\u770b\u5427', 429, 42901);
+  }
+  return stats;
+}
+
+function quotaAfterFreeFavoriteUse(stats) {
+  const used = stats.targetCounted ? stats.used : stats.used + 1;
+  return {
+    dateKey: stats.dateKey,
+    limit: stats.limit,
+    used,
+    remaining: Math.max(stats.limit - used, 0)
+  };
+}
+
 async function publicShowcaseTarget(data = {}) {
   const targetUserId = interactionTargetUserId(data);
   const rows = await publicShowcaseRows({ keepUserId: true });
@@ -809,13 +856,14 @@ async function publicShowcaseTarget(data = {}) {
   return target;
 }
 
-async function upsertMemberInteraction(userId, targetUserId, actionType, active) {
+async function upsertMemberInteraction(userId, targetUserId, actionType, active, extra = {}) {
   const payload = {
     userId: Number(userId),
     targetUserId: Number(targetUserId),
     actionType,
     active: !!active,
-    status: active ? 'active' : 'inactive'
+    status: active ? 'active' : 'inactive',
+    ...extra
   };
   const existing = await getOne(C.memberInteractions, {
     userId: payload.userId,
@@ -871,6 +919,40 @@ async function createFavoriteNotification(senderId, target, conversation = null)
     isRead: 0,
     status: 'active'
   });
+}
+
+async function favoriteActionResponse(userId, target, interaction, active, wasFavoriteActive, favoriteQuota = null) {
+  let notification = null;
+  let conversation = null;
+  let conversationView = null;
+  let mutualFavorite = false;
+  if (active) {
+    mutualFavorite = await areMutualFavorites(userId, target.userId);
+    if (mutualFavorite) {
+      conversation = await ensureMutualFavoriteConversation(userId, target.userId);
+      conversationView = conversation ? await chatConversationView(conversation, userId) : null;
+    }
+    if (!wasFavoriteActive) {
+      notification = await createFavoriteNotification(userId, target, conversation);
+    }
+  }
+  const stateMap = await memberInteractionStateMap(userId, [target.userId]);
+  const viewerState = stateMap[String(target.userId)] || {};
+  return {
+    interaction: stripInternal(interaction),
+    targetUserId: Number(target.userId),
+    actionType: 'favorite',
+    active,
+    mutualFavorite,
+    canChat: !!conversationView,
+    conversation: conversationView,
+    notification: notification ? stripInternal(notification) : null,
+    viewerState: {
+      isFavorite: !!viewerState.favorite,
+      isHidden: !!viewerState.hide
+    },
+    favoriteQuota: favoriteQuota || await dailyFreeFavoriteStats(userId, target.userId)
+  };
 }
 
 async function findActiveConversation(participantIds, conversationType = 'member_pair') {
@@ -2088,7 +2170,7 @@ const member = {
 
   async showcase(userId, filters = {}) {
     const rows = await withMemberViewerState(await publicShowcaseRows({ keepUserId: true }), userId);
-    return resolveMemberMediaPage(paginate(
+    const page = await resolveMemberMediaPage(paginate(
       rows
         .filter(row => Number(row.userId) !== Number(userId))
         .filter(row => !row.viewerState.isHidden && matchesMemberFilters(row, filters))
@@ -2096,6 +2178,10 @@ const member = {
       filters.page,
       filters.pageSize
     ));
+    return {
+      ...page,
+      favoriteQuota: await dailyFreeFavoriteStats(userId)
+    };
   },
 
   async gifts() {
@@ -2114,29 +2200,30 @@ const member = {
     const active = actionType === 'hide'
       ? true
       : (data.active === undefined ? true : isTrue(data.active));
-    const existingFavorite = actionType === 'favorite'
-      ? await getOne(C.memberInteractions, {
+
+    if (actionType === 'favorite') {
+      const existingFavorite = await getOne(C.memberInteractions, {
         userId: Number(userId),
         targetUserId: Number(target.userId),
         actionType: 'favorite'
-      })
-      : null;
-    const wasFavoriteActive = isActiveInteraction(existingFavorite);
-    const interaction = await upsertMemberInteraction(userId, target.userId, actionType, active);
-    let notification = null;
-    let conversation = null;
-    let conversationView = null;
-    let mutualFavorite = false;
-    if (actionType === 'favorite' && active) {
-      mutualFavorite = await areMutualFavorites(userId, target.userId);
-      if (mutualFavorite) {
-        conversation = await ensureMutualFavoriteConversation(userId, target.userId);
-        conversationView = conversation ? await chatConversationView(conversation, userId) : null;
+      });
+      const wasFavoriteActive = isActiveInteraction(existingFavorite);
+      let favoriteQuota = await dailyFreeFavoriteStats(userId, target.userId);
+      const extra = {};
+      if (active && !wasFavoriteActive) {
+        const beforeUse = await assertDailyFreeFavoriteQuota(userId, target.userId);
+        favoriteQuota = quotaAfterFreeFavoriteUse(beforeUse);
+        Object.assign(extra, {
+          favoriteSource: 'free_heart',
+          freeFavoriteDate: beforeUse.dateKey,
+          freeFavoriteLimit: DAILY_FREE_FAVORITE_LIMIT
+        });
       }
-      if (!wasFavoriteActive) {
-        notification = await createFavoriteNotification(userId, target, conversation);
-      }
+      const interaction = await upsertMemberInteraction(userId, target.userId, 'favorite', active, extra);
+      return favoriteActionResponse(userId, target, interaction, active, wasFavoriteActive, favoriteQuota);
     }
+
+    const interaction = await upsertMemberInteraction(userId, target.userId, actionType, active);
     const stateMap = await memberInteractionStateMap(userId, [target.userId]);
     const viewerState = stateMap[String(target.userId)] || {};
     return {
@@ -2144,10 +2231,10 @@ const member = {
       targetUserId: Number(target.userId),
       actionType,
       active,
-      mutualFavorite,
-      canChat: !!conversationView,
-      conversation: conversationView,
-      notification: notification ? stripInternal(notification) : null,
+      mutualFavorite: false,
+      canChat: false,
+      conversation: null,
+      notification: null,
       viewerState: {
         isFavorite: !!viewerState.favorite,
         isHidden: !!viewerState.hide
@@ -2174,9 +2261,28 @@ const member = {
       giftName: gift.name,
       status: 'sent'
     });
+    const existingFavorite = await getOne(C.memberInteractions, {
+      userId: Number(userId),
+      targetUserId: Number(target.userId),
+      actionType: 'favorite'
+    });
+    const wasFavoriteActive = isActiveInteraction(existingFavorite);
+    const favoriteInteraction = await upsertMemberInteraction(userId, target.userId, 'favorite', true, {
+      favoriteSource: 'gift',
+      giftRecordId: Number(record.id)
+    });
+    const favorite = await favoriteActionResponse(
+      userId,
+      target,
+      favoriteInteraction,
+      true,
+      wasFavoriteActive,
+      await dailyFreeFavoriteStats(userId, target.userId)
+    );
     return {
       record: stripInternal(record),
       gift: giftCatalogView(gift),
+      favorite,
       target: {
         userId: Number(target.userId),
         displayName: target.realName || target.nickname || '会员'

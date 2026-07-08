@@ -242,10 +242,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16rpx;
 }
 
 .status-chip,
+.quota-chip,
 .position-chip,
 .privacy-chip {
   box-sizing: border-box;
@@ -264,6 +266,14 @@
 
 .status-chip {
   background: rgba(177, 134, 83, 0.88);
+}
+
+.quota-chip {
+  max-width: 270rpx;
+  overflow: hidden;
+  background: rgba(230, 59, 79, 0.82);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .quick-actions {
