@@ -917,6 +917,24 @@ function normalizeChatText(value) {
   return content;
 }
 
+function normalizeChatVoice(data = {}) {
+  const voiceFileID = String(data.voiceFileID || data.fileID || '').trim();
+  if (!voiceFileID || !isCloudFileID(voiceFileID)) throw createHttpError('语音文件无效');
+  const rawDuration = Number(data.voiceDuration || data.duration || 0);
+  const duration = rawDuration > 600 ? Math.ceil(rawDuration / 1000) : Math.ceil(rawDuration);
+  const voiceDuration = Math.max(Math.min(duration || 0, 60), 1);
+  const voiceFormat = String(data.voiceFormat || data.format || 'mp3').toLowerCase();
+  const voiceFileSize = Math.max(Number(data.voiceFileSize || data.fileSize || 0), 0);
+  if (!['mp3', 'aac', 'wav'].includes(voiceFormat)) throw createHttpError('语音格式暂不支持');
+  return {
+    voiceFileID,
+    voiceDuration,
+    voiceFormat,
+    voiceFileSize,
+    content: `[语音] ${voiceDuration}秒`
+  };
+}
+
 function assertChatParticipant(conversation, userId) {
   if (!conversation || Number(conversation.status || 1) === 0) {
     throw createHttpError('conversation not found', 404, 40400);
@@ -1226,21 +1244,29 @@ const chat = {
   },
 
   async sendMessage(userId, conversationId, data = {}) {
-    if (data.contentType && data.contentType !== 'text') throw createHttpError('第一版仅支持文字消息');
-    const content = normalizeChatText(data.content);
+    const contentType = String(data.contentType || 'text') === 'voice' ? 'voice' : 'text';
+    const voicePayload = contentType === 'voice' ? normalizeChatVoice(data) : null;
+    const content = voicePayload ? voicePayload.content : normalizeChatText(data.content);
     const conversation = await getChatConversationOrThrow(userId, conversationId);
     const receiverId = chatParticipantIds(conversation).find(id => Number(id) !== Number(userId));
     if (!receiverId) throw createHttpError('receiver not found');
-    const message = await addRow(C.chatMessages, {
+    const payload = {
       id: await nextId('chatMessage'),
       conversationId: Number(conversation.id),
       senderId: Number(userId),
       receiverId: Number(receiverId),
-      contentType: 'text',
+      contentType,
       content,
       readBy: [Number(userId)],
       status: 'active'
-    });
+    };
+    if (voicePayload) {
+      payload.voiceFileID = voicePayload.voiceFileID;
+      payload.voiceDuration = voicePayload.voiceDuration;
+      payload.voiceFormat = voicePayload.voiceFormat;
+      payload.voiceFileSize = voicePayload.voiceFileSize;
+    }
+    const message = await addRow(C.chatMessages, payload);
     const unreadBy = chatUnreadMap(conversation);
     unreadBy[String(receiverId)] = Number(unreadBy[String(receiverId)] || 0) + 1;
     unreadBy[String(userId)] = 0;

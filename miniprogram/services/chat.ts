@@ -31,8 +31,14 @@ export type ChatMessage = {
   conversationId: number
   senderId: number
   receiverId: number
-  contentType: 'text'
+  contentType: 'text' | 'voice'
   content: string
+  voiceFileID?: string
+  voiceUrl?: string
+  voiceDuration?: number
+  voiceDurationText?: string
+  voiceFormat?: string
+  voiceFileSize?: number
   isMine: boolean
   sender: ChatParticipant
   createdAt: string
@@ -57,6 +63,13 @@ type ConversationTarget = {
   memberId?: number | string
 }
 
+type VoiceMessageData = {
+  voiceFileID: string
+  voiceDuration: number
+  voiceFormat?: string
+  voiceFileSize?: number
+}
+
 export const chatApi = {
   listConversations(data: ConversationQuery = {}) {
     return request<ChatConversationPage>('/chat/conversations', { data })
@@ -74,6 +87,13 @@ export const chatApi = {
     return request<ChatMessage>(`/chat/conversations/${id}/messages`, {
       method: 'POST',
       data: { content, contentType: 'text' }
+    })
+  },
+
+  sendVoiceMessage(id: number | string, data: VoiceMessageData) {
+    return request<ChatMessage>(`/chat/conversations/${id}/messages`, {
+      method: 'POST',
+      data: { ...data, contentType: 'voice' }
     })
   },
 

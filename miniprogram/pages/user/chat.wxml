@@ -20,8 +20,22 @@
         <image wx:if="{{!item.isMine}}" class="message-avatar" src="{{item.senderAvatar}}" mode="aspectFill"></image>
         <view class="message-stack">
           <text class="message-time">{{item.timeText}}</text>
-          <view class="message-bubble">
-            <text class="message-text">{{item.content}}</text>
+          <view class="message-bubble {{item.contentType === 'voice' ? 'voice-bubble' : ''}}">
+            <view
+              wx:if="{{item.contentType === 'voice'}}"
+              class="voice-message {{playingVoiceId === item.idText ? 'playing' : ''}}"
+              data-id="{{item.idText}}"
+              bindtap="playVoice"
+            >
+              <view class="voice-play-icon"></view>
+              <view class="voice-wave">
+                <view class="voice-bar bar-one"></view>
+                <view class="voice-bar bar-two"></view>
+                <view class="voice-bar bar-three"></view>
+              </view>
+              <text class="voice-duration">{{playingVoiceId === item.idText ? '播放中' : item.voiceDurationText}}</text>
+            </view>
+            <text wx:else class="message-text">{{item.content}}</text>
           </view>
         </view>
       </view>
@@ -29,12 +43,14 @@
 
     <view wx:else class="empty chat-empty">
       <text class="empty-title">还没有消息</text>
-      <text class="empty-note">发送第一条文字消息开始沟通。</text>
+      <text class="empty-note">发送第一条文字或语音消息开始沟通。</text>
     </view>
   </scroll-view>
 
   <view class="chat-input-bar">
+    <button class="mode-button {{voiceMode ? 'active' : ''}}" disabled="{{sending || recording}}" bindtap="toggleVoiceMode">{{voiceMode ? '键盘' : '语音'}}</button>
     <textarea
+      wx:if="{{!voiceMode}}"
       class="chat-input"
       value="{{inputValue}}"
       auto-height
@@ -42,6 +58,15 @@
       placeholder="输入消息"
       bindinput="onInput"
     ></textarea>
-    <button class="send-button" loading="{{sending}}" disabled="{{sending}}" bindtap="send">发送</button>
+    <button
+      wx:if="{{voiceMode}}"
+      class="voice-record-button {{recording ? 'recording' : ''}}"
+      loading="{{sending && !recording}}"
+      disabled="{{sending && !recording}}"
+      bindtouchstart="startVoice"
+      bindtouchend="finishVoice"
+      bindtouchcancel="cancelVoice"
+    >{{recording ? '松开发送' : recordingTip}}</button>
+    <button wx:else class="send-button" loading="{{sending}}" disabled="{{sending}}" bindtap="send">发送</button>
   </view>
 </view>

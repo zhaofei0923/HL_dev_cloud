@@ -18,6 +18,12 @@ exports.chatApi = {
             data: { content, contentType: 'text' }
         });
     },
+    sendVoiceMessage(id, data) {
+        return (0, api_1.request)(`/chat/conversations/${id}/messages`, {
+            method: 'POST',
+            data: { ...data, contentType: 'voice' }
+        });
+    },
     markRead(id) {
         return (0, api_1.request)(`/chat/conversations/${id}/read`, { method: 'POST' });
     }

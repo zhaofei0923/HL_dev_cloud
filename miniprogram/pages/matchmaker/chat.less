@@ -91,6 +91,80 @@
   color: #fff8ed;
 }
 
+.voice-bubble {
+  min-width: 240rpx;
+}
+
+.voice-message {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+}
+
+.voice-play-icon {
+  width: 0;
+  height: 0;
+  border-top: 11rpx solid transparent;
+  border-bottom: 11rpx solid transparent;
+  border-left: 17rpx solid currentColor;
+}
+
+.voice-wave {
+  display: flex;
+  align-items: center;
+  gap: 5rpx;
+  height: 30rpx;
+}
+
+.voice-bar {
+  width: 5rpx;
+  border-radius: 999rpx;
+  background: currentColor;
+  opacity: 0.82;
+}
+
+.bar-one {
+  height: 12rpx;
+}
+
+.bar-two {
+  height: 22rpx;
+}
+
+.bar-three {
+  height: 16rpx;
+}
+
+.voice-message.playing .voice-bar {
+  animation: voice-wave 780ms ease-in-out infinite alternate;
+}
+
+.voice-message.playing .bar-two {
+  animation-delay: 120ms;
+}
+
+.voice-message.playing .bar-three {
+  animation-delay: 240ms;
+}
+
+.voice-duration {
+  margin-left: auto;
+  font-size: 24rpx;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+@keyframes voice-wave {
+  from {
+    transform: scaleY(0.68);
+    opacity: 0.58;
+  }
+  to {
+    transform: scaleY(1.16);
+    opacity: 1;
+  }
+}
+
 .message-text {
   font-size: 27rpx;
   line-height: 1.55;
@@ -111,6 +185,26 @@
   background: rgba(245, 240, 232, 0.96);
 }
 
+.mode-button {
+  flex: 0 0 90rpx;
+  width: 90rpx;
+  height: 76rpx;
+  margin: 0;
+  padding: 0;
+  border: 1rpx solid rgba(151, 119, 82, 0.18);
+  border-radius: 14rpx;
+  background: #fffdf8;
+  color: #6e4d35;
+  font-size: 24rpx;
+  font-weight: 800;
+  line-height: 76rpx;
+}
+
+.mode-button.active {
+  border-color: rgba(177, 134, 83, 0.3);
+  background: rgba(177, 134, 83, 0.14);
+}
+
 .chat-input {
   box-sizing: border-box;
   flex: 1;
@@ -123,6 +217,26 @@
   color: #241f1b;
   font-size: 27rpx;
   line-height: 1.45;
+}
+
+.voice-record-button {
+  flex: 1;
+  height: 76rpx;
+  margin: 0;
+  padding: 0 20rpx;
+  border: 1rpx solid rgba(151, 119, 82, 0.18);
+  border-radius: 14rpx;
+  background: #fffdf8;
+  color: #241f1b;
+  font-size: 27rpx;
+  font-weight: 800;
+  line-height: 76rpx;
+}
+
+.voice-record-button.recording {
+  border-color: rgba(177, 134, 83, 0.36);
+  background: #b4814f;
+  color: #fff8ed;
 }
 
 .send-button {
@@ -138,6 +252,8 @@
   line-height: 76rpx;
 }
 
-.send-button::after {
+.send-button::after,
+.mode-button::after,
+.voice-record-button::after {
   border: 0;
 }

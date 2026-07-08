@@ -27,6 +27,11 @@
     "navigationBarBackgroundColor": "#f4efe7",
     "backgroundColor": "#f4efe7"
   },
+  "permission": {
+    "scope.record": {
+      "desc": "用于在聊天中录制并发送语音消息"
+    }
+  },
   "style": "v2",
   "sitemapLocation": "sitemap.json",
   "lazyCodeLoading": "requiredComponents"
