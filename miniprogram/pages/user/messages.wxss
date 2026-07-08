@@ -2,80 +2,211 @@
   padding-top: 24rpx;
 }
 
-.messages-hero {
-  min-height: 260rpx;
+.liked-me-shell {
+  padding: 28rpx;
 }
 
-.conversation-shell {
-  padding: 22rpx;
+.liked-me-header {
+  display: flex;
+  gap: 20rpx;
+  align-items: flex-start;
+  justify-content: space-between;
 }
 
-.notification-shell {
-  padding: 22rpx;
-}
-
-.notification-card {
-  position: relative;
-  display: grid;
-  grid-template-columns: 82rpx minmax(0, 1fr);
-  gap: 18rpx;
-  align-items: center;
-  min-height: 118rpx;
-}
-
-.notification-avatar {
-  width: 82rpx;
-  height: 82rpx;
-  border: 4rpx solid #fffdf8;
-  border-radius: 50%;
-  background: rgba(177, 134, 83, 0.12);
-}
-
-.notification-copy {
+.liked-me-heading {
   min-width: 0;
 }
 
-.notification-title-row {
-  align-items: flex-start;
+.liked-me-status {
+  flex: 0 0 auto;
+  padding: 8rpx 18rpx;
+  border-radius: 999rpx;
+  background: rgba(150, 59, 53, 0.1);
+  color: #963b35;
+  font-size: 22rpx;
+  font-weight: 800;
+  line-height: 1.3;
 }
 
-.notification-title,
-.notification-preview {
+.liked-me-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18rpx;
+  margin-top: 26rpx;
+}
+
+.liked-card {
+  position: relative;
   overflow: hidden;
+  min-height: 276rpx;
+  border-radius: 18rpx;
+  background: #4b3f37;
+}
+
+.liked-card:active {
+  transform: scale(0.985);
+}
+
+.liked-cover-wrap {
+  position: relative;
+  height: 276rpx;
+}
+
+.liked-cover {
+  display: block;
+  width: 100%;
+  height: 276rpx;
+  background: linear-gradient(135deg, #8b715f, #2f5364);
+}
+
+.liked-cover-placeholder {
+  background: linear-gradient(135deg, #946850, #2f5364 52%, #9d4c61);
+}
+
+.tone-1 .liked-cover-placeholder {
+  background: linear-gradient(135deg, #b18a42, #6b6572 54%, #2d5567);
+}
+
+.tone-2 .liked-cover-placeholder {
+  background: linear-gradient(135deg, #687d75, #574f68 52%, #a35b49);
+}
+
+.tone-3 .liked-cover-placeholder {
+  background: linear-gradient(135deg, #775b54, #315d66 48%, #c47a47);
+}
+
+.liked-card.locked .liked-cover {
+  filter: blur(16rpx);
+  transform: scale(1.08);
+}
+
+.liked-cover-shade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(180deg, rgba(23, 20, 18, 0.08), rgba(23, 20, 18, 0.84));
+}
+
+.liked-lock {
+  position: absolute;
+  top: 16rpx;
+  right: 16rpx;
+  padding: 7rpx 14rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.88);
+  color: #963b35;
+  font-size: 20rpx;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.liked-copy {
+  position: absolute;
+  right: 18rpx;
+  bottom: 18rpx;
+  left: 18rpx;
+  min-width: 0;
+}
+
+.liked-hint,
+.liked-name,
+.liked-meta {
+  display: block;
+}
+
+.liked-hint {
+  display: inline-block;
+  max-width: 100%;
+  margin-bottom: 8rpx;
+  padding: 6rpx 12rpx;
+  overflow: hidden;
+  border-radius: 999rpx;
+  background: rgba(255, 245, 225, 0.88);
+  color: #8b4a11;
+  font-size: 20rpx;
+  font-weight: 800;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.notification-title {
-  max-width: 360rpx;
+.liked-name {
+  overflow: hidden;
+  color: #fffaf2;
+  font-size: 29rpx;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.notification-time {
-  flex: 0 0 auto;
-  color: #9b7b5d;
-  font-size: 21rpx;
-  line-height: 1.4;
+.liked-meta {
+  margin-top: 6rpx;
+  overflow: hidden;
+  color: rgba(255, 250, 242, 0.9);
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.notification-tags {
-  margin-top: 10rpx;
+.liked-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: 12rpx;
 }
 
-.notice-dot {
-  position: absolute;
-  top: 24rpx;
-  right: 20rpx;
-  width: 16rpx;
-  height: 16rpx;
-  border-radius: 50%;
-  background: #963b35;
-  box-shadow: 0 0 0 4rpx rgba(150, 59, 53, 0.12);
+.liked-tag {
+  max-width: 140rpx;
+  padding: 6rpx 10rpx;
+  overflow: hidden;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fffaf2;
+  font-size: 19rpx;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.notification-empty {
-  padding: 24rpx 8rpx 8rpx;
+.liked-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+  margin-top: 24rpx;
+  padding: 28rpx 20rpx;
+  border: 1rpx dashed rgba(150, 59, 53, 0.22);
+  border-radius: 18rpx;
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.liked-empty-title {
+  color: #402c22;
+  font-size: 28rpx;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.liked-empty-note {
   color: #9b7b5d;
   font-size: 24rpx;
+  line-height: 1.5;
+}
+
+.liked-unlock {
+  width: 100%;
+  margin-top: 26rpx;
+  background: linear-gradient(135deg, #ff5f7e, #963b35);
+  color: #fffaf2;
+}
+
+.conversation-shell {
+  padding: 22rpx;
 }
 
 .conversation-card {

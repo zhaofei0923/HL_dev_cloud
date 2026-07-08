@@ -29,6 +29,8 @@ const MATCHMAKER_CERTIFICATION_STATUSES = new Set([0, 1, 2]);
 const SALON_REVIEW_STATUSES = new Set(['upcoming', 'rejected']);
 const MEMBER_PHOTO_LIMIT = 3;
 const DAILY_FREE_FAVORITE_LIMIT = 8;
+const PREMIUM_MEMBER_TYPES = new Set(['paid', 'vip']);
+const LIKED_ME_LOCKED_PREVIEW_LIMIT = 4;
 const SHANGHAI_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 const SEEDED_MEMBER_GROUPS = [
@@ -1528,6 +1530,73 @@ async function activeMemberAssignment(userId) {
   return rows[0] || null;
 }
 
+async function hasPremiumMemberEntitlement(userId) {
+  const rows = await getAll(C.members, { userId: Number(userId), status: 1 }, 100);
+  return rows.some(row => PREMIUM_MEMBER_TYPES.has(String(row.memberType || '').trim().toLowerCase()));
+}
+
+function coarseIncomeTag(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const nums = (text.match(/\d+/g) || []).map(Number);
+  if (nums.some(num => num >= 50)) return '高收入';
+  return '收入稳定';
+}
+
+function likedMePreviewTags(row = {}, viewerProfile = {}) {
+  const tags = [];
+  const education = String(row.education || '').trim();
+  const income = coarseIncomeTag(row.incomeRange);
+  const sameCity = row.city && viewerProfile.city && String(row.city) === String(viewerProfile.city);
+  if (sameCity) tags.push('同城附近');
+  if (/博士|硕士|本科/.test(education)) tags.push(`${education}学历`);
+  if (income) tags.push(income);
+  if (String(row.occupation || '').trim()) tags.push('事业稳定');
+  if (Number(row.height) >= 175) tags.push('身高优秀');
+  if (!tags.length) tags.push('资料完整');
+  return Array.from(new Set(tags)).slice(0, 3);
+}
+
+function likedMeLockedPreview(row = {}, interaction = {}, index = 0, viewerProfile = {}) {
+  const tags = likedMePreviewTags(row, viewerProfile);
+  const hints = ['刚刚喜欢了你', '认真看过你的资料', '想进一步认识你', '期待你的回应'];
+  return {
+    id: `locked_${index + 1}`,
+    locked: true,
+    blurred: true,
+    canViewDetail: false,
+    displayName: `第 ${index + 1} 位喜欢你的人`,
+    metaText: tags.join(' · ') || '有会员对你感兴趣',
+    hint: hints[index % hints.length],
+    tags,
+    likedAt: interaction.updatedAt || interaction.createdAt || '',
+    coverTone: index % LIKED_ME_LOCKED_PREVIEW_LIMIT
+  };
+}
+
+function sortInteractionsDesc(a, b) {
+  const aTime = new Date(a.updatedAt || a.createdAt || 0).getTime() || 0;
+  const bTime = new Date(b.updatedAt || b.createdAt || 0).getTime() || 0;
+  return bTime - aTime || Number(b.id || 0) - Number(a.id || 0);
+}
+
+async function likedMeFavoriteRows(userId) {
+  const rows = await getAll(C.memberInteractions, {
+    targetUserId: Number(userId),
+    actionType: 'favorite'
+  }, 2000);
+  const uniqueBySender = new Map();
+  rows
+    .filter(isActiveInteraction)
+    .filter(row => Number(row.userId) && Number(row.userId) !== Number(userId))
+    .sort(sortInteractionsDesc)
+    .forEach(row => {
+      const senderId = String(Number(row.userId));
+      if (!uniqueBySender.has(senderId)) uniqueBySender.set(senderId, row);
+    });
+  return Array.from(uniqueBySender.values());
+}
+
 async function memberRequestView(row) {
   const user = await getById(C.users, row.userId);
   const profile = await getOne(C.profiles, { userId: Number(row.userId) }) || {};
@@ -2184,6 +2253,63 @@ const member = {
     };
   },
 
+  async likedMe(userId, filters = {}) {
+    const [favoriteRows, isPremiumMember, viewerProfile, publicRows] = await Promise.all([
+      likedMeFavoriteRows(userId),
+      hasPremiumMemberEntitlement(userId),
+      getOne(C.profiles, { userId: Number(userId) }),
+      publicShowcaseRows({ keepUserId: true })
+    ]);
+    const rowsByUserId = publicRows.reduce((map, row) => {
+      map[String(row.userId)] = row;
+      return map;
+    }, {});
+    const total = favoriteRows.length;
+
+    if (!isPremiumMember) {
+      const lockedPage = paginate(favoriteRows, filters.page, filters.pageSize || LIKED_ME_LOCKED_PREVIEW_LIMIT);
+      return {
+        ...lockedPage,
+        total,
+        list: lockedPage.list
+          .slice(0, LIKED_ME_LOCKED_PREVIEW_LIMIT)
+          .map((interaction, index) => likedMeLockedPreview(
+            rowsByUserId[String(interaction.userId)] || {},
+            interaction,
+            index,
+            viewerProfile || {}
+          )),
+        isPremiumMember: false,
+        unlockRequired: true,
+        unlockText: '开通会员查看完整资料',
+        previewCount: Math.min(total, LIKED_ME_LOCKED_PREVIEW_LIMIT)
+      };
+    }
+
+    const visibleRows = favoriteRows
+      .map(interaction => {
+        const row = rowsByUserId[String(interaction.userId)];
+        if (!row) return null;
+        return {
+          ...row,
+          likedAt: interaction.updatedAt || interaction.createdAt || '',
+          locked: false,
+          blurred: false,
+          canViewDetail: true
+        };
+      })
+      .filter(Boolean);
+    const page = await resolveMemberMediaPage(paginate(visibleRows, filters.page, filters.pageSize));
+    return {
+      ...page,
+      total,
+      isPremiumMember: true,
+      unlockRequired: false,
+      unlockText: '',
+      previewCount: page.list.length
+    };
+  },
+
   async gifts() {
     return GIFT_CATALOG.map(giftCatalogView);
   },
@@ -2819,6 +2945,7 @@ exports.main = async (event = {}) => {
     if (method === 'GET' && path === '/member/resources') return ok(await member.resources(session.userId, data));
     if (method === 'GET' && path === '/member/showcase') return ok(await member.showcase(session.userId, data));
     if (method === 'GET' && path === '/member/gifts') return ok(await member.gifts());
+    if (method === 'GET' && path === '/member/liked-me') return ok(await member.likedMe(session.userId, data));
     if (method === 'POST' && path === '/member/interactions') return ok(await member.interact(session.userId, data));
     if (method === 'POST' && path === '/member/gifts/send') return ok(await member.sendGift(session.userId, data));
     if (method === 'GET' && path === '/member/matchmaker-invite/resolve') return ok(await member.resolveMatchmakerInvite(session.userId, data));

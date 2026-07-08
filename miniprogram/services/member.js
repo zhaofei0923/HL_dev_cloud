@@ -12,6 +12,9 @@ exports.memberApi = {
     showcase(data) {
         return (0, api_1.request)('/member/showcase', { data });
     },
+    likedMe(data) {
+        return (0, api_1.request)('/member/liked-me', { data });
+    },
     gifts() {
         return (0, api_1.request)('/member/gifts');
     },

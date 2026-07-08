@@ -1,54 +1,39 @@
 <view class="page with-bottom-nav messages-page">
-  <view class="card hero messages-hero">
-    <text class="eyebrow">消息</text>
-    <text class="title">我的会话</text>
-    <text class="subtitle">查看红娘服务沟通和已开通的配对沟通。</text>
-    <view class="summary-strip">
-      <view class="summary-item">
-        <text class="summary-value">{{total}}</text>
-        <text class="summary-label">会话</text>
+  <view class="card liked-me-shell">
+    <view class="liked-me-header">
+      <view class="liked-me-heading">
+        <text class="eyebrow">谁喜欢我</text>
+        <text class="title">{{likedMeTotal}} 人喜欢我</text>
+        <text class="subtitle">{{isPremiumMember ? '查看对你有好感的会员资料。' : '开通会员后查看完整资料。'}}</text>
       </view>
-      <view class="summary-item">
-        <text class="summary-value">文字</text>
-        <text class="summary-label">第一版</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">已读</text>
-        <text class="summary-label">进入即处理</text>
-      </view>
-    </view>
-  </view>
-
-  <view class="card list-shell notification-shell">
-    <view class="row list-header">
-      <view>
-        <text class="section-title">互动通知</text>
-        <text class="section-note">{{loading ? '正在加载互动通知' : notificationUnreadCount ? notificationUnreadCount + ' 条未读' : '关注和系统提醒'}}</text>
-      </view>
-      <text class="tag gold">{{notificationTotal}} 条</text>
+      <text class="liked-me-status">{{isPremiumMember ? '已开通' : '待开通'}}</text>
     </view>
 
-    <block wx:if="{{notifications.length}}">
-      <view wx:for="{{notifications}}" wx:key="id" class="list-card notification-card" data-id="{{item.id}}" bindtap="openNotification">
-        <image class="notification-avatar" src="{{item.senderAvatar}}" mode="aspectFill"></image>
-        <view class="notification-copy">
-          <view class="row notification-title-row">
-            <text class="item-title notification-title">{{item.senderName}}</text>
-            <text class="notification-time">{{item.timeText}}</text>
-          </view>
-          <text class="item-meta notification-preview">{{item.preview}}</text>
-          <view class="tag-row notification-tags">
-            <text class="tag gold">{{item.typeText}}</text>
-            <text class="tag">{{item.actionText}}</text>
+    <view wx:if="{{likedMeList.length}}" class="liked-me-grid">
+      <view wx:for="{{likedMeList}}" wx:key="id" class="liked-card {{item.locked ? 'locked' : 'open'}} {{item.coverToneClass}}" data-id="{{item.id}}" bindtap="openLikedMember">
+        <view class="liked-cover-wrap">
+          <image wx:if="{{item.coverUrl}}" class="liked-cover" src="{{item.coverUrl}}" mode="aspectFill"></image>
+          <view wx:else class="liked-cover liked-cover-placeholder"></view>
+          <view class="liked-cover-shade"></view>
+          <text wx:if="{{item.locked}}" class="liked-lock">会员可见</text>
+          <view class="liked-copy">
+            <text class="liked-hint">{{item.hint}}</text>
+            <text class="liked-name">{{item.displayName}}</text>
+            <text class="liked-meta">{{item.metaText}}</text>
+            <view class="liked-tags">
+              <text wx:for="{{item.tags}}" wx:for-item="tag" wx:key="*this" class="liked-tag">{{tag}}</text>
+            </view>
           </view>
         </view>
-        <text wx:if="{{item.hasUnread}}" class="notice-dot"></text>
       </view>
-    </block>
-
-    <view wx:else class="notification-empty">
-      <text>{{loading ? '正在加载通知' : '暂无互动通知'}}</text>
     </view>
+
+    <view wx:else class="liked-empty">
+      <text class="liked-empty-title">{{loading ? '正在加载喜欢你的人' : '暂时还没有人喜欢你'}}</text>
+      <text class="liked-empty-note">{{loading ? '请稍候，正在整理互动记录。' : '完善资料并多看看推荐会员，会提高被喜欢的机会。'}}</text>
+    </view>
+
+    <button wx:if="{{!isPremiumMember && likedMeTotal > 0}}" class="btn liked-unlock" bindtap="promptOpenMembership">开通会员查看全部</button>
   </view>
 
   <view class="card list-shell conversation-shell">

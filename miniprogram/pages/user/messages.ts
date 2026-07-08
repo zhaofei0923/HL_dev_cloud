@@ -1,5 +1,7 @@
 import { chatApi, ChatConversation } from '../../services/chat'
-import { messageApi, NotificationMessage } from '../../services/messages'
+import { memberApi } from '../../services/member'
+import type { LikedMeItem } from '../../services/member'
+import { defaultAvatar, normalizeMemberProfile } from '../../utils/member-format'
 
 type ConversationItem = ChatConversation & {
   peerName: string
@@ -10,13 +12,31 @@ type ConversationItem = ChatConversation & {
   typeText: string
 }
 
-type NotificationItem = NotificationMessage & {
-  senderName: string
-  senderAvatar: string
-  preview: string
-  timeText: string
-  typeText: string
-  actionText: string
+type LikedMeCard = {
+  id: string
+  userId: number
+  displayName: string
+  avatarUrl: string
+  coverUrl: string
+  metaText: string
+  hint: string
+  tags: string[]
+  locked: boolean
+  canViewDetail: boolean
+  coverToneClass: string
+  raw: LikedMeItem | null
+}
+
+type NormalizedLikedMember = {
+  id?: string | number
+  displayName?: string
+  avatarUrl?: string
+  coverUrl?: string
+  metaText?: string
+  workText?: string
+  cityText?: string
+  occupationText?: string
+  highlightTags?: string[]
 }
 
 function pad(value: number) {
@@ -51,34 +71,56 @@ function normalizeConversation(row: ChatConversation): ConversationItem {
   }
 }
 
-function notificationTypeText(type?: string) {
-  if (type === 'member_favorite') return '关注提醒'
-  return '站内通知'
+function compactStrings(values: Array<string | number | null | undefined>) {
+  return values.map(value => String(value || '').trim()).filter(Boolean)
 }
 
-function normalizeNotification(row: NotificationMessage): NotificationItem {
-  const sender = row.sender || { id: row.senderId || 0, nickname: '会员', avatarUrl: '' }
-  const actionText = row.conversationId || row.canChat
-    ? '去聊天'
-    : (row.messageType === 'member_favorite' ? '互关后可聊' : (row.hasUnread ? '标记已读' : '已读'))
+function normalizeLikedMeItem(row: LikedMeItem, index: number): LikedMeCard {
+  const locked = row.locked === true || row.blurred === true
+  if (locked) {
+    const tags = compactStrings(row.tags || []).slice(0, 3)
+    return {
+      id: String(row.id || `locked_${index + 1}`),
+      userId: 0,
+      displayName: row.displayName || `第 ${index + 1} 位喜欢你的人`,
+      avatarUrl: '',
+      coverUrl: '',
+      metaText: row.metaText || tags.join(' · ') || '有会员对你感兴趣',
+      hint: row.hint || '开通后查看完整资料',
+      tags: tags.length ? tags : ['资料完整'],
+      locked: true,
+      canViewDetail: false,
+      coverToneClass: `tone-${Number(row.coverTone || index) % 4}`,
+      raw: null
+    }
+  }
+
+  const profile = normalizeMemberProfile(row as unknown as Parameters<typeof normalizeMemberProfile>[0]) as NormalizedLikedMember
+  const tags = compactStrings(profile.highlightTags || row.highlightTags || row.tags || []).slice(0, 3)
   return {
-    ...row,
-    senderName: sender.nickname || '会员',
-    senderAvatar: sender.avatarUrl || '/assets/members/avatar-female-1.png',
-    preview: row.content || '你收到一条新通知',
-    timeText: formatTime(row.createdAt),
-    typeText: notificationTypeText(row.messageType),
-    actionText
+    id: String(profile.id || row.id || row.userId || index),
+    userId: Number(row.userId || 0),
+    displayName: profile.displayName || row.displayName || '优质会员',
+    avatarUrl: profile.avatarUrl || defaultAvatar(row),
+    coverUrl: profile.coverUrl || profile.avatarUrl || defaultAvatar(row),
+    metaText: profile.metaText || profile.workText || '资料已完善',
+    hint: row.hint || (row.likedAt ? `${formatTime(row.likedAt)} 喜欢了你` : '喜欢了你'),
+    tags: tags.length ? tags : compactStrings([profile.cityText, profile.occupationText]).slice(0, 3),
+    locked: false,
+    canViewDetail: row.canViewDetail !== false,
+    coverToneClass: '',
+    raw: row
   }
 }
 
 Page({
   data: {
     list: [] as ConversationItem[],
-    notifications: [] as NotificationItem[],
+    likedMeList: [] as LikedMeCard[],
     total: 0,
-    notificationTotal: 0,
-    notificationUnreadCount: 0,
+    likedMeTotal: 0,
+    likedMePreviewCount: 0,
+    isPremiumMember: false,
     loading: false,
     emptyTitle: '暂无消息',
     emptyNote: '和红娘建立服务关系，或由红娘发起配对后，这里会出现会话。'
@@ -100,18 +142,19 @@ Page({
   async load() {
     this.setData({ loading: true })
     try {
-      const [conversationResult, notificationResult] = await Promise.all([
+      const [conversationResult, likedMeResult] = await Promise.all([
         chatApi.listConversations({ page: 1, pageSize: 50 }),
-        messageApi.list({ page: 1, pageSize: 20 })
+        memberApi.likedMe({ page: 1, pageSize: 12 })
       ])
       const list = (conversationResult.list || []).map(normalizeConversation)
-      const notifications = (notificationResult.list || []).map(normalizeNotification)
+      const likedMeList = (likedMeResult.list || []).map(normalizeLikedMeItem)
       this.setData({
         list,
-        notifications,
+        likedMeList,
         total: Number(conversationResult.total || list.length || 0),
-        notificationTotal: Number(notificationResult.total || notifications.length || 0),
-        notificationUnreadCount: Number(notificationResult.unreadCount || 0),
+        likedMeTotal: Number(likedMeResult.total || likedMeList.length || 0),
+        likedMePreviewCount: Number(likedMeResult.previewCount || likedMeList.length || 0),
+        isPremiumMember: likedMeResult.isPremiumMember === true,
         emptyTitle: '暂无消息',
         emptyNote: '和红娘建立服务关系、互相关注，或由红娘发起配对后，这里会出现会话。'
       })
@@ -119,10 +162,11 @@ Page({
       console.warn('load user conversations failed', err)
       this.setData({
         list: [],
-        notifications: [],
+        likedMeList: [],
         total: 0,
-        notificationTotal: 0,
-        notificationUnreadCount: 0,
+        likedMeTotal: 0,
+        likedMePreviewCount: 0,
+        isPremiumMember: false,
         emptyTitle: '消息暂不可用',
         emptyNote: '请确认云函数已部署后重试。'
       })
@@ -137,29 +181,29 @@ Page({
     wx.navigateTo({ url: `/pages/user/chat?id=${id}` })
   },
 
-  async openNotification(e: WechatMiniprogram.TouchEvent) {
-    const id = Number(e.currentTarget.dataset.id || 0)
+  openLikedMember(e: WechatMiniprogram.TouchEvent) {
+    const id = String(e.currentTarget.dataset.id || '')
     if (!id) return
-    const current = this.data.notifications.find(item => Number(item.id) === id)
-    let updated: NotificationItem | null = current || null
-    try {
-      const marked = normalizeNotification(await messageApi.markRead(id))
-      updated = marked
-      const notifications = this.data.notifications.map(item => (Number(item.id) === id ? marked : item))
-      this.setData({
-        notifications,
-        notificationUnreadCount: notifications.filter(item => item.hasUnread).length
-      })
-    } catch (err) {
-      console.warn('mark notification read failed', err)
-    }
-
-    const conversationId = updated && updated.conversationId ? String(updated.conversationId) : ''
-    if (conversationId) {
-      wx.navigateTo({ url: `/pages/user/chat?id=${conversationId}` })
+    const item = this.data.likedMeList.find(row => row.id === id)
+    if (!item) return
+    if (item.locked || !this.data.isPremiumMember || !item.canViewDetail) {
+      this.promptOpenMembership()
       return
     }
-    wx.showToast({ title: updated && updated.messageType === 'member_favorite' ? '互相关注后可聊天' : '已标记已读', icon: 'none' })
+    if (item.raw) wx.setStorageSync('selectedUserMember', item.raw)
+    wx.navigateTo({ url: `/pages/user/member-detail?id=${encodeURIComponent(item.id)}` })
+  },
+
+  promptOpenMembership() {
+    wx.showModal({
+      title: '开通会员',
+      content: '开通会员后可查看谁喜欢你的完整资料。当前版本请联系红娘，或在我的页面完善资料后开通服务。',
+      confirmText: '去我的',
+      cancelText: '稍后',
+      success(res) {
+        if (res.confirm) wx.redirectTo({ url: '/pages/user/profile' })
+      }
+    })
   },
 
   goMembers() {
