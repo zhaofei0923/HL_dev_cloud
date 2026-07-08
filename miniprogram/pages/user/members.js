@@ -5,7 +5,18 @@ const member_format_1 = require("../../utils/member-format");
 const SWIPE_DISTANCE = 56;
 let touchStartX = 0;
 let touchStartY = 0;
-let suppressCardTap = false;
+let actionEffectTimer = null;
+let actionAdvanceTimer = null;
+function clearActionTimers() {
+    if (actionEffectTimer !== null) {
+        clearTimeout(actionEffectTimer);
+        actionEffectTimer = null;
+    }
+    if (actionAdvanceTimer !== null) {
+        clearTimeout(actionAdvanceTimer);
+        actionAdvanceTimer = null;
+    }
+}
 function compactList(values) {
     return values.map(value => String(value || '').trim()).filter(Boolean);
 }
@@ -95,7 +106,7 @@ function memberTarget(member) {
     };
 }
 function countText(total) {
-    return total ? `${total} 位会员可浏览 · 左滑/上滑换一位` : '暂无可浏览会员';
+    return total ? `${total} 位会员可浏览 · 左右滑切换 · 下滑看详情` : '暂无可浏览会员';
 }
 Page({
     data: {
@@ -117,6 +128,8 @@ Page({
         favoriteLoading: false,
         hideLoading: false,
         sendingGiftId: '',
+        actionEffect: '',
+        actionAnimating: false,
         loading: false
     },
     onShow() {
@@ -126,6 +139,9 @@ Page({
             return;
         }
         this.load();
+    },
+    onUnload() {
+        clearActionTimers();
     },
     async load() {
         this.setData({ loading: true });
@@ -206,12 +222,12 @@ Page({
         this.load();
     },
     nextMember() {
-        if (!this.data.list.length)
+        if (!this.data.list.length || this.data.actionAnimating)
             return;
         this.setData(selectionState(this.data.list, this.data.currentIndex + 1));
     },
     previousMember() {
-        if (!this.data.list.length)
+        if (!this.data.list.length || this.data.actionAnimating)
             return;
         this.setData(selectionState(this.data.list, this.data.currentIndex - 1));
     },
@@ -221,37 +237,56 @@ Page({
             return;
         touchStartX = touch.clientX;
         touchStartY = touch.clientY;
-        suppressCardTap = false;
     },
     onCardTouchEnd(e) {
         const touch = e.changedTouches && e.changedTouches[0];
-        if (!touch || !this.data.list.length)
+        if (!touch || !this.data.list.length || this.data.actionAnimating)
             return;
         const deltaX = touch.clientX - touchStartX;
         const deltaY = touch.clientY - touchStartY;
         const absX = Math.abs(deltaX);
         const absY = Math.abs(deltaY);
         const isHorizontalSwipe = absX >= SWIPE_DISTANCE && absX >= absY;
-        const isVerticalSwipe = absY >= SWIPE_DISTANCE && absY > absX;
-        if (!isHorizontalSwipe && !isVerticalSwipe)
+        if (!isHorizontalSwipe)
             return;
-        suppressCardTap = true;
-        if ((isHorizontalSwipe && deltaX < 0) || (isVerticalSwipe && deltaY < 0)) {
+        if (deltaX < 0) {
             this.nextMember();
             return;
         }
         this.previousMember();
     },
-    setCurrentFavoriteAndAdvance(active, currentIndex) {
+    runActionEffect(type, finish) {
+        clearActionTimers();
+        this.setData({ actionEffect: type, actionAnimating: true });
+        actionAdvanceTimer = setTimeout(() => {
+            if (actionEffectTimer !== null) {
+                clearTimeout(actionEffectTimer);
+                actionEffectTimer = null;
+            }
+            finish();
+            this.setData({ actionEffect: '', actionAnimating: false });
+            actionAdvanceTimer = null;
+        }, 460);
+        actionEffectTimer = setTimeout(() => {
+            this.setData({ actionEffect: '' });
+            actionEffectTimer = null;
+        }, 640);
+    },
+    setCurrentFavoriteAndAdvance(active, currentIndex, effect) {
         const list = this.data.list.map((item, index) => (index === currentIndex ? { ...item, isFavorite: active } : item));
-        this.setData({
-            list,
-            ...selectionState(list, currentIndex + 1),
-            giftPanelOpen: false
+        if (this.data.giftPanelOpen) {
+            this.setData({ giftPanelOpen: false });
+        }
+        this.runActionEffect(effect, () => {
+            this.setData({
+                list,
+                ...selectionState(list, currentIndex + 1),
+                giftPanelOpen: false
+            });
         });
     },
     async toggleFavorite() {
-        if (this.data.favoriteLoading || this.data.hideLoading)
+        if (this.data.favoriteLoading || this.data.hideLoading || this.data.actionAnimating)
             return;
         const member = this.data.currentMember;
         const target = memberTarget(member);
@@ -259,28 +294,15 @@ Page({
             wx.showToast({ title: '暂无法关注该会员', icon: 'none' });
             return;
         }
-        const active = !member.isFavorite;
         const currentIndex = this.data.currentIndex;
         this.setData({ favoriteLoading: true });
         try {
-            const result = await member_1.memberApi.interact({ ...target, actionType: 'favorite', active });
-            this.setCurrentFavoriteAndAdvance(active, currentIndex);
-            if (active && result && result.canChat && result.conversation && result.conversation.id) {
-                wx.showModal({
-                    title: '互相关注',
-                    content: '你们已互相关注，可以开始聊天。',
-                    confirmText: '去聊天',
-                    cancelText: '继续看',
-                    success: modal => {
-                        if (modal.confirm) {
-                            wx.navigateTo({ url: `/pages/user/chat?id=${result.conversation.id}` });
-                        }
-                    }
-                });
-            }
-            else {
-                wx.showToast({ title: active ? '已关注，对方会收到通知' : '已取消关注', icon: 'none' });
-            }
+            const result = await member_1.memberApi.interact({ ...target, actionType: 'favorite', active: true });
+            this.setCurrentFavoriteAndAdvance(true, currentIndex, 'heart');
+            wx.showToast({
+                title: result && result.canChat ? '已互关，可在消息里聊天' : '已关注，对方会收到通知',
+                icon: 'none'
+            });
         }
         catch (err) {
             console.warn('toggle favorite failed', err);
@@ -290,7 +312,7 @@ Page({
         }
     },
     async hideCurrent() {
-        if (this.data.hideLoading || this.data.favoriteLoading)
+        if (this.data.hideLoading || this.data.favoriteLoading || this.data.actionAnimating)
             return;
         const member = this.data.currentMember;
         const target = memberTarget(member);
@@ -304,12 +326,14 @@ Page({
             await member_1.memberApi.interact({ ...target, actionType: 'hide', active: true });
             const list = this.data.list.filter((_, index) => index !== currentIndex);
             const total = Math.max(Number(this.data.total || this.data.list.length) - 1, 0);
-            this.setData({
-                list,
-                ...selectionState(list, currentIndex),
-                total,
-                countText: countText(total),
-                giftPanelOpen: false
+            this.runActionEffect('hide', () => {
+                this.setData({
+                    list,
+                    ...selectionState(list, currentIndex),
+                    total,
+                    countText: countText(total),
+                    giftPanelOpen: false
+                });
             });
             wx.showToast({ title: '已减少此类推荐', icon: 'none' });
         }
@@ -321,7 +345,7 @@ Page({
         }
     },
     async openGiftPanel() {
-        if (this.data.giftLoading || this.data.hideLoading)
+        if (this.data.giftLoading || this.data.hideLoading || this.data.actionAnimating)
             return;
         const target = memberTarget(this.data.currentMember);
         if (!target) {
@@ -344,9 +368,10 @@ Page({
     },
     async sendGift(e) {
         const giftId = String(e.currentTarget.dataset.giftId || '');
-        if (!giftId || this.data.sendingGiftId)
+        if (!giftId || this.data.sendingGiftId || this.data.actionAnimating)
             return;
-        const target = memberTarget(this.data.currentMember);
+        const member = this.data.currentMember;
+        const target = memberTarget(member);
         if (!target) {
             wx.showToast({ title: '暂无法赠送礼物', icon: 'none' });
             return;
@@ -355,11 +380,11 @@ Page({
         this.setData({ sendingGiftId: giftId });
         try {
             await member_1.memberApi.sendGift({ ...target, giftId });
-            this.setData({
-                giftPanelOpen: false,
-                ...selectionState(this.data.list, currentIndex + 1)
-            });
-            wx.showToast({ title: '赠送成功', icon: 'success' });
+            if (!member || !member.isFavorite) {
+                await member_1.memberApi.interact({ ...target, actionType: 'favorite', active: true });
+            }
+            this.setCurrentFavoriteAndAdvance(true, currentIndex, 'gift');
+            wx.showToast({ title: '赠送成功，已关注', icon: 'success' });
         }
         catch (err) {
             console.warn('send gift failed', err);
@@ -371,16 +396,5 @@ Page({
     noop() { },
     goProfile() {
         wx.navigateTo({ url: '/pages/user/profile' });
-    },
-    openCurrentDetail() {
-        if (suppressCardTap) {
-            suppressCardTap = false;
-            return;
-        }
-        const member = this.data.currentMember;
-        if (!member)
-            return;
-        wx.setStorageSync('selectedUserMember', member);
-        wx.navigateTo({ url: `/pages/user/member-detail?id=${member.id}` });
     }
 });

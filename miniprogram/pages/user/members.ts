@@ -11,10 +11,24 @@ type GiftOption = {
   tone?: string
 }
 
+type ActionEffect = 'gift' | 'heart' | 'hide'
+
 const SWIPE_DISTANCE = 56
 let touchStartX = 0
 let touchStartY = 0
-let suppressCardTap = false
+let actionEffectTimer: number | null = null
+let actionAdvanceTimer: number | null = null
+
+function clearActionTimers() {
+  if (actionEffectTimer !== null) {
+    clearTimeout(actionEffectTimer)
+    actionEffectTimer = null
+  }
+  if (actionAdvanceTimer !== null) {
+    clearTimeout(actionAdvanceTimer)
+    actionAdvanceTimer = null
+  }
+}
 
 function compactList(values: Array<string | number | null | undefined>) {
   return values.map(value => String(value || '').trim()).filter(Boolean)
@@ -109,7 +123,7 @@ function memberTarget(member: MemberView | null) {
 }
 
 function countText(total: number) {
-  return total ? `${total} 位会员可浏览 · 左滑/上滑换一位` : '暂无可浏览会员'
+  return total ? `${total} 位会员可浏览 · 左右滑切换 · 下滑看详情` : '暂无可浏览会员'
 }
 
 Page({
@@ -132,6 +146,8 @@ Page({
     favoriteLoading: false,
     hideLoading: false,
     sendingGiftId: '',
+    actionEffect: '',
+    actionAnimating: false,
     loading: false
   },
 
@@ -142,6 +158,10 @@ Page({
       return
     }
     this.load()
+  },
+
+  onUnload() {
+    clearActionTimers()
   },
 
   async load() {
@@ -228,12 +248,12 @@ Page({
   },
 
   nextMember() {
-    if (!this.data.list.length) return
+    if (!this.data.list.length || this.data.actionAnimating) return
     this.setData(selectionState(this.data.list, this.data.currentIndex + 1))
   },
 
   previousMember() {
-    if (!this.data.list.length) return
+    if (!this.data.list.length || this.data.actionAnimating) return
     this.setData(selectionState(this.data.list, this.data.currentIndex - 1))
   },
 
@@ -242,43 +262,63 @@ Page({
     if (!touch) return
     touchStartX = touch.clientX
     touchStartY = touch.clientY
-    suppressCardTap = false
   },
 
   onCardTouchEnd(e: WechatMiniprogram.TouchEvent) {
     const touch = e.changedTouches && e.changedTouches[0]
-    if (!touch || !this.data.list.length) return
+    if (!touch || !this.data.list.length || this.data.actionAnimating) return
 
     const deltaX = touch.clientX - touchStartX
     const deltaY = touch.clientY - touchStartY
     const absX = Math.abs(deltaX)
     const absY = Math.abs(deltaY)
     const isHorizontalSwipe = absX >= SWIPE_DISTANCE && absX >= absY
-    const isVerticalSwipe = absY >= SWIPE_DISTANCE && absY > absX
 
-    if (!isHorizontalSwipe && !isVerticalSwipe) return
+    if (!isHorizontalSwipe) return
 
-    suppressCardTap = true
-    if ((isHorizontalSwipe && deltaX < 0) || (isVerticalSwipe && deltaY < 0)) {
+    if (deltaX < 0) {
       this.nextMember()
       return
     }
     this.previousMember()
   },
 
-  setCurrentFavoriteAndAdvance(active: boolean, currentIndex: number) {
+  runActionEffect(type: ActionEffect, finish: () => void) {
+    clearActionTimers()
+    this.setData({ actionEffect: type, actionAnimating: true })
+    actionAdvanceTimer = setTimeout(() => {
+      if (actionEffectTimer !== null) {
+        clearTimeout(actionEffectTimer)
+        actionEffectTimer = null
+      }
+      finish()
+      this.setData({ actionEffect: '', actionAnimating: false })
+      actionAdvanceTimer = null
+    }, 460)
+    actionEffectTimer = setTimeout(() => {
+      this.setData({ actionEffect: '' })
+      actionEffectTimer = null
+    }, 640)
+  },
+
+  setCurrentFavoriteAndAdvance(active: boolean, currentIndex: number, effect: ActionEffect) {
     const list = this.data.list.map((item, index) => (
       index === currentIndex ? { ...item, isFavorite: active } : item
     ))
-    this.setData({
-      list,
-      ...selectionState(list, currentIndex + 1),
-      giftPanelOpen: false
+    if (this.data.giftPanelOpen) {
+      this.setData({ giftPanelOpen: false })
+    }
+    this.runActionEffect(effect, () => {
+      this.setData({
+        list,
+        ...selectionState(list, currentIndex + 1),
+        giftPanelOpen: false
+      })
     })
   },
 
   async toggleFavorite() {
-    if (this.data.favoriteLoading || this.data.hideLoading) return
+    if (this.data.favoriteLoading || this.data.hideLoading || this.data.actionAnimating) return
     const member = this.data.currentMember
     const target = memberTarget(member)
     if (!member || !target) {
@@ -286,27 +326,15 @@ Page({
       return
     }
 
-    const active = !member.isFavorite
     const currentIndex = this.data.currentIndex
     this.setData({ favoriteLoading: true })
     try {
-      const result: any = await memberApi.interact({ ...target, actionType: 'favorite', active })
-      this.setCurrentFavoriteAndAdvance(active, currentIndex)
-      if (active && result && result.canChat && result.conversation && result.conversation.id) {
-        wx.showModal({
-          title: '互相关注',
-          content: '你们已互相关注，可以开始聊天。',
-          confirmText: '去聊天',
-          cancelText: '继续看',
-          success: modal => {
-            if (modal.confirm) {
-              wx.navigateTo({ url: `/pages/user/chat?id=${result.conversation.id}` })
-            }
-          }
-        })
-      } else {
-        wx.showToast({ title: active ? '已关注，对方会收到通知' : '已取消关注', icon: 'none' })
-      }
+      const result: any = await memberApi.interact({ ...target, actionType: 'favorite', active: true })
+      this.setCurrentFavoriteAndAdvance(true, currentIndex, 'heart')
+      wx.showToast({
+        title: result && result.canChat ? '已互关，可在消息里聊天' : '已关注，对方会收到通知',
+        icon: 'none'
+      })
     } catch (err) {
       console.warn('toggle favorite failed', err)
     } finally {
@@ -315,7 +343,7 @@ Page({
   },
 
   async hideCurrent() {
-    if (this.data.hideLoading || this.data.favoriteLoading) return
+    if (this.data.hideLoading || this.data.favoriteLoading || this.data.actionAnimating) return
     const member = this.data.currentMember
     const target = memberTarget(member)
     if (!target) {
@@ -329,12 +357,14 @@ Page({
       await memberApi.interact({ ...target, actionType: 'hide', active: true })
       const list = this.data.list.filter((_, index) => index !== currentIndex)
       const total = Math.max(Number(this.data.total || this.data.list.length) - 1, 0)
-      this.setData({
-        list,
-        ...selectionState(list, currentIndex),
-        total,
-        countText: countText(total),
-        giftPanelOpen: false
+      this.runActionEffect('hide', () => {
+        this.setData({
+          list,
+          ...selectionState(list, currentIndex),
+          total,
+          countText: countText(total),
+          giftPanelOpen: false
+        })
       })
       wx.showToast({ title: '已减少此类推荐', icon: 'none' })
     } catch (err) {
@@ -345,7 +375,7 @@ Page({
   },
 
   async openGiftPanel() {
-    if (this.data.giftLoading || this.data.hideLoading) return
+    if (this.data.giftLoading || this.data.hideLoading || this.data.actionAnimating) return
     const target = memberTarget(this.data.currentMember)
     if (!target) {
       wx.showToast({ title: '暂无法赠送礼物', icon: 'none' })
@@ -367,9 +397,10 @@ Page({
 
   async sendGift(e: WechatMiniprogram.TouchEvent) {
     const giftId = String(e.currentTarget.dataset.giftId || '')
-    if (!giftId || this.data.sendingGiftId) return
+    if (!giftId || this.data.sendingGiftId || this.data.actionAnimating) return
 
-    const target = memberTarget(this.data.currentMember)
+    const member = this.data.currentMember
+    const target = memberTarget(member)
     if (!target) {
       wx.showToast({ title: '暂无法赠送礼物', icon: 'none' })
       return
@@ -379,11 +410,11 @@ Page({
     this.setData({ sendingGiftId: giftId })
     try {
       await memberApi.sendGift({ ...target, giftId })
-      this.setData({
-        giftPanelOpen: false,
-        ...selectionState(this.data.list, currentIndex + 1)
-      })
-      wx.showToast({ title: '赠送成功', icon: 'success' })
+      if (!member || !member.isFavorite) {
+        await memberApi.interact({ ...target, actionType: 'favorite', active: true })
+      }
+      this.setCurrentFavoriteAndAdvance(true, currentIndex, 'gift')
+      wx.showToast({ title: '赠送成功，已关注', icon: 'success' })
     } catch (err) {
       console.warn('send gift failed', err)
     } finally {
@@ -395,16 +426,5 @@ Page({
 
   goProfile() {
     wx.navigateTo({ url: '/pages/user/profile' })
-  },
-
-  openCurrentDetail() {
-    if (suppressCardTap) {
-      suppressCardTap = false
-      return
-    }
-    const member = this.data.currentMember
-    if (!member) return
-    wx.setStorageSync('selectedUserMember', member)
-    wx.navigateTo({ url: `/pages/user/member-detail?id=${member.id}` })
   }
 })

@@ -55,7 +55,6 @@
     <block wx:if="{{currentMember}}">
       <view
         class="recommend-card"
-        bindtap="openCurrentDetail"
         bindtouchstart="onCardTouchStart"
         bindtouchend="onCardTouchEnd"
       >
@@ -68,7 +67,7 @@
 
         <view class="quick-actions">
           <view
-            class="action-icon action-gift {{giftLoading || hideLoading ? 'disabled' : ''}}"
+            class="action-icon action-gift {{giftLoading || hideLoading || actionAnimating ? 'disabled' : ''}}"
             aria-label="赠送礼物"
             hover-class="action-icon-hover"
             catchtap="openGiftPanel"
@@ -79,7 +78,7 @@
             </view>
           </view>
           <view
-            class="action-icon action-heart {{currentMember.isFavorite ? 'active' : ''}} {{favoriteLoading || hideLoading ? 'disabled' : ''}}"
+            class="action-icon action-heart {{currentMember.isFavorite ? 'active' : ''}} {{favoriteLoading || hideLoading || actionAnimating ? 'disabled' : ''}}"
             aria-label="关注会员"
             hover-class="action-icon-hover"
             catchtap="toggleFavorite"
@@ -87,11 +86,29 @@
             <view class="heart-shape"></view>
           </view>
           <view
-            class="action-icon action-hide {{hideLoading || favoriteLoading ? 'disabled' : ''}}"
+            class="action-icon action-hide {{hideLoading || favoriteLoading || actionAnimating ? 'disabled' : ''}}"
             aria-label="不再看"
             hover-class="action-icon-hover"
             catchtap="hideCurrent"
           >
+            <view class="x-shape">
+              <view class="x-line x-left"></view>
+              <view class="x-line x-right"></view>
+            </view>
+          </view>
+        </view>
+
+        <view wx:if="{{actionEffect}}" class="action-flyout action-flyout-{{actionEffect}}">
+          <view wx:if="{{actionEffect === 'gift'}}" class="flyout-icon flyout-gift">
+            <view class="gift-shape">
+              <view class="gift-bow"></view>
+              <view class="gift-box"></view>
+            </view>
+          </view>
+          <view wx:elif="{{actionEffect === 'heart'}}" class="flyout-icon flyout-heart">
+            <view class="heart-shape"></view>
+          </view>
+          <view wx:else class="flyout-icon flyout-hide">
             <view class="x-shape">
               <view class="x-line x-left"></view>
               <view class="x-line x-right"></view>
@@ -113,6 +130,63 @@
             <text class="quote-mark">“</text>
             <text class="quote-text">{{currentMember.partnerPreview}}</text>
           </view>
+        </view>
+      </view>
+
+      <view class="member-detail-stack">
+        <view wx:if="{{currentMember.photos.length}}" class="detail-panel photo-panel">
+          <view class="row detail-header">
+            <view>
+              <text class="section-title">生活照片</text>
+              <text class="section-note">照片经过筛选展示，保留必要隐私边界。</text>
+            </view>
+            <text class="tag gold">{{currentMember.photos.length}} 张</text>
+          </view>
+          <scroll-view class="photo-strip" scroll-x enhanced show-scrollbar="{{false}}">
+            <image
+              wx:for="{{currentMember.photos}}"
+              wx:key="*this"
+              class="inline-photo"
+              src="{{item}}"
+              mode="aspectFill"
+            ></image>
+          </scroll-view>
+        </view>
+
+        <view class="detail-panel">
+          <text class="section-title">基础资料</text>
+          <view class="inline-info-grid">
+            <view wx:for="{{currentMember.baseRows}}" wx:key="label" class="inline-info-cell">
+              <text class="metric-label">{{item.label}}</text>
+              <text class="metric-value small">{{item.value}}</text>
+            </view>
+          </view>
+        </view>
+
+        <view class="detail-panel">
+          <text class="section-title">职业与生活状态</text>
+          <view class="inline-info-grid">
+            <view wx:for="{{currentMember.careerRows}}" wx:key="label" class="inline-info-cell">
+              <text class="metric-label">{{item.label}}</text>
+              <text class="metric-value small">{{item.value}}</text>
+            </view>
+          </view>
+          <view wx:if="{{currentMember.lifeRows.length}}" class="tag-row detail-tags">
+            <text wx:for="{{currentMember.lifeRows}}" wx:key="label" class="tag">{{item.label}}：{{item.value}}</text>
+          </view>
+        </view>
+
+        <view class="detail-panel story-panel">
+          <text class="section-title">自我介绍</text>
+          <text class="item-desc">{{currentMember.introText}}</text>
+          <view class="divider"></view>
+          <text class="section-title">择偶期待</text>
+          <text class="item-desc">{{currentMember.partnerText}}</text>
+        </view>
+
+        <view class="detail-panel notice-card">
+          <text class="section-title">隐私保护</text>
+          <text class="section-note">公开档案仅展示必要画像信息，手机号、红娘备注和内部服务记录不会公开。</text>
         </view>
       </view>
     </block>
@@ -154,7 +228,7 @@
         class="gift-item"
         data-gift-id="{{item.id}}"
         loading="{{sendingGiftId === item.id}}"
-        disabled="{{giftLoading || sendingGiftId !== ''}}"
+        disabled="{{giftLoading || sendingGiftId !== '' || actionAnimating}}"
         catchtap="sendGift"
       >
         <view class="gift-icon gift-{{item.tone}}">{{item.symbol}}</view>
