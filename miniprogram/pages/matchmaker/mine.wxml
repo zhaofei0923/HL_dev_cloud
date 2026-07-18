@@ -1,8 +1,8 @@
 <view class="page safe-bottom {{canOperate ? 'with-bottom-nav' : ''}}">
   <view class="card hero mine-hero">
-    <text class="eyebrow">{{canOperate ? '红娘中心' : '红娘申请'}}</text>
-    <text class="title">{{user.nickname || (canOperate ? '红娘中心' : '申请状态')}}</text>
-    <text class="subtitle">{{canOperate ? '查看红娘身份、认证状态和常用入口。' : statusNote}}</text>
+    <text class="eyebrow">{{canOperate ? '主理人中心' : '主理人申请'}}</text>
+    <text class="title">{{user.nickname || (canOperate ? '主理人中心' : '申请状态')}}</text>
+    <text class="subtitle">{{canOperate ? '查看主理人身份、认证状态和常用入口。' : statusNote}}</text>
     <view class="summary-strip">
       <view class="summary-item">
         <text class="summary-value">{{statusText}}</text>
@@ -51,7 +51,7 @@
     </view>
     <view class="invite-panel">
       <view class="invite-code-box">
-        <text class="field-label">红娘编号</text>
+        <text class="field-label">主理人编号</text>
         <text class="invite-code">{{inviteCard.matchmakerNo || dashboard.matchmaker.matchmakerNo || '生成中'}}</text>
         <text class="field-label invite-label">邀请码</text>
         <text class="invite-code">{{inviteCard.inviteCode || '生成中'}}</text>

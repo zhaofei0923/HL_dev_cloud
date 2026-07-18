@@ -22,7 +22,7 @@ function formatTime(value) {
     return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 function typeText(type) {
-    return type === 'member_pair' ? '配对沟通' : '红娘服务';
+    return type === 'member_pair' ? '配对沟通' : '主理人服务';
 }
 function normalizeConversation(row) {
     const peer = row.peer || { id: 0, nickname: row.title || '会话', avatarUrl: '' };
@@ -105,7 +105,7 @@ Page({
         respondingId: '',
         chatStartingId: '',
         emptyTitle: '暂无消息',
-        emptyNote: '和红娘建立服务关系，或由红娘发起配对后，这里会出现会话。'
+        emptyNote: '和主理人建立服务关系，或由主理人发起配对后，这里会出现会话。'
     },
     onShow() {
         const token = wx.getStorageSync('token');
@@ -145,7 +145,7 @@ Page({
                 list,
                 total: Number(result.total || list.length || 0),
                 emptyTitle: '暂无消息',
-                emptyNote: '和红娘建立服务关系、开通互选聊天，或由红娘发起配对后，这里会出现会话。'
+                emptyNote: '和主理人建立服务关系、开通互选聊天，或由主理人发起配对后，这里会出现会话。'
             });
         }
         catch (err) {
@@ -357,8 +357,8 @@ Page({
         const matchmakerConversation = this.data.list.find(row => row.conversationType === 'member_matchmaker');
         wx.showModal({
             title: '开通会员',
-            content: '开通后可查看喜欢你的会员、互相喜欢的人，并开启互选聊天。请联系红娘完成付款和会员开通。',
-            confirmText: matchmakerConversation ? '联系红娘' : '去绑定红娘',
+            content: '开通后可查看喜欢你的会员、互相喜欢的人，并开启互选聊天。请联系主理人完成付款和会员开通。',
+            confirmText: matchmakerConversation ? '联系主理人' : '去绑定主理人',
             cancelText: '稍后',
             success: res => {
                 if (!res.confirm)

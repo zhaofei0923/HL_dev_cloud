@@ -15,7 +15,7 @@
       <image class="profile-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
       <text class="eyebrow">个人档案</text>
       <text class="title">{{preview.displayName || '我的资料'}}</text>
-      <text class="subtitle">{{form.displayEnabled ? '资料已进入会员浏览和红娘资源池，联系方式不会公开。' : '资料仅用于红娘服务跟进，开启展示后进入会员区。'}}</text>
+      <text class="subtitle">{{form.displayEnabled ? '资料已进入会员浏览和主理人资源池，联系方式不会公开。' : '资料仅用于主理人服务跟进，开启展示后进入会员区。'}}</text>
       <view class="summary-strip">
         <view class="summary-item">
           <text class="summary-value">{{completionText}}</text>
@@ -42,17 +42,17 @@
     <view class="privacy-row">
       <view class="privacy-copy">
         <text class="section-title">资料展示</text>
-        <text class="section-note">开启后，资料会进入会员浏览和红娘资源池；关闭后仅用于服务跟进。</text>
+        <text class="section-note">开启后，资料会进入会员浏览和主理人资源池；关闭后仅用于服务跟进。</text>
       </view>
       <switch checked="{{form.displayEnabled}}" color="#b4814f" bindchange="onDisplayEnabledChange"></switch>
     </view>
     <view class="divider"></view>
-    <text class="section-title">添加红娘</text>
-    <text class="section-note">可通过扫码或手动邀请码添加；提交后需要红娘审批，通过后才会成为该红娘名下会员。</text>
+    <text class="section-title">添加主理人</text>
+    <text class="section-note">可通过扫码或手动邀请码添加；提交后需要主理人审批，通过后才会成为该主理人名下会员。</text>
     <view class="matchmaker-option-grid">
       <view class="matchmaker-option" bindtap="scanMatchmakerInvite">
         <text class="option-title">扫码添加</text>
-        <text class="option-note">扫红娘小程序码</text>
+        <text class="option-note">扫主理人小程序码</text>
       </view>
       <view class="matchmaker-option active">
         <text class="option-title">邀请码</text>
@@ -60,7 +60,7 @@
       </view>
     </view>
     <view class="matchmaker-request-row">
-      <input class="request-input" value="{{matchmakerCode}}" bindinput="onMatchmakerCodeInput" placeholder="红娘编号 / 邀请码" />
+      <input class="request-input" value="{{matchmakerCode}}" bindinput="onMatchmakerCodeInput" placeholder="主理人编号 / 邀请码" />
       <button class="btn gold request-btn" loading="{{matchmakerRequesting}}" disabled="{{matchmakerRequesting}}" bindtap="submitMatchmakerRequest">下一步</button>
     </view>
   </view>
@@ -69,15 +69,15 @@
     <view class="referral-head">
       <view class="referral-copy">
         <text class="section-title">邀请好友注册</text>
-        <text class="section-note">好友通过你的注册链接进入后，会成为同一红娘名下的免费会员。</text>
+        <text class="section-note">好友通过你的注册链接进入后，会成为同一主理人名下的免费会员。</text>
       </view>
-      <text class="tag gold">同一红娘</text>
+      <text class="tag gold">同一主理人</text>
     </view>
     <view class="referral-matchmaker">
       <image class="referral-avatar" src="{{referralCard.matchmaker.avatarUrl || '/assets/members/avatar-female-1.png'}}" mode="aspectFill"></image>
       <view class="referral-copy">
-        <text class="item-title">{{referralCard.matchmaker.nickname || '红娘顾问'}}</text>
-        <text class="item-meta">红娘编号 {{referralCard.matchmaker.matchmakerNo}}</text>
+        <text class="item-title">{{referralCard.matchmaker.nickname || '主理人'}}</text>
+        <text class="item-meta">主理人编号 {{referralCard.matchmaker.matchmakerNo}}</text>
       </view>
     </view>
     <view class="button-row referral-actions">
@@ -180,7 +180,7 @@
 
     <view class="form-section">
       <text class="section-title">生活状态</text>
-      <text class="section-note">这些信息仅用于红娘服务判断，不会公开展示。</text>
+      <text class="section-note">这些信息仅用于主理人服务判断，不会公开展示。</text>
       <view class="field-row">
         <view class="field half">
           <text class="field-label">婚况</text>
@@ -210,7 +210,7 @@
       <text class="section-note">简要说明兴趣、生活状态和期待的关系方向。</text>
       <view class="field">
         <text class="field-label">自我介绍</text>
-        <textarea class="field-input" value="{{form.selfIntro}}" data-field="selfIntro" bindinput="onInput" placeholder="写几句让红娘快速了解你的信息" />
+        <textarea class="field-input" value="{{form.selfIntro}}" data-field="selfIntro" bindinput="onInput" placeholder="写几句让主理人快速了解你的信息" />
       </view>
       <view class="field">
         <text class="field-label">择偶期待</text>
@@ -223,7 +223,7 @@
 
   <view class="card preview-card">
     <text class="section-title">档案预览</text>
-    <text class="section-note">以下是红娘服务中看到的资料结构，保持和会员档案一致。</text>
+    <text class="section-note">以下是主理人服务中看到的资料结构，保持和会员档案一致。</text>
     <swiper class="photo-swiper" indicator-dots circular>
       <swiper-item wx:for="{{preview.photos}}" wx:key="*this">
         <image class="photo-item" src="{{item}}" mode="aspectFill"></image>

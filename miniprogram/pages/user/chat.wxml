@@ -4,7 +4,7 @@
       <image class="chat-peer-avatar" src="{{conversation.peer.avatarUrl || '/assets/members/avatar-female-1.png'}}" mode="aspectFill"></image>
       <view class="chat-peer-copy">
         <text class="section-title">{{conversation.title || '会话'}}</text>
-        <text class="section-note">{{conversation.conversationType === 'member_pair' ? '配对沟通' : '红娘服务'}}</text>
+        <text class="section-note">{{conversation.conversationType === 'member_pair' ? '配对沟通' : '主理人服务'}}</text>
       </view>
     </view>
   </view>

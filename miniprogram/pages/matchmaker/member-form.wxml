@@ -134,11 +134,11 @@
 
     <view class="form-section">
       <text class="section-title">服务信息</text>
-      <text class="section-note">会员类型、服务等级和备注仅红娘端可见；展示开关只控制公开档案是否进入资源池。</text>
+      <text class="section-note">会员类型、服务等级和备注仅主理人端可见；展示开关只控制公开档案是否进入资源池。</text>
       <view class="display-switch-row">
         <view class="display-switch-copy">
           <text class="field-label">是否公开展示</text>
-          <text class="display-switch-state">{{form.displayEnabled ? '公开到会员浏览和红娘资源池，联系方式和红娘备注不公开。' : '仅内部服务跟进，不进入公开会员浏览和红娘资源池。'}}</text>
+          <text class="display-switch-state">{{form.displayEnabled ? '公开到会员浏览和主理人资源池，联系方式和主理人备注不公开。' : '仅内部服务跟进，不进入公开会员浏览和主理人资源池。'}}</text>
         </view>
         <switch checked="{{form.displayEnabled}}" color="#b4814f" bindchange="onDisplayEnabledChange"></switch>
       </view>
@@ -157,7 +157,7 @@
         </view>
       </view>
       <view class="field">
-        <text class="field-label">红娘备注</text>
+        <text class="field-label">主理人备注</text>
         <textarea class="field-input" value="{{form.remark}}" data-field="remark" bindinput="onInput" placeholder="记录跟进重点、沟通偏好或服务事项" />
       </view>
     </view>

@@ -64,19 +64,19 @@
       <view class="display-control-row">
         <view class="display-control-copy">
           <text class="section-title">展示状态</text>
-          <text class="section-note">{{member.displayEnabled ? '公开到会员浏览和红娘资源池，联系方式和红娘备注不公开。' : '仅内部服务跟进，不进入公开会员浏览和红娘资源池。'}}</text>
+          <text class="section-note">{{member.displayEnabled ? '公开到会员浏览和主理人资源池，联系方式和主理人备注不公开。' : '仅内部服务跟进，不进入公开会员浏览和主理人资源池。'}}</text>
         </view>
         <switch checked="{{member.displayEnabled}}" color="#b4814f" disabled="{{displaySaving}}" bindchange="onDisplayEnabledChange"></switch>
       </view>
       <view class="divider"></view>
-      <text class="section-title">红娘备注</text>
+      <text class="section-title">主理人备注</text>
       <text class="section-note">{{member.remarkText}}</text>
       <button class="btn gold chat-btn" loading="{{chatStarting}}" disabled="{{chatStarting}}" bindtap="startChat">发消息</button>
     </view>
 
     <view wx:else class="card notice-card">
       <text class="section-title">协作边界</text>
-      <text class="section-note">资源池档案仅展示协作所需信息，对方红娘的内部备注和服务记录不会公开。</text>
+      <text class="section-note">资源池档案仅展示协作所需信息，对方主理人的内部备注和服务记录不会公开。</text>
     </view>
   </block>
 

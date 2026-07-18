@@ -1543,7 +1543,7 @@ async function getMatchmakerByUserIdOrThrow(userId) {
 async function getCertifiedMatchmakerByUserIdOrThrow(userId) {
   const matchmaker = await getMatchmakerByUserIdOrThrow(userId);
   if (Number(matchmaker.certificationStatus) !== 2) {
-    throw createHttpError('红娘认证通过后可使用', 403, 40301);
+    throw createHttpError('主理人认证通过后可使用', 403, 40301);
   }
   return matchmaker;
 }
@@ -1595,7 +1595,7 @@ async function matchmakerInvitePreview(data = {}) {
   const members = await getAll(C.members, { matchmakerId: matchmaker.id, status: 1 });
   return {
     matchmakerNo: matchmaker.matchmakerNo,
-    nickname: (user && user.nickname) || '红娘顾问',
+    nickname: (user && user.nickname) || '主理人',
     avatarUrl: (user && user.avatarUrl) || '',
     level: matchmaker.level || 1,
     memberCount: members.length,
@@ -1747,7 +1747,7 @@ async function approveMemberMatchmakerRequest(matchmakerUserId, requestId) {
     senderId: Number(matchmakerUserId),
     receiverId: Number(request.userId),
     contentType: 'system',
-    content: '红娘已通过您的添加申请。',
+    content: '主理人已通过您的添加申请。',
     isRead: 0
   });
   await ensureMemberMatchmakerConversation(memberRow, mm);
@@ -1833,7 +1833,7 @@ async function acceptMemberMatchmakerInvite(userId, data = {}) {
       senderId: Number(matchmaker.userId),
       receiverId: Number(userId),
       contentType: 'system',
-      content: '你已通过微信邀请成为红娘名下会员。',
+      content: '你已通过微信邀请成为主理人名下会员。',
       isRead: 0
     });
   }
@@ -1867,7 +1867,7 @@ async function rejectMemberMatchmakerRequest(matchmakerUserId, requestId, remark
     senderId: Number(matchmakerUserId),
     receiverId: Number(request.userId),
     contentType: 'system',
-    content: remark ? `红娘暂未通过您的添加申请：${remark}` : '红娘暂未通过您的添加申请。',
+    content: remark ? `主理人暂未通过您的添加申请：${remark}` : '主理人暂未通过您的添加申请。',
     isRead: 0
   });
   return memberRequestView(reviewed);
@@ -2080,7 +2080,7 @@ const matchmaker = {
       sharePath,
       qrCodeFileID,
       matchmaker: {
-        nickname: user.nickname || '红娘顾问',
+        nickname: user.nickname || '主理人',
         avatarUrl: user.avatarUrl || '',
         level: row.level || 1
       }
@@ -2162,7 +2162,7 @@ const member = {
       sharePath,
       matchmaker: {
         matchmakerNo: matchmakerWithIdentity.matchmakerNo,
-        nickname: (matchmakerUser && matchmakerUser.nickname) || '红娘顾问',
+        nickname: (matchmakerUser && matchmakerUser.nickname) || '主理人',
         avatarUrl: (matchmakerUser && matchmakerUser.avatarUrl) || '',
         level: matchmakerWithIdentity.level || 1
       }
@@ -2332,7 +2332,7 @@ const member = {
         })),
         isPremiumMember: false,
         unlockRequired: true,
-        unlockText: '联系红娘开通会员',
+        unlockText: '联系主理人开通会员',
         previewCount: previewRows.length
       };
     }
@@ -2610,7 +2610,7 @@ const member = {
           senderId: Number(matchmakerUserId),
           receiverId: Number(own.userId),
           contentType: 'text',
-          content: data.note || `红娘为你推荐了会员 ${targetName}，请等待后续跟进。`,
+          content: data.note || `主理人为你推荐了会员 ${targetName}，请等待后续跟进。`,
           isRead: 0
         }),
         addRow(C.messages, {
@@ -2618,7 +2618,7 @@ const member = {
           senderId: Number(matchmakerUserId),
           receiverId: Number(target.userId),
           contentType: 'text',
-          content: data.note || `红娘为你推荐了会员 ${ownName}，请等待后续跟进。`,
+          content: data.note || `主理人为你推荐了会员 ${ownName}，请等待后续跟进。`,
           isRead: 0
         })
       ]);
@@ -2648,7 +2648,7 @@ const member = {
       senderId: Number(matchmakerUserId),
       receiverId: resourceUser.id,
       contentType: 'text',
-      content: data.note || `红娘为您推荐了会员 ${(ownUser && ownUser.nickname) || ''}`,
+      content: data.note || `主理人为您推荐了会员 ${(ownUser && ownUser.nickname) || ''}`,
       isRead: 0
     });
     return { matchRecord: stripInternal(matchRecord), message: stripInternal(message) };
@@ -2942,8 +2942,8 @@ async function ensureSeed() {
       const existingMatchmakers = await getAll(C.matchmakers, null, 1);
       if (existingMatchmakers.length) return;
 
-      const mm1User = await createSeedUser('seed-mm-1', '王红娘');
-      const mm2User = await createSeedUser('seed-mm-2', '李月老');
+      const mm1User = await createSeedUser('seed-mm-1', '王主理人');
+      const mm2User = await createSeedUser('seed-mm-2', '李主理人');
       const mm1 = await matchmaker.apply(mm1User.id, { certificationStatus: 2 });
       const mm2 = await matchmaker.apply(mm2User.id, { certificationStatus: 2 });
       await matchmaker.setCertification(mm1.id, 2);
@@ -2952,7 +2952,7 @@ async function ensureSeed() {
       await addMembersToMatchmaker(mm2User.id, SEEDED_MEMBER_GROUPS[1]);
       const seedSalon = await salon.createEvent(mm1User.id, {
         title: '周末轻社交沙龙',
-        description: '小范围线下交流，红娘现场协助破冰。',
+        description: '小范围线下交流，主理人现场协助破冰。',
         location: '杭州 城西会客厅',
         eventDate: new Date(Date.now() + 7 * 86400000).toISOString(),
         maxParticipants: 12,

@@ -24,7 +24,7 @@
       <view class="row request-head">
         <view>
           <text class="section-title">待审批会员申请</text>
-          <text class="section-note">{{pendingRequests.length}} 位会员申请添加你为红娘。</text>
+          <text class="section-note">{{pendingRequests.length}} 位会员申请添加你为主理人。</text>
         </view>
         <text class="tag gold">待处理</text>
       </view>

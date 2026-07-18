@@ -22,7 +22,7 @@ function normalizeSalonRow(row: any) {
   return {
     id: event.id || row.eventId || row.id,
     title: event.title || '精选沙龙',
-    description: event.description || '红娘精选线下活动，适合轻松交流和初步了解。',
+    description: event.description || '主理人精选线下活动，适合轻松交流和初步了解。',
     location: event.location || '地点待定',
     eventDate: formatDate(event.eventDate || ''),
     statusText: status,

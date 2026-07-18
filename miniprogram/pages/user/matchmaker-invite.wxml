@@ -1,8 +1,8 @@
 <view class="page safe-bottom">
   <view class="card hero invite-hero">
-    <text class="eyebrow">{{autoMode ? '会员注册' : '红娘邀请'}}</text>
-    <text class="title">{{autoRegister ? '确认沙龙邀请' : (autoMode ? '注册成为会员' : '确认添加红娘')}}</text>
-    <text class="subtitle">{{autoMode ? '通过微信分享链接进入后，系统会自动注册为该红娘名下免费会员。' : '通过扫码或手动邀请码进入，提交后仍需红娘审批，通过后才会成为该红娘名下会员。'}}</text>
+    <text class="eyebrow">{{autoMode ? '会员注册' : '主理人邀请'}}</text>
+    <text class="title">{{autoRegister ? '确认沙龙邀请' : (autoMode ? '注册成为会员' : '确认添加主理人')}}</text>
+    <text class="subtitle">{{autoMode ? '通过微信分享链接进入后，系统会自动注册为该主理人名下免费会员。' : '通过扫码或手动邀请码进入，提交后仍需主理人审批，通过后才会成为该主理人名下会员。'}}</text>
     <view class="summary-strip">
       <view class="summary-item">
         <text class="summary-value">{{code || '待识别'}}</text>
@@ -29,8 +29,8 @@
     <view class="invite-profile">
       <image class="invite-avatar" src="{{invite.avatarUrl || '/assets/members/avatar-female-1.png'}}" mode="aspectFill"></image>
       <view class="invite-copy">
-        <text class="section-title">{{invite.nickname || '红娘顾问'}}</text>
-        <text class="section-note">红娘编号 {{invite.matchmakerNo}}</text>
+        <text class="section-title">{{invite.nickname || '主理人'}}</text>
+        <text class="section-note">主理人编号 {{invite.matchmakerNo}}</text>
       </view>
       <text class="tag gold">已认证</text>
     </view>
@@ -44,15 +44,15 @@
       <view class="metric">
         <text class="metric-label">服务等级</text>
         <text class="metric-value">L{{invite.level || 1}}</text>
-        <text class="metric-hint">红娘等级</text>
+        <text class="metric-hint">主理人等级</text>
       </view>
     </view>
 
     <view wx:if="{{invite.alreadyAssigned}}" class="notice-inline">
-      <text class="item-meta">{{autoMode ? '当前账号已有关联红娘，系统会继续确认是否为同一红娘。' : '你已有关联红娘，暂不能申请添加其他红娘。'}}</text>
+      <text class="item-meta">{{autoMode ? '当前账号已有关联主理人，系统会继续确认是否为同一主理人。' : '你已有关联主理人，暂不能申请添加其他主理人。'}}</text>
     </view>
     <view wx:elif="{{!autoMode && invite.existingRequest && invite.existingRequest.status === 'pending'}}" class="notice-inline">
-      <text class="item-meta">你已提交过申请，请等待红娘审批。</text>
+      <text class="item-meta">你已提交过申请，请等待主理人审批。</text>
     </view>
     <view wx:if="{{autoMessage}}" class="notice-inline {{autoDone ? 'success' : 'warning'}}">
       <text class="item-meta">{{autoMessage}}</text>
@@ -72,6 +72,6 @@
 
   <view wx:else class="card invite-card">
     <text class="section-title">正在确认邀请</text>
-    <text class="section-note">{{loading ? '正在读取红娘信息，请稍候。' : '请确认邀请码后重试。'}}</text>
+    <text class="section-note">{{loading ? '正在读取主理人信息，请稍候。' : '请确认邀请码后重试。'}}</text>
   </view>
 </view>

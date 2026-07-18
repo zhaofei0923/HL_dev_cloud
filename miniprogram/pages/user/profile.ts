@@ -138,7 +138,7 @@ function completionFor(form: ProfileForm) {
   return {
     percent,
     text: `${percent}%`,
-    note: percent >= 85 ? '个人档案较完整，适合进入后续推荐。' : '补齐形象、生活状态和择偶期待后，红娘判断会更准确。'
+    note: percent >= 85 ? '个人档案较完整，适合进入后续推荐。' : '补齐形象、生活状态和择偶期待后，主理人判断会更准确。'
   }
 }
 
@@ -220,15 +220,15 @@ function matchmakerEntryView(matchmaker: any) {
   if (status === 2) {
     return {
       matchmakerApproved: true,
-      matchmakerEntryTitle: '红娘端入口',
-      matchmakerEntryNote: '红娘权限已开通，可进入红娘端使用会员经营、资源池和沙龙管理。',
-      matchmakerEntryButton: '进入红娘端'
+      matchmakerEntryTitle: '主理人端入口',
+      matchmakerEntryNote: '主理人权限已开通，可进入主理人端使用会员经营、资源池和沙龙管理。',
+      matchmakerEntryButton: '进入主理人端'
     }
   }
   if (status === 1) {
     return {
       matchmakerApproved: false,
-      matchmakerEntryTitle: '红娘申请未通过',
+      matchmakerEntryTitle: '主理人申请未通过',
       matchmakerEntryNote: remark || '本次申请暂未通过，可完善资料后重新提交申请。',
       matchmakerEntryButton: '重新申请 / 查看状态'
     }
@@ -236,14 +236,14 @@ function matchmakerEntryView(matchmaker: any) {
   if (status === 0) {
     return {
       matchmakerApproved: false,
-      matchmakerEntryTitle: '红娘申请待审批',
+      matchmakerEntryTitle: '主理人申请待审批',
       matchmakerEntryNote: '申请已提交，后台审批通过后将开放会员经营、资源池和沙龙管理。',
       matchmakerEntryButton: '查看申请状态'
     }
   }
   return {
     matchmakerApproved: false,
-    matchmakerEntryTitle: '申请成为红娘',
+    matchmakerEntryTitle: '申请成为主理人',
     matchmakerEntryNote: '提交申请后需等待后台审批；通过后才会开放会员经营、资源池和沙龙管理。',
     matchmakerEntryButton: '申请 / 查看状态'
   }
@@ -255,7 +255,7 @@ Page({
     loading: false,
     saving: false,
     completionText: '0%',
-    completionNote: '补齐形象、生活状态和择偶期待后，红娘判断会更准确。',
+    completionNote: '补齐形象、生活状态和择偶期待后，主理人判断会更准确。',
     genderOptions: ['男', '女'],
     maritalOptions: ['未婚', '离异', '丧偶'],
     houseOptions: ['已购房', '计划购房', '与父母同住', '租住'],
@@ -266,7 +266,7 @@ Page({
     incomeOptions: INCOME_OPTIONS,
     occupationOptions: OCCUPATION_OPTIONS,
     matchmakerApproved: false,
-    matchmakerEntryTitle: '申请成为红娘',
+    matchmakerEntryTitle: '申请成为主理人',
     matchmakerEntryNote: '提交申请后需等待后台审批；通过后才会开放会员经营、资源池和沙龙管理。',
     matchmakerEntryButton: '申请 / 查看状态',
     matchmakerCode: '',
@@ -372,7 +372,7 @@ Page({
   async submitMatchmakerRequest() {
     const code = String(this.data.matchmakerCode || '').trim()
     if (!code) {
-      wx.showToast({ title: '请输入红娘编号', icon: 'none' })
+      wx.showToast({ title: '请输入主理人编号', icon: 'none' })
       return
     }
     wx.navigateTo({ url: invitePath(code, 'inviteCode') })
@@ -384,7 +384,7 @@ Page({
       success: res => {
         const code = extractInviteCode(res.result || res.path)
         if (!code) {
-          wx.showToast({ title: '未识别到红娘邀请码', icon: 'none' })
+          wx.showToast({ title: '未识别到主理人邀请码', icon: 'none' })
           return
         }
         wx.navigateTo({ url: invitePath(code, 'scan') })
@@ -400,7 +400,7 @@ Page({
   showInviteLinkTip() {
     wx.showModal({
       title: '微信链接添加',
-      content: '打开红娘或会员发来的微信分享卡片后，系统会自动注册为对应红娘名下免费会员；扫码和手动邀请码仍需提交申请。',
+      content: '打开主理人或会员发来的微信分享卡片后，系统会自动注册为对应主理人名下免费会员；扫码和手动邀请码仍需提交申请。',
       showCancel: false,
       confirmText: '知道了'
     })

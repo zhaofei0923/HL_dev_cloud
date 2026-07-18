@@ -18,7 +18,7 @@ Page({
         selectedMemberIndex: 0,
         primaryMemberName: '',
         recommendButtonText: '先录入自己的会员',
-        accessNote: '已认证红娘可查看其他红娘的会员资源，并用自己的会员发起互推。',
+        accessNote: '已认证主理人可查看其他主理人的会员资源，并用自己的会员发起互推。',
         loading: false,
         recommendLoadingId: ''
     },
@@ -42,7 +42,7 @@ Page({
                 selectedMemberIndex: 0,
                 primaryMemberName: first ? (first.realName || first.nickname || '我的会员') : '',
                 recommendButtonText: first ? `用 ${first.realName || first.nickname || '我的会员'} 发起互推` : '先录入自己的会员',
-                accessNote: '已为你整理可协作会员，可选择合适对象发起红娘协作。'
+                accessNote: '已为你整理可协作会员，可选择合适对象发起主理人协作。'
             });
         }
         catch (err) {
@@ -55,7 +55,7 @@ Page({
                 selectedMemberIndex: 0,
                 primaryMemberName: '',
                 recommendButtonText: '先录入自己的会员',
-                accessNote: '暂无资源或尚未认证。认证后可查看其他红娘资源池。'
+                accessNote: '暂无资源或尚未认证。认证后可查看其他主理人资源池。'
             });
         }
         finally {

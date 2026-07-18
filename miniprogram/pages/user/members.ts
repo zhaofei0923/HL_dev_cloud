@@ -166,7 +166,7 @@ Page({
     total: 0,
     countText: '正在整理会员资料',
     emptyTitle: '暂无可推荐会员',
-    emptyNote: '可以调整筛选条件，或稍后再查看红娘精选的公开会员。',
+    emptyNote: '可以调整筛选条件，或稍后再查看主理人精选的公开会员。',
     gifts: [] as GiftOption[],
     giftPanelOpen: false,
     giftLoading: false,
@@ -220,7 +220,7 @@ Page({
         emptyTitle: this.hasFilters() ? '暂无匹配会员' : '暂无可推荐会员',
         emptyNote: this.hasFilters()
           ? '可以调整城市、性别或关键词后再试。'
-          : '红娘精选会员资料后，会在这里展示脱敏信息。'
+          : '主理人精选会员资料后，会在这里展示脱敏信息。'
       })
     } catch (err) {
       console.warn('load user members failed', err)

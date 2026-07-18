@@ -69,7 +69,7 @@ function certificationView(matchmaker: any) {
       canOperate: true,
       statusText: '已认证',
       statusTagClass: 'gold',
-      statusNote: '红娘权限已开通，可录入会员并进入资源池协作。'
+      statusNote: '主理人权限已开通，可录入会员并进入资源池协作。'
     }
   }
   if (status === 1) {
@@ -84,7 +84,7 @@ function certificationView(matchmaker: any) {
     canOperate: false,
     statusText: '待审批',
     statusTagClass: '',
-    statusNote: '红娘申请通过后，才可使用会员经营和资源池功能。'
+    statusNote: '主理人申请通过后，才可使用会员经营和资源池功能。'
   }
 }
 
@@ -119,7 +119,7 @@ Page({
     canOperate: false,
     statusText: '待审批',
     statusTagClass: '',
-    statusNote: '红娘申请通过后，才可使用会员经营和资源池功能。'
+    statusNote: '主理人申请通过后，才可使用会员经营和资源池功能。'
   },
 
   onShow() {

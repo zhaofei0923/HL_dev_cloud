@@ -11,12 +11,12 @@
     {
       "id": "operator",
       "name": "运营人员",
-      "description": "只处理红娘审核、会员资料、沙龙审核、报名记录和异常排查。"
+      "description": "只处理主理人审核、会员资料、沙龙审核、报名记录和异常排查。"
     },
     {
       "id": "matchmaker",
-      "name": "普通红娘",
-      "description": "不进入 CloudBase CMS，只通过小程序红娘端完成会员、沙龙和申请管理。"
+      "name": "普通主理人",
+      "description": "不进入 CloudBase CMS，只通过小程序主理人端完成会员、沙龙和申请管理。"
     }
   ],
   "globalHiddenFields": [
@@ -79,7 +79,7 @@
     "memberRequestStatus": [
       {
         "value": "pending",
-        "label": "待红娘处理"
+        "label": "待主理人处理"
       },
       {
         "value": "approved",
@@ -98,9 +98,9 @@
   "views": [
     {
       "id": "matchmaker-approval",
-      "name": "红娘审批",
+      "name": "主理人审批",
       "collection": "hl_matchmakers",
-      "purpose": "红娘认证审核、等级维护和账号启停。",
+      "purpose": "主理人认证审核、等级维护和账号启停。",
       "filters": [
         {
           "field": "status",
@@ -130,7 +130,7 @@
       ],
       "preferredActions": [
         {
-          "name": "通过红娘认证",
+          "name": "通过主理人认证",
           "method": "PUT",
           "path": "/admin/matchmakers/{id}/certification",
           "body": {
@@ -139,7 +139,7 @@
           }
         },
         {
-          "name": "拒绝红娘认证",
+          "name": "拒绝主理人认证",
           "method": "PUT",
           "path": "/admin/matchmakers/{id}/certification",
           "body": {
@@ -151,7 +151,7 @@
       "manualCmsAllowed": true,
       "warnings": [
         "certificationStatus 只能是 0、1、2。",
-        "拒绝时必须填写 certificationRemark，方便红娘端展示原因。"
+        "拒绝时必须填写 certificationRemark，方便主理人端展示原因。"
       ]
     },
     {
@@ -257,7 +257,7 @@
       "preferredActions": [],
       "manualCmsAllowed": true,
       "warnings": [
-        "displayEnabled = true 后会员会进入公开浏览和红娘资源池。",
+        "displayEnabled = true 后会员会进入公开浏览和主理人资源池。",
         "手机号、登录态和 token 字段不应进入运营视图。"
       ]
     },
@@ -265,7 +265,7 @@
       "id": "member-service-management",
       "name": "会员服务管理",
       "collection": "hl_members",
-      "purpose": "维护红娘名下会员关系、服务等级、备注和服务状态。",
+      "purpose": "维护主理人名下会员关系、服务等级、备注和服务状态。",
       "editableFields": [
         "memberType",
         "serviceLevel",
@@ -288,7 +288,7 @@
       "warnings": [
         "新增会员关系应走小程序或云函数，不建议在 CMS 手工新增 hl_members。",
         "公开展示开关只在 hl_profiles.displayEnabled 生效，不要在 hl_members 上维护展示状态。",
-        "变更 status 前先确认不会影响红娘端会员池展示。"
+        "变更 status 前先确认不会影响主理人端会员池展示。"
       ]
     },
     {
@@ -320,9 +320,9 @@
     },
     {
       "id": "member-matchmaker-request-audit",
-      "name": "会员添加红娘申请排查",
+      "name": "会员添加主理人申请排查",
       "collection": "hl_member_matchmaker_requests",
-      "purpose": "排查会员申请添加红娘的异常状态，默认只读。",
+      "purpose": "排查会员申请添加主理人的异常状态，默认只读。",
       "editableFields": [],
       "readonlyFields": [
         "id",
@@ -343,13 +343,13 @@
       ],
       "preferredActions": [
         {
-          "name": "红娘通过会员申请",
+          "name": "主理人通过会员申请",
           "method": "POST",
           "path": "/matchmaker/member-requests/{id}/approve",
           "body": {}
         },
         {
-          "name": "红娘拒绝会员申请",
+          "name": "主理人拒绝会员申请",
           "method": "POST",
           "path": "/matchmaker/member-requests/{id}/reject",
           "body": {
@@ -360,7 +360,7 @@
       "manualCmsAllowed": false,
       "warnings": [
         "不要在 CMS 里直接把 status 改成 approved。",
-        "通过申请会联动写入 hl_members 和 hl_messages，必须由红娘端小程序或云函数完成。"
+        "通过申请会联动写入 hl_members 和 hl_messages，必须由主理人端小程序或云函数完成。"
       ]
     }
   ]

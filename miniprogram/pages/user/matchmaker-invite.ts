@@ -80,7 +80,7 @@ Page({
   async loadInvite() {
     const code = normalizeInviteCode(this.data.code)
     if (!code) {
-      this.setData({ errorText: '未识别到有效的邀请码或红娘编号' })
+      this.setData({ errorText: '未识别到有效的邀请码或主理人编号' })
       return
     }
     this.setData({ loading: true, errorText: '' })
@@ -131,7 +131,7 @@ Page({
         canSubmit: false,
         autoDone: true,
         actionText: this.data.autoRegister && this.data.eventId ? '正在报名沙龙' : '已自动注册',
-        autoMessage: '已成为该红娘名下免费会员。'
+        autoMessage: '已成为该主理人名下免费会员。'
       })
       if (this.data.autoRegister && this.data.eventId) {
         await this.registerSharedSalon()
@@ -158,7 +158,7 @@ Page({
       await salonApi.register(this.data.eventId)
       this.setData({
         actionText: '报名成功',
-        autoMessage: '已成为该红娘名下免费会员，并成功报名沙龙。'
+        autoMessage: '已成为该主理人名下免费会员，并成功报名沙龙。'
       })
       wx.showToast({ title: '报名成功', icon: 'success' })
       setTimeout(() => {
@@ -169,7 +169,7 @@ Page({
       if (/already registered|已报名/i.test(message)) {
         this.setData({
           actionText: '已报名沙龙',
-          autoMessage: '已成为该红娘名下免费会员，此沙龙已报名。'
+          autoMessage: '已成为该主理人名下免费会员，此沙龙已报名。'
         })
         setTimeout(() => {
           this.goSalonDetail()
@@ -180,7 +180,7 @@ Page({
       this.setData({
         autoDone: false,
         actionText: '重新报名沙龙',
-        autoMessage: `已成为该红娘名下免费会员，沙龙报名未完成：${message}`
+        autoMessage: `已成为该主理人名下免费会员，沙龙报名未完成：${message}`
       })
       wx.showToast({ title: '报名未完成', icon: 'none' })
     }

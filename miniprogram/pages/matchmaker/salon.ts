@@ -46,7 +46,7 @@ function certificationView(matchmaker: any) {
       canOperate: true,
       statusText: '已认证',
       statusTagClass: 'gold',
-      statusNote: '红娘权限已开通，可创建和管理沙龙活动。'
+      statusNote: '主理人权限已开通，可创建和管理沙龙活动。'
     }
   }
   if (status === 1) {
@@ -61,7 +61,7 @@ function certificationView(matchmaker: any) {
     canOperate: false,
     statusText: '待审批',
     statusTagClass: '',
-    statusNote: '红娘认证通过后，才可以发起沙龙并管理活动。'
+    statusNote: '主理人认证通过后，才可以发起沙龙并管理活动。'
   }
 }
 
@@ -80,7 +80,7 @@ Page({
     shareCode: '',
     statusText: '待审批',
     statusTagClass: '',
-    statusNote: '红娘认证通过后，才可以发起沙龙并管理活动。'
+    statusNote: '主理人认证通过后，才可以发起沙龙并管理活动。'
   },
 
   onShow() {
@@ -184,7 +184,7 @@ Page({
 
   goCreate() {
     if (!this.data.canOperate) {
-      wx.showToast({ title: '红娘认证通过后可创建沙龙', icon: 'none' })
+      wx.showToast({ title: '主理人认证通过后可创建沙龙', icon: 'none' })
       return
     }
     wx.navigateTo({ url: '/pages/matchmaker/salon-form' })

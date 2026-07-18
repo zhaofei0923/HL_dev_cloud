@@ -2,7 +2,7 @@
   <view class="card hero entry-hero">
     <text class="eyebrow">高端私享婚恋服务</text>
     <text class="title">HL 婚恋服务</text>
-    <text class="subtitle">先浏览会员与沙龙，再完善个人资料；需要经营会员时，可在“我的”中提交红娘申请。</text>
+    <text class="subtitle">先浏览会员与沙龙，再完善个人资料；需要经营会员时，可在“我的”中提交主理人申请。</text>
     <view class="summary-strip">
       <view class="summary-item">
         <text class="summary-value">会员</text>
@@ -14,7 +14,7 @@
       </view>
       <view class="summary-item">
         <text class="summary-value">我的</text>
-        <text class="summary-label">资料与红娘</text>
+        <text class="summary-label">资料与主理人</text>
       </view>
     </view>
   </view>
@@ -48,7 +48,7 @@
         <text class="capability-index">03</text>
         <view class="capability-copy">
           <text class="item-title">完善个人资料</text>
-          <text class="item-meta">让红娘后续跟进更准确，也可从这里查看红娘申请状态。</text>
+          <text class="item-meta">让主理人后续跟进更准确，也可从这里查看主理人申请状态。</text>
         </view>
       </view>
     </view>

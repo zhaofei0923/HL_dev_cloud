@@ -2,7 +2,7 @@
   <view class="card hero resources-hero">
     <text class="eyebrow">资源协作</text>
     <text class="title">会员展示资源池</text>
-    <text class="subtitle">认证红娘可查看其他红娘的会员资源，并基于自己的会员发起互推协作。</text>
+    <text class="subtitle">认证主理人可查看其他主理人的会员资源，并基于自己的会员发起互推协作。</text>
     <view class="summary-strip">
       <view class="summary-item">
         <text class="summary-value">{{total}}</text>
@@ -61,7 +61,7 @@
         </view>
         <view class="tag-row">
           <text class="tag rose">可互推</text>
-          <text class="tag">跨红娘协作</text>
+          <text class="tag">跨主理人协作</text>
         </view>
         <button class="btn secondary detail-btn" data-id="{{item.id}}" bindtap="openDetail">查看会员档案</button>
         <button class="btn gold recommend-btn" data-user-id="{{item.userId}}" loading="{{recommendLoadingId === item.userIdText}}" disabled="{{recommendLoadingId === item.userIdText || !primaryMemberName}}" bindtap="recommend">{{recommendButtonText}}</button>

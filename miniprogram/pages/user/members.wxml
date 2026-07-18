@@ -187,7 +187,7 @@
 
         <view class="detail-panel notice-card">
           <text class="section-title">隐私保护</text>
-          <text class="section-note">公开档案仅展示必要画像信息，手机号、红娘备注和内部服务记录不会公开。</text>
+          <text class="section-note">公开档案仅展示必要画像信息，手机号、主理人备注和内部服务记录不会公开。</text>
         </view>
       </view>
     </block>

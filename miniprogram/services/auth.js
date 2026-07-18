@@ -13,7 +13,7 @@ function loginByWechat(role) {
                         data: {
                             code: loginRes.code || `${role}-${Date.now()}`,
                             role,
-                            nickname: role === 'matchmaker' ? '红娘顾问' : '新用户'
+                            nickname: role === 'matchmaker' ? '主理人' : '新用户'
                         }
                     });
                     (0, api_1.setSession)(session);

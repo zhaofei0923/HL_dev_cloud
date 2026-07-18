@@ -38,7 +38,7 @@ function certificationView(matchmaker) {
             canOperate: true,
             statusText: '已认证',
             statusTagClass: 'gold',
-            statusNote: '红娘权限已开通，可进入资源池和运营页面。'
+            statusNote: '主理人权限已开通，可进入资源池和运营页面。'
         };
     }
     if (status === 1) {
@@ -53,7 +53,7 @@ function certificationView(matchmaker) {
         canOperate: false,
         statusText: '待审批',
         statusTagClass: '',
-        statusNote: '红娘申请已提交，后台审批通过后将开放资源池、会员经营和沙龙发起权限。'
+        statusNote: '主理人申请已提交，后台审批通过后将开放资源池、会员经营和沙龙发起权限。'
     };
 }
 Page({
@@ -178,7 +178,7 @@ Page({
     },
     goResources() {
         if (!this.data.canOperate) {
-            wx.showToast({ title: '红娘认证通过后可使用', icon: 'none' });
+            wx.showToast({ title: '主理人认证通过后可使用', icon: 'none' });
             return;
         }
         wx.navigateTo({ url: '/pages/matchmaker/resources' });
@@ -192,7 +192,7 @@ Page({
         const card = this.data.inviteCard || {};
         const code = card.inviteCode || '';
         return {
-            title: `${(this.data.user && this.data.user.nickname) || '红娘顾问'}邀请你注册成为会员`,
+            title: `${(this.data.user && this.data.user.nickname) || '主理人'}邀请你注册成为会员`,
             path: card.sharePath || (0, invite_1.invitePath)(code, 'matchmakerShare')
         };
     }

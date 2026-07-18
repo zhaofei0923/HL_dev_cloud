@@ -1,5 +1,5 @@
 {
-  "navigationBarTitleText": "红娘工作台",
+  "navigationBarTitleText": "主理人工作台",
   "usingComponents": {
     "bottom-nav": "/components/bottom-nav/bottom-nav"
   }

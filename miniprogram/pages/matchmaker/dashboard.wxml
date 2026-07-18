@@ -1,7 +1,7 @@
 <view wx:if="{{canOperate}}" class="page safe-bottom with-bottom-nav">
   <view class="card hero dashboard-hero">
-    <text class="eyebrow">红娘运营</text>
-    <text class="title">{{user.nickname || '红娘工作台'}}</text>
+    <text class="eyebrow">主理人运营</text>
+    <text class="title">{{user.nickname || '主理人工作台'}}</text>
     <text class="subtitle">集中处理会员经营、沙龙运营和资源协作，保持每个服务动作可跟进。</text>
     <view class="summary-strip">
       <view class="summary-item">
@@ -63,7 +63,7 @@
       <view class="task-btn" bindtap="goResources">
         <text class="task-title">会员展示资源池</text>
         <text class="task-badge">{{dashboard.resourceCount || dashboard.operations.resourceCount || 0}}</text>
-        <text class="task-note">查看其他红娘资源并发起互推</text>
+        <text class="task-note">查看其他主理人资源并发起互推</text>
       </view>
       <view class="task-btn" bindtap="goSalon">
         <text class="task-title">沙龙管理</text>
@@ -78,9 +78,9 @@
 
 <view wx:else class="page safe-bottom">
   <view class="card hero approval-hero">
-    <text class="eyebrow">红娘申请</text>
+    <text class="eyebrow">主理人申请</text>
     <text class="title">{{statusText}}</text>
-    <text class="subtitle">{{loading ? '正在确认红娘申请状态。' : statusNote}}</text>
+    <text class="subtitle">{{loading ? '正在确认主理人申请状态。' : statusNote}}</text>
     <view class="summary-strip">
       <view class="summary-item">
         <text class="summary-value">{{statusText}}</text>

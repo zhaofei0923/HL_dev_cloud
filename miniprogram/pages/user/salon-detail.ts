@@ -25,7 +25,7 @@ function normalizeEvent(event: any) {
     text: '立即报名',
     className: 'gold',
     disabled: false,
-    note: '报名后红娘可根据活动安排继续跟进提醒。'
+    note: '报名后主理人可根据活动安排继续跟进提醒。'
   }
   if (registered) {
     primaryAction = {
@@ -56,7 +56,7 @@ function normalizeEvent(event: any) {
     ...event,
     eventDateText: formatDate(event.eventDate || ''),
     locationText: event.location || '地点待定',
-    descriptionText: event.description || '红娘精选线下活动，适合轻松交流和初步了解。',
+    descriptionText: event.description || '主理人精选线下活动，适合轻松交流和初步了解。',
     statusText: event.status === 'upcoming' ? '报名中' : (event.status || '待定'),
     participantText: maxParticipants > 0 ? `${currentParticipants}/${maxParticipants} 人` : `${currentParticipants} 人报名`,
     seatHint: maxParticipants > 0 ? `剩余 ${Math.max(maxParticipants - currentParticipants, 0)} 个席位` : '席位不限',

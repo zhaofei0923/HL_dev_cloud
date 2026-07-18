@@ -1,5 +1,5 @@
 {
-  "navigationBarTitleText": "红娘我的",
+  "navigationBarTitleText": "主理人中心",
   "usingComponents": {
     "bottom-nav": "/components/bottom-nav/bottom-nav"
   }

@@ -4,8 +4,8 @@
 
 ## 项目结构
 
-- `miniprogram/`：HL 小程序用户端、红娘端页面、组件、资源和服务层。
-- `cloudfunctions/hlApi/`：统一业务云函数，承接登录、用户资料、红娘、会员、沙龙等接口。
+- `miniprogram/`：HL 小程序用户端、主理人端页面、组件、资源和服务层。
+- `cloudfunctions/hlApi/`：统一业务云函数，承接登录、用户资料、主理人、会员、沙龙等接口。
 - `typings/`、`tsconfig.json`：TypeScript 类型和本地检查配置。
 
 ## 云数据库集合
@@ -14,13 +14,15 @@
 
 - `hl_users`：用户基础信息，包含 `openid` 等系统字段。
 - `hl_profiles`：用户资料和择偶偏好。
-- `hl_matchmakers`：红娘申请、认证状态和运营指标。
-- `hl_members`：红娘管理的会员关系。
+- `hl_matchmakers`：主理人申请、认证状态和运营指标。
+- `hl_members`：主理人管理的会员关系。
 - `hl_salon_events`：沙龙活动。
 - `hl_registrations`：沙龙报名记录。
 - `hl_match_records`：会员推荐记录。
 - `hl_messages`：系统和推荐消息。
 - `hl_counters`：业务自增 ID 计数器，不建议运营人员编辑。
+
+> 产品界面统一使用“主理人”称呼。为兼容已发布版本和存量数据，代码中的 `matchmaker` 角色值、页面与接口路径，以及 `hl_matchmakers`、`matchmakerId`、`matchmakerNo` 等技术标识保持不变。
 
 ## 后台管理建议
 

@@ -127,7 +127,7 @@
         wx:if="{{!isPremiumMember && (relationshipCounts.incoming || relationshipCounts.mutual)}}"
         class="btn relationship-unlock"
         bindtap="promptOpenMembership"
-      >联系红娘开通会员</button>
+      >联系主理人开通会员</button>
 
       <view wx:if="{{isPremiumMember && relationshipTotal > 2}}" class="relationship-footer-actions">
         <button class="relationship-text-action" bindtap="toggleRelationshipExpanded">{{relationshipExpanded ? '收起列表' : '查看全部'}}</button>

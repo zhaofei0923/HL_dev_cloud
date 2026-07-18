@@ -13,7 +13,7 @@
         <text class="summary-label">余量提示</text>
       </view>
       <view class="summary-item">
-        <text class="summary-value">红娘</text>
+        <text class="summary-value">主理人</text>
         <text class="summary-label">后续跟进</text>
       </view>
     </view>

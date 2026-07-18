@@ -11,7 +11,7 @@ export function loginByWechat(role: 'user' | 'matchmaker') {
             data: {
               code: loginRes.code || `${role}-${Date.now()}`,
               role,
-              nickname: role === 'matchmaker' ? '红娘顾问' : '新用户'
+              nickname: role === 'matchmaker' ? '主理人' : '新用户'
             }
           })
           setSession(session)
