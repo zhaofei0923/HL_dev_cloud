@@ -6,6 +6,7 @@
     "pages/user/salon",
     "pages/user/salon-detail",
     "pages/user/profile",
+    "pages/user/membership",
     "pages/user/messages",
     "pages/user/chat",
     "pages/common/image-cropper",

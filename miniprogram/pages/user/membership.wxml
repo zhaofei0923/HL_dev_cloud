@@ -1,0 +1,87 @@
+<view class="page membership-page">
+  <view class="membership-hero {{overview.isPremiumMember ? 'active' : ''}}">
+    <view class="membership-hero-copy">
+      <text class="eyebrow">会员中心</text>
+      <text class="membership-title">{{statusTitle}}</text>
+      <text class="membership-expiry">{{expiryText}}</text>
+    </view>
+    <text class="membership-state">{{overview.isPremiumMember ? '已开通' : '未开通'}}</text>
+    <view class="benefit-strip">
+      <view class="benefit-item incoming">
+        <text class="benefit-name">喜欢我的</text>
+        <text class="benefit-note">查看身份并回应</text>
+      </view>
+      <view class="benefit-item mutual">
+        <text class="benefit-name">互相喜欢</text>
+        <text class="benefit-note">解锁资料与聊天</text>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{errorText}}" class="notice error-notice">
+    <text>{{errorText}}</text>
+    <button class="text-command" bindtap="loadOverview">重新加载</button>
+  </view>
+
+  <view class="membership-section phone-section">
+    <view class="section-copy">
+      <text class="section-title">微信手机号</text>
+      <text class="section-note">用于确认会员订单与服务联系，可随时拒绝授权。</text>
+    </view>
+    <text wx:if="{{overview.phoneBound}}" class="phone-state bound">{{overview.phoneMasked}}</text>
+    <button
+      wx:else
+      class="compact-command"
+      open-type="getPhoneNumber"
+      bindgetphonenumber="authorizePhone"
+      loading="{{phoneAuthorizing}}"
+      disabled="{{phoneAuthorizing}}"
+    >授权手机号</button>
+  </view>
+
+  <view class="membership-section plan-section">
+    <view class="section-copy">
+      <text class="section-title">会员套餐</text>
+      <text class="section-note">选择适合你的会员期限。</text>
+    </view>
+
+    <view wx:if="{{loading && !plans.length}}" class="empty-state">正在加载会员套餐</view>
+    <view wx:elif="{{!plans.length}}" class="empty-state">会员套餐待后台配置</view>
+    <view wx:else class="plan-list">
+      <view
+        wx:for="{{plans}}"
+        wx:key="planCode"
+        class="plan-row {{selectedPlanCode === item.planCode ? 'selected' : ''}}"
+        data-code="{{item.planCode}}"
+        bindtap="selectPlan"
+      >
+        <view class="plan-selector"><view class="selector-dot"></view></view>
+        <view class="plan-copy">
+          <view class="plan-title-row">
+            <text class="plan-title">{{item.title}}</text>
+            <text wx:if="{{item.badge}}" class="plan-badge">{{item.badge}}</text>
+          </view>
+          <text class="plan-description">{{item.descriptionText}}</text>
+        </view>
+        <view class="plan-price">
+          <text class="price-value">{{item.priceText}}</text>
+          <text class="price-duration">{{item.durationText}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="membership-actions">
+    <button
+      class="btn pay-command"
+      bindtap="startPayment"
+      loading="{{paymentStarting || confirming}}"
+      disabled="{{loading || paymentStarting || confirming || !plans.length}}"
+    >{{paymentActionText}}</button>
+    <button class="btn ghost" bindtap="contactMatchmaker">联系主理人开通</button>
+  </view>
+
+  <view class="payment-trust">
+    <text>付款完成后，会员权益将在确认成功后自动生效。</text>
+  </view>
+</view>

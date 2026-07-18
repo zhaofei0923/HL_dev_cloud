@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   createLockedRelationshipPreview,
+  isPremiumMembership,
   isPremiumMemberType,
   partitionFavoriteRelationships,
   requiresPremiumForConversation,
@@ -87,6 +88,16 @@ test('recognizes only paid and vip as premium member types', () => {
   assert.equal(isPremiumMemberType('free'), false);
   assert.equal(isPremiumMemberType('no_consumption'), false);
   assert.equal(isPremiumMemberType(''), false);
+});
+
+test('premium entitlement honors expiry while preserving legacy lifetime records', () => {
+  const now = '2026-07-18T00:00:00.000Z';
+  assert.equal(isPremiumMembership({ memberType: 'paid', expireAt: null }, now), true);
+  assert.equal(isPremiumMembership({ memberType: 'vip', expireAt: '' }, now), true);
+  assert.equal(isPremiumMembership({ memberType: 'paid', expireAt: '2026-07-19T00:00:00.000Z' }, now), true);
+  assert.equal(isPremiumMembership({ memberType: 'paid', expireAt: '2026-07-17T23:59:59.000Z' }, now), false);
+  assert.equal(isPremiumMembership({ memberType: 'free', expireAt: null }, now), false);
+  assert.equal(isPremiumMembership({ memberType: 'paid', expireAt: 'invalid' }, now), false);
 });
 
 test('locked relationship preview is synthetic and contains no identity, media, or profile fingerprints', () => {

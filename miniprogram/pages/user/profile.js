@@ -533,6 +533,9 @@ Page({
     goMatchmaker() {
         wx.redirectTo({ url: '/pages/matchmaker/dashboard' });
     },
+    goMembership() {
+        wx.navigateTo({ url: '/pages/user/membership' });
+    },
     logout() {
         wx.removeStorageSync('token');
         wx.removeStorageSync('user');

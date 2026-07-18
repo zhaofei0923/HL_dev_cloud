@@ -35,6 +35,7 @@ const viewsByCollection = new Map(cms.views.map(view => [view.collection, view])
   'hl_salon_events',
   'hl_profiles',
   'hl_members',
+  'hl_membership_plans',
   'hl_registrations',
   'hl_member_matchmaker_requests'
 ].forEach(collectionName => {
@@ -55,6 +56,10 @@ assertRule(
   Array.isArray(cms.protectedCollections) && cms.protectedCollections.includes('hl_counters'),
   'hl_counters must stay protected from operator views.'
 );
+assertRule(
+  cms.protectedCollections.includes('hl_payment_orders'),
+  'hl_payment_orders must stay protected from manual operator edits.'
+);
 
 const requestAuditView = viewsByCollection.get('hl_member_matchmaker_requests');
 assertRule(requestAuditView.manualCmsAllowed === false, 'Member-matchmaker requests must be read-only in CMS.');
@@ -65,9 +70,16 @@ assertRule(
 
 const profileView = viewsByCollection.get('hl_profiles');
 const memberServiceView = viewsByCollection.get('hl_members');
+const membershipPlanView = viewsByCollection.get('hl_membership_plans');
 assertRule(
   Array.isArray(profileView.editableFields) && profileView.editableFields.includes('displayEnabled'),
   'Profile view must expose hl_profiles.displayEnabled as the effective display switch.'
+);
+assertRule(
+  Array.isArray(membershipPlanView.editableFields)
+    && membershipPlanView.editableFields.includes('amountFen')
+    && membershipPlanView.editableFields.includes('durationDays'),
+  'Membership plan view must expose server amount and duration fields.'
 );
 assertRule(
   Array.isArray(memberServiceView.editableFields) && !memberServiceView.editableFields.includes('displayEnabled'),
@@ -86,6 +98,8 @@ assertRule(
   '/admin/dashboard',
   '/admin/matchmakers',
   '/admin/salons',
+  '/admin/membership-plans',
+  '/admin/payment-orders',
   '/matchmaker/member-requests'
 ].forEach(sourceToken => {
   assertRule(apiSource.includes(sourceToken), `hlApi is missing expected workflow token: ${sourceToken}`);
@@ -96,6 +110,7 @@ const actionPaths = preferredActions.map(action => action.path);
 [
   '/admin/matchmakers/{id}/certification',
   '/admin/salons/{id}/review',
+  '/admin/membership-plans/{planCode}',
   '/matchmaker/member-requests/{id}/approve',
   '/matchmaker/member-requests/{id}/reject'
 ].forEach(actionPath => {

@@ -409,25 +409,8 @@ Page({
     wx.navigateTo({ url: `/pages/user/chat?id=${id}` })
   },
 
-  async promptOpenMembership() {
-    if (this.data.conversationLoading) await this.loadConversations({ force: true })
-    const matchmakerConversation = this.data.list.find(
-      row => row.conversationType === 'member_matchmaker'
-    )
-    wx.showModal({
-      title: '开通会员',
-      content: '开通后可查看喜欢你的会员、互相喜欢的人，并开启互选聊天。请联系主理人完成付款和会员开通。',
-      confirmText: matchmakerConversation ? '联系主理人' : '去绑定主理人',
-      cancelText: '稍后',
-      success: res => {
-        if (!res.confirm) return
-        if (matchmakerConversation) {
-          wx.navigateTo({ url: `/pages/user/chat?id=${matchmakerConversation.id}` })
-          return
-        }
-        wx.redirectTo({ url: '/pages/user/profile' })
-      }
-    })
+  promptOpenMembership() {
+    wx.navigateTo({ url: '/pages/user/membership' })
   },
 
   goMembers() {

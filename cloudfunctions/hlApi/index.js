@@ -1,8 +1,20 @@
 const cloud = require('wx-server-sdk');
 const crypto = require('node:crypto');
 const {
+  normalizeWechatPhoneResult,
+  resolveWechatOpenid
+} = require('./auth-policy');
+const {
+  buildMembershipFulfillment,
+  createPendingPaymentOrder,
+  isReusablePaymentOrder,
+  normalizeMembershipPlan,
+  paymentConfirmationMatches,
+  paymentIntegrationConfig
+} = require('./membership-payment-policy');
+const {
   createLockedRelationshipPreview,
-  isPremiumMemberType,
+  isPremiumMembership,
   partitionFavoriteRelationships,
   relationshipNotificationView,
   requiresPremiumForConversation
@@ -29,6 +41,8 @@ const C = {
   chatMessages: 'hl_chat_messages',
   memberInteractions: 'hl_member_interactions',
   giftRecords: 'hl_gift_records',
+  membershipPlans: 'hl_membership_plans',
+  paymentOrders: 'hl_payment_orders',
   counters: 'hl_counters'
 };
 
@@ -363,7 +377,10 @@ function collectionsForPath(path) {
     return [...common, C.matchmakers, C.members, C.memberRequests, C.salonEvents, C.registrations, C.matchRecords, C.messages];
   }
   if (path.startsWith('/member')) {
-    return [...common, C.matchmakers, C.members, C.memberRequests, C.matchRecords, C.salonEvents, C.messages, C.memberInteractions, C.giftRecords];
+    return [...common, C.matchmakers, C.members, C.memberRequests, C.matchRecords, C.salonEvents, C.messages, C.memberInteractions, C.giftRecords, C.membershipPlans, C.paymentOrders];
+  }
+  if (path.startsWith('/internal/payment-orders')) {
+    return [...common, C.members, C.membershipPlans, C.paymentOrders];
   }
   if (path.startsWith('/salon')) {
     return [...common, C.matchmakers, C.members, C.salonEvents, C.registrations, C.messages];
@@ -1611,7 +1628,7 @@ async function activeMemberAssignment(userId) {
 
 async function hasPremiumMemberEntitlement(userId) {
   const rows = await getAll(C.members, { userId: Number(userId), status: 1 }, 100);
-  return rows.some(row => isPremiumMemberType(row.memberType));
+  return rows.some(row => isPremiumMembership(row));
 }
 
 function relationshipType(value) {
@@ -1910,7 +1927,16 @@ const auth = {
   async wxLogin(payload = {}) {
     const wxContext = cloud.getWXContext();
     const { code, nickname, avatarUrl, role, inviteCode } = payload;
-    const openid = wxContext.OPENID || `wx_${code || Date.now()}`;
+    let openid;
+    try {
+      openid = resolveWechatOpenid({
+        wxContext,
+        payload: { code },
+        allowMockLogin: process.env.ALLOW_MOCK_WECHAT_LOGIN === 'true'
+      });
+    } catch (err) {
+      throw createHttpError('微信登录上下文缺失，请通过小程序云环境重试', 401, 40103);
+    }
     let user = await getOne(C.users, { openid });
 
     if (!user) {
@@ -1950,15 +1976,304 @@ const auth = {
     };
   },
 
-  async bindPhone(userId, phone) {
+  async bindWechatPhone(userId, code) {
     const user = await getUserOrThrow(userId);
-    if (!phone) throw createHttpError('phone is required');
+    if (!String(code || '').trim()) throw createHttpError('手机号授权 code 不能为空');
+    if (!cloud.openapi || !cloud.openapi.phonenumber || !cloud.openapi.phonenumber.getPhoneNumber) {
+      throw createHttpError('当前云环境暂不支持微信手机号授权', 503, 50302);
+    }
+    let phoneResult;
+    try {
+      phoneResult = await cloud.openapi.phonenumber.getPhoneNumber({ code: String(code).trim() });
+    } catch (err) {
+      console.warn('wechat phone authorization failed', err);
+      throw createHttpError('手机号授权已失效，请重新授权', 400, 40003);
+    }
+    let phone;
+    try {
+      phone = normalizeWechatPhoneResult(phoneResult);
+    } catch (err) {
+      throw createHttpError(err.message || '未获取到有效手机号', 400, 40003);
+    }
     const existing = await getOne(C.users, { phone });
-    if (existing && existing.id !== user.id) {
-      throw createHttpError('phone already bound', 400, 40002);
+    if (existing && Number(existing.id) !== Number(user.id)) {
+      throw createHttpError('该手机号已绑定其他账号', 400, 40002);
     }
     const updated = await updateRow(C.users, user, { phone });
     return publicUser(updated);
+  }
+};
+
+function paymentOrderNo(id, timestamp = Date.now()) {
+  const date = new Date(timestamp);
+  const datePart = [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0')
+  ].join('');
+  return `HLM${datePart}${String(Number(id)).padStart(10, '0')}`;
+}
+
+function assertPaymentCallbackToken(value) {
+  const configured = String(process.env.PAYMENT_CALLBACK_TOKEN || '').trim();
+  if (configured.length < 32) throw createHttpError('支付回调尚未安全配置', 503, 50301);
+  const supplied = String(value || '');
+  const expectedBuffer = Buffer.from(configured);
+  const suppliedBuffer = Buffer.from(supplied);
+  if (expectedBuffer.length !== suppliedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, suppliedBuffer)) {
+    throw createHttpError('支付内部调用鉴权失败', 403, 40304);
+  }
+}
+
+function publicPaymentOrder(row) {
+  const safe = stripInternal(row) || {};
+  delete safe.payerOpenid;
+  delete safe.memberRecordId;
+  return safe;
+}
+
+function publicMembershipPlan(row) {
+  return normalizeMembershipPlan(row);
+}
+
+async function activeMembershipPlans() {
+  const plans = [];
+  for (const row of await getAll(C.membershipPlans, null, 200)) {
+    try {
+      const normalized = publicMembershipPlan(row);
+      if (normalized.active) plans.push(normalized);
+    } catch (err) {
+      console.warn('skip invalid membership plan', row && row.planCode, err.message);
+    }
+  }
+  return plans.sort((a, b) => b.sortOrder - a.sortOrder || a.amountFen - b.amountFen);
+}
+
+function membershipPaymentAvailability({ config, assignment, user, plans }) {
+  if (!config.available) return { ...config, available: false };
+  if (!assignment) return { ...config, available: false, reason: 'member_assignment_required' };
+  if (!user.phone) return { ...config, available: false, reason: 'phone_required' };
+  if (!plans.length) return { ...config, available: false, reason: 'plans_not_configured' };
+  return config;
+}
+
+const membership = {
+  async overview(userId) {
+    const [user, assignment, plans] = await Promise.all([
+      getUserOrThrow(userId),
+      activeMemberAssignment(userId),
+      activeMembershipPlans()
+    ]);
+    const integration = paymentIntegrationConfig(process.env);
+    const payment = membershipPaymentAvailability({ config: integration, assignment, user, plans });
+    const premium = !!assignment && isPremiumMembership(assignment);
+    const lifetime = !!assignment
+      && isPremiumMembership({ ...assignment, expireAt: null })
+      && (assignment.expireAt === null || assignment.expireAt === undefined || String(assignment.expireAt).trim() === '');
+    return {
+      isPremiumMember: premium,
+      phoneBound: !!user.phone,
+      phoneMasked: user.phone ? `${String(user.phone).slice(0, 3)}****${String(user.phone).slice(-4)}` : '',
+      needsMatchmaker: !assignment,
+      membership: assignment ? {
+        memberType: assignment.memberType || 'free',
+        serviceLevel: assignment.serviceLevel || '',
+        expireAt: assignment.expireAt || null,
+        lifetime
+      } : null,
+      plans,
+      payment
+    };
+  },
+
+  async createOrder(userId, data = {}) {
+    const integration = paymentIntegrationConfig(process.env);
+    if (!integration.available) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
+    const [user, assignment] = await Promise.all([
+      getUserOrThrow(userId),
+      activeMemberAssignment(userId)
+    ]);
+    if (!assignment) throw createHttpError('请先绑定主理人后再开通会员', 409, 40903);
+    if (!user.phone) throw createHttpError('付款前请先授权微信手机号', 400, 40003);
+    const payerOpenid = String(user.openid || '').trim();
+    if (!payerOpenid || /^(manual_|seed-|mock_)/.test(payerOpenid)) {
+      throw createHttpError('当前账号不是可支付的微信登录账号', 409, 40904);
+    }
+    const planCode = String(data.planCode || '').trim().toLowerCase();
+    const planRow = await getOne(C.membershipPlans, { planCode });
+    if (!planRow) throw createHttpError('会员套餐不存在', 404, 40400);
+    let plan;
+    try {
+      plan = normalizeMembershipPlan(planRow, { requireActive: true });
+    } catch (err) {
+      throw createHttpError(err.message || '会员套餐不可用', 400, 40001);
+    }
+
+    const timestamp = nowIso();
+    const reusableOrder = (await getAll(C.paymentOrders, { userId: Number(userId) }, 100))
+      .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
+      .find(row => isReusablePaymentOrder(row, plan, timestamp));
+    if (reusableOrder) {
+      return {
+        order: publicPaymentOrder(reusableOrder),
+        payment: integration
+      };
+    }
+
+    const id = await nextId('paymentOrder');
+    const order = createPendingPaymentOrder({
+      id,
+      outTradeNo: paymentOrderNo(id),
+      userId,
+      memberRecordId: assignment.id,
+      payerOpenid,
+      plan,
+      now: timestamp
+    });
+    const saved = await addRow(C.paymentOrders, order);
+    return {
+      order: publicPaymentOrder(saved),
+      payment: integration
+    };
+  },
+
+  async getOrder(userId, outTradeNo) {
+    const row = await getOne(C.paymentOrders, {
+      outTradeNo: String(outTradeNo || ''),
+      userId: Number(userId)
+    });
+    if (!row) throw createHttpError('支付订单不存在', 404, 40400);
+    return publicPaymentOrder(row);
+  },
+
+  async internalCheckout(data = {}) {
+    assertPaymentCallbackToken(data.callbackToken);
+    const integration = paymentIntegrationConfig(process.env);
+    if (!integration.available) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
+    let order = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
+    if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+    if (!['pending', 'confirming'].includes(String(order.status))) {
+      throw createHttpError('支付订单状态不可下单', 409, 40905);
+    }
+    if (String(order.status) === 'pending') {
+      order = await updateRow(C.paymentOrders, order, {
+        status: 'confirming',
+        checkoutAt: nowIso()
+      });
+    }
+    return {
+      outTradeNo: order.outTradeNo,
+      description: order.planTitle,
+      amountFen: Number(order.amountFen),
+      payerOpenid: order.payerOpenid,
+      userId: Number(order.userId)
+    };
+  },
+
+  async confirmPayment(data = {}) {
+    assertPaymentCallbackToken(data.callbackToken);
+    const transactionId = String(data.transactionId || '').trim();
+    if (!/^[a-zA-Z0-9_-]{8,64}$/.test(transactionId)) throw createHttpError('微信支付交易号无效');
+    const existingOrder = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
+    if (!existingOrder) throw createHttpError('支付订单不存在', 404, 40400);
+    const existingMember = await getById(C.members, existingOrder.memberRecordId);
+    if (!existingMember || Number(existingMember.userId) !== Number(existingOrder.userId)) {
+      throw createHttpError('支付订单的会员关系不存在', 409, 40906);
+    }
+
+    const result = await db.runTransaction(async transaction => {
+      const orderRef = transaction.collection(C.paymentOrders).doc(existingOrder._id);
+      const memberRef = transaction.collection(C.members).doc(existingMember._id);
+      const [orderSnapshot, memberSnapshot] = await Promise.all([orderRef.get(), memberRef.get()]);
+      const currentOrder = orderSnapshot && orderSnapshot.data;
+      const currentMember = memberSnapshot && memberSnapshot.data;
+      if (!currentOrder || !currentMember) throw createHttpError('支付订单数据不存在', 409, 40906);
+      if (!paymentConfirmationMatches(currentOrder, data)) {
+        throw createHttpError('支付回调与订单不匹配', 409, 40907);
+      }
+      if (String(currentOrder.status) === 'paid') {
+        if (currentOrder.transactionId && currentOrder.transactionId !== transactionId) {
+          throw createHttpError('支付订单交易号冲突', 409, 40908);
+        }
+        return { order: currentOrder, member: currentMember, idempotent: true };
+      }
+      if (!['pending', 'confirming'].includes(String(currentOrder.status))) {
+        throw createHttpError('支付订单状态不可确认', 409, 40905);
+      }
+
+      const timestamp = nowIso();
+      const successTime = new Date(data.successTime || '').getTime();
+      const entitlement = buildMembershipFulfillment({
+        member: currentMember,
+        durationDays: Number(currentOrder.durationDays),
+        now: timestamp
+      });
+      const memberPatch = {
+        ...entitlement,
+        membershipPaidAt: timestamp,
+        lastPaymentOrderNo: currentOrder.outTradeNo,
+        updatedAt: timestamp
+      };
+      const orderPatch = {
+        status: 'paid',
+        transactionId,
+        paidAt: Number.isFinite(successTime) ? new Date(successTime).toISOString() : timestamp,
+        callbackReceivedAt: timestamp,
+        updatedAt: timestamp
+      };
+      await memberRef.update(memberPatch);
+      await orderRef.update(orderPatch);
+      return {
+        order: { ...currentOrder, ...orderPatch },
+        member: { ...currentMember, ...memberPatch },
+        idempotent: false
+      };
+    });
+
+    return {
+      order: publicPaymentOrder(result.order),
+      membership: {
+        memberType: result.member.memberType,
+        expireAt: result.member.expireAt || null
+      },
+      idempotent: result.idempotent
+    };
+  },
+
+  async listPlansForAdmin(filters = {}) {
+    let rows = await getAll(C.membershipPlans, null, 500);
+    if (filters.active !== undefined && filters.active !== '') {
+      rows = rows.filter(row => isTrue(row.active) === isTrue(filters.active));
+    }
+    return paginate(rows.map(stripInternal).sort((a, b) => Number(b.sortOrder || 0) - Number(a.sortOrder || 0)), filters.page, filters.pageSize);
+  },
+
+  async upsertPlan(planCode, data = {}) {
+    const normalizedCode = String(planCode || '').trim().toLowerCase();
+    const existing = await getOne(C.membershipPlans, { planCode: normalizedCode });
+    let plan;
+    try {
+      plan = normalizeMembershipPlan({
+        ...(existing || {}),
+        ...data,
+        planCode: normalizedCode,
+        active: data.active !== undefined ? data.active : (existing ? existing.active : false)
+      });
+    } catch (err) {
+      throw createHttpError(err.message || '会员套餐配置无效');
+    }
+    if (existing) return stripInternal(await updateRow(C.membershipPlans, existing, plan));
+    return stripInternal(await addRow(C.membershipPlans, {
+      id: await nextId('membershipPlan'),
+      ...plan
+    }));
+  },
+
+  async listOrdersForAdmin(filters = {}) {
+    let rows = await getAll(C.paymentOrders, null, 2000);
+    if (filters.status) rows = rows.filter(row => String(row.status) === String(filters.status));
+    if (filters.userId) rows = rows.filter(row => Number(row.userId) === Number(filters.userId));
+    return paginate(rows.map(publicPaymentOrder).sort((a, b) => Number(b.id || 0) - Number(a.id || 0)), filters.page, filters.pageSize);
   }
 };
 
@@ -2977,6 +3292,12 @@ exports.main = async (event = {}) => {
     await ensureSeed();
     if (method === 'POST' && path === '/auth/wx-login') return ok(await auth.wxLogin(data));
     if (method === 'POST' && path === '/admin/login') return ok(await admin.login(data.code));
+    if (method === 'POST' && path === '/internal/payment-orders/checkout') {
+      return ok(await membership.internalCheckout(data));
+    }
+    if (method === 'POST' && path === '/internal/payment-orders/confirm') {
+      return ok(await membership.confirmPayment(data));
+    }
 
     if (path.startsWith('/admin/')) {
       requireAdmin(apiToken);
@@ -2991,12 +3312,20 @@ exports.main = async (event = {}) => {
       if (adminSalonReviewMatch && method === 'POST') return ok(await admin.reviewSalon(adminSalonReviewMatch[1], data.status, data.remark || ''));
       const adminSalonCancelMatch = path.match(/^\/admin\/salons\/(\d+)\/cancel$/);
       if (adminSalonCancelMatch && method === 'PUT') return ok(await admin.cancelSalon(adminSalonCancelMatch[1]));
+      if (method === 'GET' && path === '/admin/membership-plans') return ok(await membership.listPlansForAdmin(data));
+      const adminMembershipPlanMatch = path.match(/^\/admin\/membership-plans\/([a-zA-Z0-9_-]+)$/);
+      if (adminMembershipPlanMatch && method === 'PUT') {
+        return ok(await membership.upsertPlan(adminMembershipPlanMatch[1], data));
+      }
+      if (method === 'GET' && path === '/admin/payment-orders') return ok(await membership.listOrdersForAdmin(data));
       throw createHttpError('not found', 404, 40400);
     }
 
     const session = requireUser(apiToken);
 
-    if (method === 'POST' && path === '/auth/bind-phone') return ok(await auth.bindPhone(session.userId, data.phone));
+    if (method === 'POST' && path === '/auth/wechat-phone') {
+      return ok(await auth.bindWechatPhone(session.userId, data.code));
+    }
     if (method === 'GET' && path === '/user/profile') {
       const user = await getUserOrThrow(session.userId);
       const profile = await getOne(C.profiles, { userId: Number(session.userId) });
@@ -3048,6 +3377,12 @@ exports.main = async (event = {}) => {
     if (method === 'GET' && path === '/member/resources') return ok(await member.resources(session.userId, data));
     if (method === 'GET' && path === '/member/showcase') return ok(await member.showcase(session.userId, data));
     if (method === 'GET' && path === '/member/gifts') return ok(await member.gifts());
+    if (method === 'GET' && path === '/member/membership-plans') return ok(await membership.overview(session.userId));
+    if (method === 'POST' && path === '/member/payment-orders') return ok(await membership.createOrder(session.userId, data));
+    const paymentOrderMatch = path.match(/^\/member\/payment-orders\/([a-zA-Z0-9_-]+)$/);
+    if (paymentOrderMatch && method === 'GET') {
+      return ok(await membership.getOrder(session.userId, paymentOrderMatch[1]));
+    }
     if (method === 'GET' && path === '/member/relationships') return ok(await member.relationships(session.userId, data));
     if (method === 'GET' && path === '/member/liked-me') return ok(await member.likedMe(session.userId, data));
     if (method === 'POST' && path === '/member/interactions') return ok(await member.interact(session.userId, data));

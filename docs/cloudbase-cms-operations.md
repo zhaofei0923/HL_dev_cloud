@@ -8,7 +8,7 @@
 - 云函数：`hlApi`
 - 版本化视图清单：`docs/cloudbase-cms-views.json`
 - CloudBase 角色：`运营人员` / `hl_operator` / `2064514415116599298`
-- 管理接口登录：`POST /admin/login`，管理员码来自云函数环境变量 `ADMIN_CODE`，未配置时默认为 `HLADMIN`
+- 管理接口登录：`POST /admin/login`，管理员码来自云函数环境变量 `ADMIN_CODE`。当前兼容逻辑未配置时会使用 `HLADMIN`，生产环境必须显式配置高强度管理员码。
 
 产品和运营界面统一使用“主理人”称呼；CMS 集合、字段和接口仍保留 `matchmaker` 技术标识，以兼容已发布小程序和存量数据。运营人员不得因显示称呼变化而重命名集合或字段。
 
@@ -52,6 +52,14 @@
 - 运营动作：补齐资料、调整会员类型和服务等级、协助关闭/开启展示。公开展示只看 `hl_profiles.displayEnabled`；`displayEnabled = true` 后，会员才会进入公开会员浏览和主理人资源池。
 - 注意：新增会员关系、主理人通过会员申请、微信注册链接自动注册、会员互推应走小程序或云函数，不建议在 CMS 手工新增联动记录。
 
+### 会员套餐管理 `hl_membership_plans`
+
+- 可编辑：`title`、`description`、`badge`、`amountFen`、`durationDays`、`active`、`sortOrder`。
+- 只读：`id`、`planCode`、`createdAt`、`updatedAt`。
+- 金额：`amountFen` 以分为单位；有效期：`durationDays` 以天为单位。
+- 推荐动作：调用 `PUT /admin/membership-plans/:planCode` 保存套餐。新套餐默认保持未启用，核对金额和期限后再设置 `active = true`。
+- 支付订单会固化下单时的套餐名称、金额和期限。之后修改套餐不影响既有订单。
+
 ### 报名管理 `hl_registrations`
 
 - 可编辑：`status`、`checkedInAt`。
@@ -68,11 +76,12 @@
 
 ## 隐藏字段和保护集合
 
-运营视图应隐藏 `openid`、`_id`、`_openid`、`token`、`refreshToken`。`hl_counters` 是系统计数集合，不开放给运营人员。上述字段和集合只允许开发者排障时查看。
+运营视图应隐藏 `openid`、`_id`、`_openid`、`token`、`refreshToken`。`hl_counters` 和 `hl_payment_orders` 是受保护集合，不允许运营人员手工新增、修改或删除。支付订单只通过 `/admin/payment-orders` 查询，状态只允许经已验签的支付回调更新。
 
 ## 必须通过云函数或小程序处理的动作
 
-- 用户登录、登录态刷新、手机号绑定。
+- 用户登录、登录态刷新、微信手机号动态 code 换号。
+- 会员支付下单、支付结果确认和会员有效期顺延。
 - 主理人申请提交、重新提交和管理员认证审核。
 - 会员添加主理人申请、主理人通过/拒绝申请。
 - 会员展示开关保存。
@@ -89,3 +98,5 @@
 - 后台通过沙龙审核后，确认用户端活动列表可见且可报名。
 - 用户报名和取消报名后，检查 `hl_registrations` 与 `hl_salon_events.currentParticipants` 一致。
 - 会员申请添加主理人时，确认只有主理人端审批会同步写入 `hl_members` 和 `hl_messages`。
+- 配置会员套餐时，确认 `amountFen` 使用分、`durationDays` 使用天；支付订单金额与套餐服务端金额一致。
+- 重复发送同一笔已验签支付回调时，确认会员有效期只顺延一次。

@@ -36,6 +36,27 @@
   margin-top: -2rpx;
 }
 
+.membership-entry {
+  display: flex;
+  gap: 18rpx;
+  align-items: center;
+}
+
+.membership-entry-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.membership-entry-chevron {
+  flex: 0 0 auto;
+  width: 18rpx;
+  height: 18rpx;
+  margin-right: 6rpx;
+  border-top: 4rpx solid #b4814f;
+  border-right: 4rpx solid #b4814f;
+  transform: rotate(45deg);
+}
+
 .privacy-row,
 .matchmaker-request-row {
   display: flex;

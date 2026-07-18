@@ -38,6 +38,14 @@
     <text class="section-note">{{completionNote}}</text>
   </view>
 
+  <view class="card membership-entry" bindtap="goMembership" aria-role="button" aria-label="查看会员权益">
+    <view class="membership-entry-copy">
+      <text class="section-title">会员权益</text>
+      <text class="section-note">查看会员状态，解锁心动关系与互选聊天。</text>
+    </view>
+    <view class="membership-entry-chevron"></view>
+  </view>
+
   <view class="card privacy-card">
     <view class="privacy-row">
       <view class="privacy-copy">

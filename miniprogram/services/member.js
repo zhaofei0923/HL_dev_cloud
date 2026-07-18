@@ -18,6 +18,20 @@ exports.memberApi = {
     relationships(data) {
         return (0, api_1.request)('/member/relationships', { data });
     },
+    membershipOverview() {
+        return (0, api_1.request)('/member/membership-plans');
+    },
+    createMembershipOrder(planCode) {
+        return (0, api_1.request)('/member/payment-orders', {
+            method: 'POST',
+            data: { planCode }
+        });
+    },
+    membershipOrder(outTradeNo) {
+        return (0, api_1.request)(`/member/payment-orders/${outTradeNo}`, {
+            showError: false
+        });
+    },
     gifts() {
         return (0, api_1.request)('/member/gifts');
     },

@@ -58,6 +58,60 @@ export type RelationshipResult = {
   previewCount?: number
 }
 
+export type MembershipPlan = {
+  planCode: string
+  title: string
+  description: string
+  badge: string
+  amountFen: number
+  priceText: string
+  durationDays: number
+  active: boolean
+  sortOrder: number
+}
+
+export type MembershipPaymentConfig = {
+  available: boolean
+  reason: string
+  functionName: string
+  createPath: string
+}
+
+export type MembershipOverview = {
+  isPremiumMember: boolean
+  phoneBound: boolean
+  phoneMasked: string
+  needsMatchmaker: boolean
+  membership: null | {
+    memberType: string
+    serviceLevel: string
+    expireAt: string | null
+    lifetime: boolean
+  }
+  plans: MembershipPlan[]
+  payment: MembershipPaymentConfig
+}
+
+export type MembershipPaymentOrder = {
+  id: number
+  outTradeNo: string
+  userId: number
+  planCode: string
+  planTitle: string
+  amountFen: number
+  durationDays: number
+  status: 'pending' | 'confirming' | 'paid' | 'closed' | 'failed' | 'refunded'
+  transactionId?: string
+  paidAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type MembershipOrderCheckout = {
+  order: MembershipPaymentOrder
+  payment: MembershipPaymentConfig
+}
+
 export const memberApi = {
   list(data?: Record<string, any>) {
     return request('/member/list', { data })
@@ -73,6 +127,20 @@ export const memberApi = {
   },
   relationships(data?: Record<string, unknown>) {
     return request<RelationshipResult>('/member/relationships', { data })
+  },
+  membershipOverview() {
+    return request<MembershipOverview>('/member/membership-plans')
+  },
+  createMembershipOrder(planCode: string) {
+    return request<MembershipOrderCheckout>('/member/payment-orders', {
+      method: 'POST',
+      data: { planCode }
+    })
+  },
+  membershipOrder(outTradeNo: string) {
+    return request<MembershipPaymentOrder>(`/member/payment-orders/${outTradeNo}`, {
+      showError: false
+    })
   },
   gifts() {
     return request('/member/gifts')

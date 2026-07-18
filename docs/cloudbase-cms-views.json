@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "envId": "cloud1-d2gza7q9c8d69c721",
   "cloudFunction": "hlApi",
   "roles": [
@@ -27,7 +27,8 @@
     "refreshToken"
   ],
   "protectedCollections": [
-    "hl_counters"
+    "hl_counters",
+    "hl_payment_orders"
   ],
   "statusDictionary": {
     "matchmakerCertificationStatus": [
@@ -289,6 +290,53 @@
         "新增会员关系应走小程序或云函数，不建议在 CMS 手工新增 hl_members。",
         "公开展示开关只在 hl_profiles.displayEnabled 生效，不要在 hl_members 上维护展示状态。",
         "变更 status 前先确认不会影响主理人端会员池展示。"
+      ]
+    },
+    {
+      "id": "membership-plan-management",
+      "name": "会员套餐管理",
+      "collection": "hl_membership_plans",
+      "purpose": "配置付费会员套餐、服务端金额和有效期。",
+      "editableFields": [
+        "title",
+        "description",
+        "badge",
+        "amountFen",
+        "durationDays",
+        "active",
+        "sortOrder"
+      ],
+      "readonlyFields": [
+        "id",
+        "planCode",
+        "createdAt",
+        "updatedAt"
+      ],
+      "hiddenFields": [
+        "_id",
+        "_openid"
+      ],
+      "preferredActions": [
+        {
+          "name": "保存会员套餐",
+          "method": "PUT",
+          "path": "/admin/membership-plans/{planCode}",
+          "body": {
+            "title": "三个月会员",
+            "description": "解锁心动关系资料与互选聊天",
+            "badge": "推荐",
+            "amountFen": 29900,
+            "durationDays": 90,
+            "active": false,
+            "sortOrder": 10
+          }
+        }
+      ],
+      "manualCmsAllowed": true,
+      "warnings": [
+        "amountFen 单位为分，durationDays 单位为天。",
+        "新套餐应先保持 active = false，确认金额和期限后再启用。",
+        "客户端金额不参与下单，订单只使用这里保存的服务端金额。"
       ]
     },
     {

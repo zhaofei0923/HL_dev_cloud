@@ -1,0 +1,329 @@
+.membership-page {
+  padding-top: 20rpx;
+  padding-bottom: 48rpx;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.membership-hero {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18rpx;
+  padding: 30rpx;
+  border-radius: 16rpx;
+  background: #2f2925;
+  color: #fffdf8;
+  box-shadow: 0 14rpx 34rpx rgba(36, 31, 27, 0.16);
+}
+
+.membership-hero.active {
+  background: #304f45;
+}
+
+.membership-hero .eyebrow {
+  color: #d8b17e;
+}
+
+.membership-hero-copy {
+  min-width: 0;
+}
+
+.membership-title,
+.membership-expiry,
+.benefit-name,
+.benefit-note {
+  display: block;
+}
+
+.membership-title {
+  font-size: 40rpx;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.membership-expiry {
+  margin-top: 10rpx;
+  color: rgba(255, 253, 248, 0.72);
+  font-size: 23rpx;
+  line-height: 1.5;
+}
+
+.membership-state {
+  align-self: start;
+  padding: 8rpx 16rpx;
+  border: 1rpx solid rgba(255, 253, 248, 0.24);
+  border-radius: 999rpx;
+  color: #f1d2a4;
+  font-size: 21rpx;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.benefit-strip {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 8rpx;
+  border-top: 1rpx solid rgba(255, 253, 248, 0.16);
+}
+
+.benefit-item {
+  min-width: 0;
+  padding-top: 22rpx;
+}
+
+.benefit-item + .benefit-item {
+  padding-left: 24rpx;
+  border-left: 1rpx solid rgba(255, 253, 248, 0.16);
+}
+
+.benefit-name {
+  font-size: 27rpx;
+  font-weight: 800;
+}
+
+.benefit-item.incoming .benefit-name {
+  color: #e9a39f;
+}
+
+.benefit-item.mutual .benefit-name {
+  color: #a9d0c0;
+}
+
+.benefit-note {
+  margin-top: 6rpx;
+  color: rgba(255, 253, 248, 0.68);
+  font-size: 21rpx;
+  line-height: 1.4;
+}
+
+.membership-section {
+  display: flex;
+  gap: 22rpx;
+  align-items: center;
+  justify-content: space-between;
+  padding: 30rpx 4rpx;
+  border-bottom: 1rpx solid rgba(151, 119, 82, 0.18);
+}
+
+.section-copy {
+  min-width: 0;
+}
+
+.phone-state,
+.compact-command {
+  flex: 0 0 auto;
+}
+
+.phone-state {
+  color: #3e6758;
+  font-size: 24rpx;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.compact-command,
+.text-command {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: #963b35;
+  font-size: 24rpx;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.compact-command {
+  padding: 14rpx 18rpx;
+  border: 1rpx solid rgba(150, 59, 53, 0.28);
+  border-radius: 10rpx;
+}
+
+.compact-command::after,
+.text-command::after {
+  border: 0;
+}
+
+.plan-section {
+  display: block;
+}
+
+.plan-list {
+  margin-top: 22rpx;
+}
+
+.plan-row {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 34rpx minmax(0, 1fr) auto;
+  gap: 18rpx;
+  align-items: center;
+  min-height: 126rpx;
+  padding: 22rpx 20rpx;
+  border: 1rpx solid rgba(151, 119, 82, 0.18);
+  border-radius: 14rpx;
+  background: #fffdf8;
+}
+
+.plan-row + .plan-row {
+  margin-top: 14rpx;
+}
+
+.plan-row.selected {
+  border-color: rgba(180, 129, 79, 0.72);
+  box-shadow: inset 0 0 0 1rpx rgba(180, 129, 79, 0.26);
+}
+
+.plan-selector {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30rpx;
+  height: 30rpx;
+  border: 2rpx solid rgba(116, 94, 77, 0.48);
+  border-radius: 50%;
+}
+
+.selector-dot {
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.plan-row.selected .plan-selector {
+  border-color: #b4814f;
+}
+
+.plan-row.selected .selector-dot {
+  background: #b4814f;
+}
+
+.plan-copy {
+  min-width: 0;
+}
+
+.plan-title-row {
+  display: flex;
+  gap: 10rpx;
+  align-items: center;
+}
+
+.plan-title {
+  color: #241f1b;
+  font-size: 28rpx;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.plan-badge {
+  padding: 4rpx 10rpx;
+  border-radius: 8rpx;
+  background: rgba(150, 59, 53, 0.1);
+  color: #963b35;
+  font-size: 19rpx;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.plan-description {
+  display: block;
+  margin-top: 8rpx;
+  color: #736256;
+  font-size: 21rpx;
+  line-height: 1.4;
+}
+
+.plan-price {
+  min-width: 118rpx;
+  text-align: right;
+}
+
+.price-value,
+.price-duration {
+  display: block;
+  white-space: nowrap;
+}
+
+.price-value {
+  color: #963b35;
+  font-size: 30rpx;
+  font-weight: 800;
+}
+
+.price-duration {
+  margin-top: 6rpx;
+  color: #866b52;
+  font-size: 20rpx;
+}
+
+.empty-state {
+  margin-top: 22rpx;
+  padding: 40rpx 20rpx;
+  border: 1rpx dashed rgba(151, 119, 82, 0.28);
+  border-radius: 14rpx;
+  color: #866b52;
+  font-size: 24rpx;
+  text-align: center;
+}
+
+.membership-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 14rpx;
+  margin-top: 28rpx;
+}
+
+.membership-actions .btn {
+  width: 100%;
+  margin: 0;
+}
+
+.pay-command {
+  background: #963b35;
+}
+
+.payment-trust,
+.notice {
+  color: #736256;
+  font-size: 21rpx;
+  line-height: 1.55;
+}
+
+.payment-trust {
+  padding: 22rpx 8rpx 0;
+  text-align: center;
+}
+
+.notice {
+  display: flex;
+  gap: 16rpx;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 12rpx;
+}
+
+.error-notice {
+  background: rgba(150, 59, 53, 0.08);
+  color: #7f302c;
+}
+
+@media (max-width: 340px) {
+  .membership-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-row {
+    grid-template-columns: 30rpx minmax(0, 1fr);
+  }
+
+  .plan-price {
+    grid-column: 2;
+    min-width: 0;
+    text-align: left;
+  }
+}

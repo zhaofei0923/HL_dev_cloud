@@ -71,6 +71,14 @@ function isPremiumMemberType(value) {
   return PREMIUM_MEMBER_TYPES.has(String(value || '').trim().toLowerCase());
 }
 
+function isPremiumMembership(row = {}, now = new Date()) {
+  if (!isPremiumMemberType(row.memberType)) return false;
+  if (row.expireAt === null || row.expireAt === undefined || String(row.expireAt).trim() === '') return true;
+  const expireAt = new Date(row.expireAt).getTime();
+  const referenceTime = new Date(now).getTime();
+  return Number.isFinite(expireAt) && Number.isFinite(referenceTime) && expireAt > referenceTime;
+}
+
 function requiresPremiumForConversation(conversation = {}) {
   return String(conversation.conversationType || '') === 'member_pair'
     && String(conversation.chatOpenReason || '') === 'mutual_favorite'
@@ -135,6 +143,7 @@ function relationshipNotificationView({ row = {}, sender = null, conversationId 
 
 module.exports = {
   createLockedRelationshipPreview,
+  isPremiumMembership,
   isPremiumMemberType,
   partitionFavoriteRelationships,
   relationshipNotificationView,
