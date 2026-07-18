@@ -47,7 +47,7 @@
         <text class="section-title">邀请注册会员</text>
         <text class="section-note">微信好友点分享卡片后，会注册为你的免费会员；扫码和手动邀请码仍走添加申请。</text>
       </view>
-      <text class="tag gold">{{inviteCard.inviteCodeStatus || 'active'}}</text>
+      <text class="tag gold">{{inviteCard.inviteCodeStatus === 'inactive' ? '已失效' : '有效'}}</text>
     </view>
     <view class="invite-panel">
       <view class="invite-code-box">
