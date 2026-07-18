@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
+    "test": "node --test tests/*.test.js",
     "build:miniprogram": "npx -y -p typescript@5.4.5 tsc --project tsconfig.json && node scripts/sync-wxss.mjs",
     "check:admin-workflows": "node scripts/verify-admin-workflows.mjs",
-    "check": "npx -y -p typescript@5.4.5 tsc --noEmit --project tsconfig.json && node --check cloudfunctions/hlApi/index.js && node scripts/verify-admin-workflows.mjs"
+    "check": "npm test && npx -y -p typescript@5.4.5 tsc --noEmit --project tsconfig.json && node --check cloudfunctions/hlApi/index.js && node --check cloudfunctions/hlApi/relationship-policy.js && node scripts/verify-admin-workflows.mjs"
   },
   "keywords": [],
   "author": "",

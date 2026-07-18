@@ -15,6 +15,9 @@ exports.memberApi = {
     likedMe(data) {
         return (0, api_1.request)('/member/liked-me', { data });
     },
+    relationships(data) {
+        return (0, api_1.request)('/member/relationships', { data });
+    },
     gifts() {
         return (0, api_1.request)('/member/gifts');
     },

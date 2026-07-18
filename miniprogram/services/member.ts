@@ -31,6 +31,33 @@ export type LikedMeResult = {
   previewCount?: number
 }
 
+export type RelationshipKind = 'incoming' | 'mutual'
+
+export type RelationshipItem = LikedMeItem & {
+  relationshipType?: RelationshipKind
+  relationshipAt?: string
+  canRespond?: boolean
+  canChat?: boolean
+}
+
+export type RelationshipCounts = {
+  incoming: number
+  mutual: number
+}
+
+export type RelationshipResult = {
+  type: RelationshipKind
+  counts: RelationshipCounts
+  total: number
+  page: number
+  pageSize: number
+  list: RelationshipItem[]
+  isPremiumMember: boolean
+  unlockRequired: boolean
+  unlockText?: string
+  previewCount?: number
+}
+
 export const memberApi = {
   list(data?: Record<string, any>) {
     return request('/member/list', { data })
@@ -43,6 +70,9 @@ export const memberApi = {
   },
   likedMe(data?: Record<string, unknown>) {
     return request<LikedMeResult>('/member/liked-me', { data })
+  },
+  relationships(data?: Record<string, unknown>) {
+    return request<RelationshipResult>('/member/relationships', { data })
   },
   gifts() {
     return request('/member/gifts')

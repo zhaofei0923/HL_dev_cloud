@@ -3,7 +3,7 @@ import { ChatParticipant } from './chat'
 
 export type NotificationMessage = {
   id: number
-  senderId: number
+  senderId?: number
   receiverId: number
   contentType: string
   messageType?: string
@@ -12,6 +12,7 @@ export type NotificationMessage = {
   targetMemberId?: number | string
   conversationId?: number | null
   canChat?: boolean
+  locked: boolean
   isRead: boolean
   hasUnread: boolean
   createdAt: string

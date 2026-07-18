@@ -1,6 +1,11 @@
 import { chatApi, ChatConversation } from '../../services/chat'
 import { memberApi } from '../../services/member'
-import type { LikedMeItem } from '../../services/member'
+import type {
+  RelationshipCounts,
+  RelationshipItem,
+  RelationshipKind,
+  RelationshipResult
+} from '../../services/member'
 import { defaultAvatar, normalizeMemberProfile } from '../../utils/member-format'
 
 type ConversationItem = ChatConversation & {
@@ -12,7 +17,7 @@ type ConversationItem = ChatConversation & {
   typeText: string
 }
 
-type LikedMeCard = {
+type RelationshipCard = {
   id: string
   userId: number
   displayName: string
@@ -21,13 +26,16 @@ type LikedMeCard = {
   metaText: string
   hint: string
   tags: string[]
+  kind: RelationshipKind
   locked: boolean
   canViewDetail: boolean
+  canRespond: boolean
+  canChat: boolean
   coverToneClass: string
-  raw: LikedMeItem | null
+  raw: RelationshipItem | null
 }
 
-type NormalizedLikedMember = {
+type NormalizedRelationshipMember = {
   id?: string | number
   displayName?: string
   avatarUrl?: string
@@ -38,6 +46,21 @@ type NormalizedLikedMember = {
   occupationText?: string
   highlightTags?: string[]
 }
+
+type RelationshipLoadOptions = {
+  expanded?: boolean
+  append?: boolean
+  allowAutoSelect?: boolean
+  force?: boolean
+}
+
+type ConversationLoadOptions = {
+  force?: boolean
+}
+
+const EMPTY_COUNTS: RelationshipCounts = { incoming: 0, mutual: 0 }
+let conversationRequestSerial = 0
+let relationshipRequestSerial = 0
 
 function pad(value: number) {
   return value < 10 ? `0${value}` : String(value)
@@ -75,27 +98,38 @@ function compactStrings(values: Array<string | number | null | undefined>) {
   return values.map(value => String(value || '').trim()).filter(Boolean)
 }
 
-function normalizeLikedMeItem(row: LikedMeItem, index: number): LikedMeCard {
+function normalizeRelationshipItem(
+  row: RelationshipItem,
+  index: number,
+  kind: RelationshipKind
+): RelationshipCard {
   const locked = row.locked === true || row.blurred === true
   if (locked) {
     const tags = compactStrings(row.tags || []).slice(0, 3)
     return {
-      id: String(row.id || `locked_${index + 1}`),
+      id: String(row.id || `locked_${kind}_${index + 1}`),
       userId: 0,
-      displayName: row.displayName || `第 ${index + 1} 位喜欢你的人`,
+      displayName: row.displayName || (kind === 'mutual'
+        ? `第 ${index + 1} 位与你互相喜欢的人`
+        : `第 ${index + 1} 位喜欢你的人`),
       avatarUrl: '',
       coverUrl: '',
       metaText: row.metaText || tags.join(' · ') || '有会员对你感兴趣',
-      hint: row.hint || '开通后查看完整资料',
+      hint: row.hint || (kind === 'mutual' ? '你们已经互相喜欢' : '等待你的回应'),
       tags: tags.length ? tags : ['资料完整'],
+      kind,
       locked: true,
       canViewDetail: false,
+      canRespond: false,
+      canChat: false,
       coverToneClass: `tone-${Number(row.coverTone || index) % 4}`,
       raw: null
     }
   }
 
-  const profile = normalizeMemberProfile(row as unknown as Parameters<typeof normalizeMemberProfile>[0]) as NormalizedLikedMember
+  const profile = normalizeMemberProfile(
+    row as unknown as Parameters<typeof normalizeMemberProfile>[0]
+  ) as NormalizedRelationshipMember
   const tags = compactStrings(profile.highlightTags || row.highlightTags || row.tags || []).slice(0, 3)
   return {
     id: String(profile.id || row.id || row.userId || index),
@@ -104,10 +138,15 @@ function normalizeLikedMeItem(row: LikedMeItem, index: number): LikedMeCard {
     avatarUrl: profile.avatarUrl || defaultAvatar(row),
     coverUrl: profile.coverUrl || profile.avatarUrl || defaultAvatar(row),
     metaText: profile.metaText || profile.workText || '资料已完善',
-    hint: row.hint || (row.likedAt ? `${formatTime(row.likedAt)} 喜欢了你` : '喜欢了你'),
+    hint: kind === 'mutual'
+      ? '你们已经互相喜欢'
+      : (row.likedAt ? `${formatTime(row.likedAt)} 喜欢了你` : '喜欢了你'),
     tags: tags.length ? tags : compactStrings([profile.cityText, profile.occupationText]).slice(0, 3),
+    kind,
     locked: false,
     canViewDetail: row.canViewDetail !== false,
+    canRespond: kind === 'incoming' && row.canRespond !== false,
+    canChat: kind === 'mutual' && row.canChat !== false,
     coverToneClass: '',
     raw: row
   }
@@ -116,12 +155,22 @@ function normalizeLikedMeItem(row: LikedMeItem, index: number): LikedMeCard {
 Page({
   data: {
     list: [] as ConversationItem[],
-    likedMeList: [] as LikedMeCard[],
     total: 0,
-    likedMeTotal: 0,
-    likedMePreviewCount: 0,
+    conversationLoading: false,
+    relationshipType: 'incoming' as RelationshipKind,
+    relationshipItems: [] as RelationshipCard[],
+    relationshipCounts: { ...EMPTY_COUNTS } as RelationshipCounts,
+    relationshipTotal: 0,
+    relationshipPage: 1,
+    relationshipPageSize: 2,
+    relationshipExpanded: false,
+    relationshipHasMore: false,
+    relationshipLoading: false,
+    relationshipError: '',
+    relationshipInitialized: false,
     isPremiumMember: false,
-    loading: false,
+    respondingId: '',
+    chatStartingId: '',
     emptyTitle: '暂无消息',
     emptyNote: '和红娘建立服务关系，或由红娘发起配对后，这里会出现会话。'
   },
@@ -132,59 +181,162 @@ Page({
       wx.redirectTo({ url: '/pages/index/index' })
       return
     }
-    this.load()
+    const initial = !this.data.relationshipInitialized
+    const type: RelationshipKind = initial ? 'incoming' : this.data.relationshipType
+    this.loadConversations({ force: true })
+    this.loadRelationships(type, {
+      expanded: this.data.relationshipExpanded,
+      allowAutoSelect: initial,
+      force: true
+    })
   },
 
   onPullDownRefresh() {
-    this.load().finally(() => wx.stopPullDownRefresh())
+    Promise.allSettled([
+      this.loadConversations({ force: true }),
+      this.loadRelationships(this.data.relationshipType, {
+        expanded: this.data.relationshipExpanded,
+        force: true
+      })
+    ]).finally(() => wx.stopPullDownRefresh())
   },
 
-  async load() {
-    this.setData({ loading: true })
+  async loadConversations(options: ConversationLoadOptions = {}) {
+    if (this.data.conversationLoading && !options.force) return
+    const requestId = ++conversationRequestSerial
+    this.setData({ conversationLoading: true })
     try {
-      const [conversationResult, likedMeResult] = await Promise.all([
-        chatApi.listConversations({ page: 1, pageSize: 50 }),
-        memberApi.likedMe({ page: 1, pageSize: 12 })
-      ])
-      const list = (conversationResult.list || []).map(normalizeConversation)
-      const likedMeList = (likedMeResult.list || []).map(normalizeLikedMeItem)
+      const result = await chatApi.listConversations({ page: 1, pageSize: 50 })
+      if (requestId !== conversationRequestSerial) return
+      const list = (result.list || []).map(normalizeConversation)
       this.setData({
         list,
-        likedMeList,
-        total: Number(conversationResult.total || list.length || 0),
-        likedMeTotal: Number(likedMeResult.total || likedMeList.length || 0),
-        likedMePreviewCount: Number(likedMeResult.previewCount || likedMeList.length || 0),
-        isPremiumMember: likedMeResult.isPremiumMember === true,
+        total: Number(result.total || list.length || 0),
         emptyTitle: '暂无消息',
-        emptyNote: '和红娘建立服务关系、互相关注，或由红娘发起配对后，这里会出现会话。'
+        emptyNote: '和红娘建立服务关系、开通互选聊天，或由红娘发起配对后，这里会出现会话。'
       })
     } catch (err) {
+      if (requestId !== conversationRequestSerial) return
       console.warn('load user conversations failed', err)
       this.setData({
-        list: [],
-        likedMeList: [],
-        total: 0,
-        likedMeTotal: 0,
-        likedMePreviewCount: 0,
-        isPremiumMember: false,
         emptyTitle: '消息暂不可用',
-        emptyNote: '请确认云函数已部署后重试。'
+        emptyNote: '请稍后下拉刷新重试。'
       })
     } finally {
-      this.setData({ loading: false })
+      if (requestId === conversationRequestSerial) this.setData({ conversationLoading: false })
     }
   },
 
-  openChat(e: WechatMiniprogram.TouchEvent) {
-    const id = String(e.currentTarget.dataset.id || '')
-    if (!id) return
-    wx.navigateTo({ url: `/pages/user/chat?id=${id}` })
+  async loadRelationships(type: RelationshipKind, options: RelationshipLoadOptions = {}) {
+    if (this.data.relationshipLoading && !options.force) return
+    const requestId = ++relationshipRequestSerial
+    const expanded = options.expanded === true
+    const append = options.append === true
+    const page = append ? this.data.relationshipPage + 1 : 1
+    const pageSize = expanded ? 12 : 2
+    this.setData({
+      relationshipLoading: true,
+      relationshipError: '',
+      relationshipType: type,
+      relationshipExpanded: expanded
+    })
+    try {
+      const result: RelationshipResult = await memberApi.relationships({
+        type,
+        page,
+        pageSize
+      })
+      if (requestId !== relationshipRequestSerial) return
+      const counts = result.counts || { ...EMPTY_COUNTS }
+      if (options.allowAutoSelect && type === 'incoming' && counts.incoming === 0 && counts.mutual > 0) {
+        this.setData({
+          relationshipCounts: counts,
+          isPremiumMember: result.isPremiumMember === true,
+          relationshipInitialized: true,
+          relationshipLoading: false
+        })
+        await this.loadRelationships('mutual', { expanded: false, force: true })
+        return
+      }
+
+      const startIndex = append ? this.data.relationshipItems.length : 0
+      const rows = (result.list || []).map((row, index) =>
+        normalizeRelationshipItem(row, startIndex + index, type)
+      )
+      const items = append ? [...this.data.relationshipItems, ...rows] : rows
+      const total = Number(result.total || 0)
+      const isPremiumMember = result.isPremiumMember === true
+      this.setData({
+        relationshipItems: items,
+        relationshipCounts: counts,
+        relationshipTotal: total,
+        relationshipPage: Number(result.page || page),
+        relationshipPageSize: Number(result.pageSize || pageSize),
+        relationshipHasMore: items.length < total,
+        relationshipInitialized: true,
+        relationshipExpanded: isPremiumMember && expanded,
+        isPremiumMember
+      })
+    } catch (err) {
+      if (requestId !== relationshipRequestSerial) return
+      console.warn('load member relationships failed', err)
+      this.setData({
+        relationshipError: '心动关系暂时无法加载，请稍后重试。',
+        relationshipInitialized: true
+      })
+    } finally {
+      if (requestId === relationshipRequestSerial) this.setData({ relationshipLoading: false })
+    }
   },
 
-  openLikedMember(e: WechatMiniprogram.TouchEvent) {
+  switchRelationship(e: WechatMiniprogram.TouchEvent) {
+    if (this.data.relationshipLoading) return
+    const value = String(e.currentTarget.dataset.type || '')
+    if (value !== 'incoming' && value !== 'mutual') return
+    const type = value as RelationshipKind
+    if (type === this.data.relationshipType && !this.data.relationshipError) return
+    this.setData({
+      relationshipType: type,
+      relationshipItems: [],
+      relationshipTotal: Number(this.data.relationshipCounts[type] || 0),
+      relationshipExpanded: false,
+      relationshipHasMore: false
+    })
+    this.loadRelationships(type)
+  },
+
+  retryRelationships() {
+    this.loadRelationships(this.data.relationshipType, {
+      expanded: this.data.relationshipExpanded
+    })
+  },
+
+  toggleRelationshipExpanded() {
+    if (this.data.relationshipLoading) return
+    if (!this.data.isPremiumMember) {
+      this.promptOpenMembership()
+      return
+    }
+    const expanded = !this.data.relationshipExpanded
+    this.setData({ relationshipItems: [], relationshipHasMore: false })
+    this.loadRelationships(this.data.relationshipType, { expanded })
+  },
+
+  loadMoreRelationships() {
+    if (!this.data.relationshipExpanded || !this.data.relationshipHasMore) return
+    this.loadRelationships(this.data.relationshipType, {
+      expanded: true,
+      append: true
+    })
+  },
+
+  findRelationship(id: string) {
+    return this.data.relationshipItems.find(row => row.id === id)
+  },
+
+  openRelationshipMember(e: WechatMiniprogram.TouchEvent) {
     const id = String(e.currentTarget.dataset.id || '')
-    if (!id) return
-    const item = this.data.likedMeList.find(row => row.id === id)
+    const item = this.findRelationship(id)
     if (!item) return
     if (item.locked || !this.data.isPremiumMember || !item.canViewDetail) {
       this.promptOpenMembership()
@@ -194,14 +346,86 @@ Page({
     wx.navigateTo({ url: `/pages/user/member-detail?id=${encodeURIComponent(item.id)}` })
   },
 
-  promptOpenMembership() {
+  async respondFavorite(e: WechatMiniprogram.TouchEvent) {
+    const id = String(e.currentTarget.dataset.id || '')
+    const item = this.findRelationship(id)
+    if (!item || !item.userId || this.data.respondingId) return
+    if (!this.data.isPremiumMember || !item.canRespond) {
+      this.promptOpenMembership()
+      return
+    }
+    this.setData({ respondingId: id })
+    try {
+      const result: any = await memberApi.interact({
+        targetUserId: item.userId,
+        actionType: 'favorite',
+        active: true
+      })
+      wx.showToast({
+        title: result && result.canChat
+          ? '已互相喜欢，可以聊天'
+          : '已回应爱心',
+        icon: 'none'
+      })
+      this.setData({
+        relationshipType: 'mutual',
+        relationshipItems: [],
+        relationshipExpanded: false,
+        relationshipHasMore: false
+      })
+      await this.loadRelationships('mutual', { force: true })
+      await this.loadConversations({ force: true })
+    } catch (err) {
+      console.warn('respond relationship favorite failed', err)
+    } finally {
+      this.setData({ respondingId: '' })
+    }
+  },
+
+  async openRelationshipChat(e: WechatMiniprogram.TouchEvent) {
+    const id = String(e.currentTarget.dataset.id || '')
+    const item = this.findRelationship(id)
+    if (!item || !item.userId || this.data.chatStartingId) return
+    if (!this.data.isPremiumMember || !item.canChat) {
+      this.promptOpenMembership()
+      return
+    }
+    this.setData({ chatStartingId: id })
+    try {
+      const conversation = await chatApi.getOrCreateConversation({
+        targetUserId: item.userId
+      })
+      wx.navigateTo({ url: `/pages/user/chat?id=${conversation.id}` })
+    } catch (err) {
+      console.warn('open mutual relationship chat failed', err)
+    } finally {
+      this.setData({ chatStartingId: '' })
+    }
+  },
+
+  openChat(e: WechatMiniprogram.TouchEvent) {
+    const id = String(e.currentTarget.dataset.id || '')
+    if (!id) return
+    wx.navigateTo({ url: `/pages/user/chat?id=${id}` })
+  },
+
+  async promptOpenMembership() {
+    if (this.data.conversationLoading) await this.loadConversations({ force: true })
+    const matchmakerConversation = this.data.list.find(
+      row => row.conversationType === 'member_matchmaker'
+    )
     wx.showModal({
       title: '开通会员',
-      content: '开通会员后可查看谁喜欢你的完整资料。当前版本请联系红娘，或在我的页面完善资料后开通服务。',
-      confirmText: '去我的',
+      content: '开通后可查看喜欢你的会员、互相喜欢的人，并开启互选聊天。请联系红娘完成付款和会员开通。',
+      confirmText: matchmakerConversation ? '联系红娘' : '去绑定红娘',
       cancelText: '稍后',
-      success(res) {
-        if (res.confirm) wx.redirectTo({ url: '/pages/user/profile' })
+      success: res => {
+        if (!res.confirm) return
+        if (matchmakerConversation) {
+          wx.navigateTo({ url: `/pages/user/chat?id=${matchmakerConversation.id}` })
+          return
+        }
+        wx.redirectTo({ url: '/pages/user/profile' })
       }
     })
   },

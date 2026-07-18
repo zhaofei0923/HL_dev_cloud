@@ -1,5 +1,12 @@
 const cloud = require('wx-server-sdk');
 const crypto = require('node:crypto');
+const {
+  createLockedRelationshipPreview,
+  isPremiumMemberType,
+  partitionFavoriteRelationships,
+  relationshipNotificationView,
+  requiresPremiumForConversation
+} = require('./relationship-policy');
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
@@ -29,8 +36,8 @@ const MATCHMAKER_CERTIFICATION_STATUSES = new Set([0, 1, 2]);
 const SALON_REVIEW_STATUSES = new Set(['upcoming', 'rejected']);
 const MEMBER_PHOTO_LIMIT = 3;
 const DAILY_FREE_FAVORITE_LIMIT = 8;
-const PREMIUM_MEMBER_TYPES = new Set(['paid', 'vip']);
 const LIKED_ME_LOCKED_PREVIEW_LIMIT = 4;
+const RELATIONSHIP_LOCKED_PREVIEW_LIMIT = 2;
 const SHANGHAI_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 const SEEDED_MEMBER_GROUPS = [
@@ -365,7 +372,7 @@ function collectionsForPath(path) {
     return [...common, C.matchmakers, C.members, C.matchRecords, C.conversations, C.chatMessages];
   }
   if (path.startsWith('/messages')) {
-    return [...common, C.messages, C.conversations, C.memberInteractions];
+    return [...common, C.members, C.messages, C.conversations, C.memberInteractions];
   }
   return common;
 }
@@ -906,15 +913,13 @@ async function areMutualFavorites(userAId, userBId) {
 }
 
 async function createFavoriteNotification(senderId, target, conversation = null) {
-  const sender = await chatParticipantView(senderId);
-  const senderName = sender.nickname || '会员';
   return addRow(C.messages, {
     id: await nextId('message'),
     senderId: Number(senderId),
     receiverId: Number(target.userId),
     contentType: 'interaction',
     messageType: 'member_favorite',
-    content: `${senderName} 关注了你，互相关注后即可聊天。`,
+    content: '有人喜欢了你，开通会员后可查看并回应。',
     targetUserId: Number(senderId),
     targetMemberId: '',
     conversationId: conversation ? Number(conversation.id) : null,
@@ -928,11 +933,16 @@ async function favoriteActionResponse(userId, target, interaction, active, wasFa
   let conversation = null;
   let conversationView = null;
   let mutualFavorite = false;
+  let premiumRequired = false;
   if (active) {
     mutualFavorite = await areMutualFavorites(userId, target.userId);
     if (mutualFavorite) {
-      conversation = await ensureMutualFavoriteConversation(userId, target.userId);
-      conversationView = conversation ? await chatConversationView(conversation, userId) : null;
+      const isPremiumMember = await hasPremiumMemberEntitlement(userId);
+      premiumRequired = !isPremiumMember;
+      if (isPremiumMember) {
+        conversation = await ensureMutualFavoriteConversation(userId, target.userId);
+        conversationView = conversation ? await chatConversationView(conversation, userId) : null;
+      }
     }
     if (!wasFavoriteActive) {
       notification = await createFavoriteNotification(userId, target, conversation);
@@ -946,6 +956,7 @@ async function favoriteActionResponse(userId, target, interaction, active, wasFa
     actionType: 'favorite',
     active,
     mutualFavorite,
+    premiumRequired,
     canChat: !!conversationView,
     conversation: conversationView,
     notification: notification ? stripInternal(notification) : null,
@@ -1132,6 +1143,9 @@ async function resolveMemberPairChatAccess(userId, targetUserId) {
 
 async function resolveMutualFavoriteChatAccess(userId, targetUserId) {
   if (!(await areMutualFavorites(userId, targetUserId))) return null;
+  if (!(await hasPremiumMemberEntitlement(userId))) {
+    throw createHttpError('开通会员后可使用互选聊天', 403, 40302);
+  }
   return {
     conversationType: 'member_pair',
     chatOpenReason: 'mutual_favorite'
@@ -1162,35 +1176,113 @@ async function resolveChatAccess(userId, targetUserId) {
 async function getChatConversationOrThrow(userId, conversationId) {
   const conversation = await getById(C.conversations, conversationId);
   assertChatParticipant(conversation, userId);
+  if (requiresPremiumForConversation(conversation) && !(await hasPremiumMemberEntitlement(userId))) {
+    const peerId = chatParticipantIds(conversation).find(id => Number(id) !== Number(userId));
+    const formalPairAccess = peerId ? await resolveMemberPairChatAccess(userId, peerId) : null;
+    if (!formalPairAccess) {
+      throw createHttpError('开通会员后可使用互选聊天', 403, 40302);
+    }
+    return promoteChatConversation(conversation, formalPairAccess);
+  }
   return conversation;
+}
+
+function conversationMetadataPatch(existing, metadata = {}) {
+  const patch = {};
+  if (metadata.memberId && !existing.memberId) patch.memberId = metadata.memberId;
+  if (metadata.matchmakerId && !existing.matchmakerId) patch.matchmakerId = metadata.matchmakerId;
+  if (metadata.matchmakerUserId && !existing.matchmakerUserId) patch.matchmakerUserId = metadata.matchmakerUserId;
+  if (metadata.matchRecordId) {
+    if (!existing.matchRecordId) patch.matchRecordId = metadata.matchRecordId;
+    patch.chatOpenReason = null;
+  }
+  if (metadata.chatOpenReason && !existing.chatOpenReason && !existing.matchRecordId && !metadata.matchRecordId) {
+    patch.chatOpenReason = metadata.chatOpenReason;
+  }
+  return patch;
+}
+
+async function promoteChatConversation(conversation, metadata = {}) {
+  if (!conversation || !conversation._id) {
+    const patch = conversationMetadataPatch(conversation || {}, metadata);
+    return Object.keys(patch).length ? updateRow(C.conversations, conversation, patch) : conversation;
+  }
+  return db.runTransaction(async transaction => {
+    const ref = transaction.collection(C.conversations).doc(conversation._id);
+    const snapshot = await ref.get();
+    const current = snapshot && snapshot.data ? snapshot.data : null;
+    if (!current) throw createHttpError('conversation not found', 404, 40400);
+    const patch = conversationMetadataPatch(current, metadata);
+    if (!Object.keys(patch).length) return { ...current, _id: current._id || conversation._id };
+    const update = { ...patch, updatedAt: nowIso() };
+    await ref.update(update);
+    return { ...current, ...update, _id: current._id || conversation._id };
+  });
+}
+
+function conversationDocumentId(participantKey, conversationType) {
+  const digest = crypto.createHash('sha256')
+    .update(`${String(conversationType || '')}:${String(participantKey || '')}`)
+    .digest('hex');
+  return `conversation_${digest.slice(0, 40)}`;
+}
+
+async function createChatConversationAtomically(normalizedIds, participantKey, conversationType, metadata = {}) {
+  const documentId = conversationDocumentId(participantKey, conversationType);
+  const proposedId = await nextId('conversation');
+  const unreadBy = {};
+  normalizedIds.forEach(id => { unreadBy[String(id)] = 0; });
+
+  return db.runTransaction(async transaction => {
+    const ref = transaction.collection(C.conversations).doc(documentId);
+    const snapshot = await ref.get();
+    const existing = snapshot && snapshot.data ? snapshot.data : null;
+    if (existing && Number(existing.status || 1) !== 0) {
+      const patch = conversationMetadataPatch(existing, metadata);
+      if (!Object.keys(patch).length) return { ...existing, _id: existing._id || documentId };
+      const update = { ...patch, updatedAt: nowIso() };
+      await ref.update(update);
+      return { ...existing, ...update, _id: existing._id || documentId };
+    }
+
+    const timestamp = nowIso();
+    const payload = {
+      ...(existing || {}),
+      id: existing && existing.id ? existing.id : proposedId,
+      conversationType,
+      participantIds: normalizedIds,
+      participantKey,
+      memberId: metadata.memberId || (existing && existing.memberId) || null,
+      matchmakerId: metadata.matchmakerId || (existing && existing.matchmakerId) || null,
+      matchmakerUserId: metadata.matchmakerUserId || (existing && existing.matchmakerUserId) || null,
+      matchRecordId: metadata.matchRecordId || (existing && existing.matchRecordId) || null,
+      chatOpenReason: metadata.matchRecordId
+        ? null
+        : (metadata.chatOpenReason || (existing && existing.chatOpenReason) || null),
+      lastMessageContent: (existing && existing.lastMessageContent) || '',
+      lastMessageAt: (existing && existing.lastMessageAt) || '',
+      lastSenderId: (existing && existing.lastSenderId) || null,
+      unreadBy: (existing && existing.unreadBy) || unreadBy,
+      status: 'active',
+      createdAt: (existing && existing.createdAt) || timestamp,
+      updatedAt: timestamp
+    };
+    delete payload._id;
+    if (existing) await ref.set(payload);
+    else await ref.create(payload);
+    return { ...payload, _id: documentId };
+  });
 }
 
 async function ensureChatConversation(participantIds, conversationType, metadata = {}) {
   const normalizedIds = participantIds.map(id => Number(id)).filter(id => Number.isFinite(id));
   if (normalizedIds.length !== 2 || normalizedIds[0] === normalizedIds[1]) return null;
+  normalizedIds.sort((a, b) => a - b);
   const participantKey = chatParticipantKey(normalizedIds);
   const existingRows = await getAll(C.conversations, { participantKey, conversationType });
   const existing = existingRows.find(row => Number(row.status || 1) !== 0);
-  if (existing) return existing;
-
-  const unreadBy = {};
-  normalizedIds.forEach(id => { unreadBy[String(id)] = 0; });
-  return addRow(C.conversations, {
-    id: await nextId('conversation'),
-    conversationType,
-    participantIds: normalizedIds.sort((a, b) => a - b),
-    participantKey,
-    memberId: metadata.memberId || null,
-    matchmakerId: metadata.matchmakerId || null,
-    matchmakerUserId: metadata.matchmakerUserId || null,
-    matchRecordId: metadata.matchRecordId || null,
-    chatOpenReason: metadata.chatOpenReason || null,
-    lastMessageContent: '',
-    lastMessageAt: '',
-    lastSenderId: null,
-    unreadBy,
-    status: 'active'
-  });
+  if (existing) return promoteChatConversation(existing, metadata);
+  return createChatConversationAtomically(normalizedIds, participantKey, conversationType, metadata);
 }
 
 async function ensureMemberMatchmakerConversation(memberRow, matchmakerRow) {
@@ -1218,7 +1310,7 @@ async function ensureMemberPairConversation(matchRecord) {
   );
 }
 
-async function ensureDefaultChatConversationsForUser(userId) {
+async function ensureDefaultChatConversationsForUser(userId, isPremiumMember = false) {
   const assignment = await activeMemberAssignment(userId);
   if (assignment) {
     const matchmakerRow = await getById(C.matchmakers, assignment.matchmakerId);
@@ -1241,11 +1333,13 @@ async function ensureDefaultChatConversationsForUser(userId) {
     });
   await Promise.all(matchRecords.map(record => ensureMemberPairConversation(record)));
 
-  const favoriteRows = (await getAll(C.memberInteractions, {
-    userId: Number(userId),
-    actionType: 'favorite'
-  }, 2000)).filter(isActiveInteraction);
-  await Promise.all(favoriteRows.map(row => ensureMutualFavoriteConversation(userId, row.targetUserId)));
+  if (isPremiumMember) {
+    const favoriteRows = (await getAll(C.memberInteractions, {
+      userId: Number(userId),
+      actionType: 'favorite'
+    }, 2000)).filter(isActiveInteraction);
+    await Promise.all(favoriteRows.map(row => ensureMutualFavoriteConversation(userId, row.targetUserId)));
+  }
 }
 
 async function markChatRead(userId, conversationId) {
@@ -1266,9 +1360,11 @@ async function markChatRead(userId, conversationId) {
 
 const chat = {
   async listConversations(userId, filters = {}) {
-    await ensureDefaultChatConversationsForUser(userId);
+    const isPremiumMember = await hasPremiumMemberEntitlement(userId);
+    await ensureDefaultChatConversationsForUser(userId, isPremiumMember);
     const rows = (await getAll(C.conversations, { status: 'active' }))
       .filter(row => chatParticipantIds(row).includes(Number(userId)))
+      .filter(row => isPremiumMember || !requiresPremiumForConversation(row))
       .sort((a, b) => {
         const aTime = new Date(a.lastMessageAt || a.updatedAt || a.createdAt || 0).getTime();
         const bTime = new Date(b.lastMessageAt || b.updatedAt || b.createdAt || 0).getTime();
@@ -1282,32 +1378,7 @@ const chat = {
     const targetUserId = await resolveTargetUserId(data);
     const access = await resolveChatAccess(userId, targetUserId);
     const participantIds = [Number(userId), Number(targetUserId)];
-    const participantKey = chatParticipantKey(participantIds);
-    const existingRows = await getAll(C.conversations, {
-      participantKey,
-      conversationType: access.conversationType
-    });
-    const existing = existingRows.find(row => Number(row.status || 1) !== 0);
-    if (existing) return chatConversationView(existing, userId);
-
-    const unreadBy = {};
-    participantIds.forEach(id => { unreadBy[String(id)] = 0; });
-    const conversation = await addRow(C.conversations, {
-      id: await nextId('conversation'),
-      conversationType: access.conversationType,
-      participantIds: participantIds.sort((a, b) => a - b),
-      participantKey,
-      memberId: access.memberId || null,
-      matchmakerId: access.matchmakerId || null,
-      matchmakerUserId: access.matchmakerUserId || null,
-      matchRecordId: access.matchRecordId || null,
-      chatOpenReason: access.chatOpenReason || null,
-      lastMessageContent: '',
-      lastMessageAt: '',
-      lastSenderId: null,
-      unreadBy,
-      status: 'active'
-    });
+    const conversation = await ensureChatConversation(participantIds, access.conversationType, access);
     return chatConversationView(conversation, userId);
   },
 
@@ -1372,26 +1443,34 @@ function isMessageRead(row) {
   return Number(row.isRead) === 1 || row.isRead === true;
 }
 
-async function notificationMessageView(row, currentUserId) {
-  const sender = row.senderId ? await chatParticipantView(row.senderId) : null;
+async function notificationMessageView(row, currentUserId, isPremiumMember = false) {
+  const favoriteMessage = String(row.messageType || '') === 'member_favorite';
+  const sender = row.senderId && (!favoriteMessage || isPremiumMember)
+    ? await chatParticipantView(row.senderId)
+    : null;
   let conversationId = row.conversationId ? Number(row.conversationId) : null;
-  if (!conversationId && String(row.messageType || '') === 'member_favorite' && row.senderId) {
+  if (favoriteMessage && !isPremiumMember) conversationId = null;
+  if (!conversationId && favoriteMessage && isPremiumMember && row.senderId) {
     const conversation = await findActiveConversation([Number(row.senderId), Number(currentUserId)], 'member_pair');
     if (conversation) conversationId = Number(conversation.id);
   }
-  return {
-    ...stripInternal(row),
+  const relationshipView = relationshipNotificationView({
+    row: stripInternal(row),
     sender,
+    conversationId,
+    isPremiumMember
+  });
+  return {
+    ...relationshipView,
     isRead: isMessageRead(row),
     hasUnread: !isMessageRead(row),
-    conversationId,
-    canChat: !!conversationId,
     createdAt: row.createdAt || ''
   };
 }
 
 const messages = {
   async list(userId, filters = {}) {
+    const isPremiumMember = await hasPremiumMemberEntitlement(userId);
     const rows = (await getAll(C.messages, { receiverId: Number(userId) }, 2000))
       .filter(row => Number(row.status || 1) !== 0)
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0) || Number(b.id || 0) - Number(a.id || 0));
@@ -1399,7 +1478,7 @@ const messages = {
     return {
       ...page,
       unreadCount: rows.filter(row => !isMessageRead(row)).length,
-      list: await Promise.all(page.list.map(row => notificationMessageView(row, userId)))
+      list: await Promise.all(page.list.map(row => notificationMessageView(row, userId, isPremiumMember)))
     };
   },
 
@@ -1412,7 +1491,7 @@ const messages = {
     const updated = isMessageRead(row)
       ? row
       : await updateRow(C.messages, row, { isRead: 1, readAt: nowIso() });
-    return notificationMessageView(updated, userId);
+    return notificationMessageView(updated, userId, await hasPremiumMemberEntitlement(userId));
   }
 };
 
@@ -1532,69 +1611,34 @@ async function activeMemberAssignment(userId) {
 
 async function hasPremiumMemberEntitlement(userId) {
   const rows = await getAll(C.members, { userId: Number(userId), status: 1 }, 100);
-  return rows.some(row => PREMIUM_MEMBER_TYPES.has(String(row.memberType || '').trim().toLowerCase()));
+  return rows.some(row => isPremiumMemberType(row.memberType));
 }
 
-function coarseIncomeTag(value) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  const nums = (text.match(/\d+/g) || []).map(Number);
-  if (nums.some(num => num >= 50)) return '高收入';
-  return '收入稳定';
+function relationshipType(value) {
+  return String(value || '').trim().toLowerCase() === 'mutual' ? 'mutual' : 'incoming';
 }
 
-function likedMePreviewTags(row = {}, viewerProfile = {}) {
-  const tags = [];
-  const education = String(row.education || '').trim();
-  const income = coarseIncomeTag(row.incomeRange);
-  const sameCity = row.city && viewerProfile.city && String(row.city) === String(viewerProfile.city);
-  if (sameCity) tags.push('同城附近');
-  if (/博士|硕士|本科/.test(education)) tags.push(`${education}学历`);
-  if (income) tags.push(income);
-  if (String(row.occupation || '').trim()) tags.push('事业稳定');
-  if (Number(row.height) >= 175) tags.push('身高优秀');
-  if (!tags.length) tags.push('资料完整');
-  return Array.from(new Set(tags)).slice(0, 3);
-}
-
-function likedMeLockedPreview(row = {}, interaction = {}, index = 0, viewerProfile = {}) {
-  const tags = likedMePreviewTags(row, viewerProfile);
-  const hints = ['刚刚喜欢了你', '认真看过你的资料', '想进一步认识你', '期待你的回应'];
-  return {
-    id: `locked_${index + 1}`,
-    locked: true,
-    blurred: true,
-    canViewDetail: false,
-    displayName: `第 ${index + 1} 位喜欢你的人`,
-    metaText: tags.join(' · ') || '有会员对你感兴趣',
-    hint: hints[index % hints.length],
-    tags,
-    likedAt: interaction.updatedAt || interaction.createdAt || '',
-    coverTone: index % LIKED_ME_LOCKED_PREVIEW_LIMIT
-  };
-}
-
-function sortInteractionsDesc(a, b) {
-  const aTime = new Date(a.updatedAt || a.createdAt || 0).getTime() || 0;
-  const bTime = new Date(b.updatedAt || b.createdAt || 0).getTime() || 0;
-  return bTime - aTime || Number(b.id || 0) - Number(a.id || 0);
-}
-
-async function likedMeFavoriteRows(userId) {
-  const rows = await getAll(C.memberInteractions, {
-    targetUserId: Number(userId),
-    actionType: 'favorite'
-  }, 2000);
-  const uniqueBySender = new Map();
-  rows
-    .filter(isActiveInteraction)
-    .filter(row => Number(row.userId) && Number(row.userId) !== Number(userId))
-    .sort(sortInteractionsDesc)
-    .forEach(row => {
-      const senderId = String(Number(row.userId));
-      if (!uniqueBySender.has(senderId)) uniqueBySender.set(senderId, row);
-    });
-  return Array.from(uniqueBySender.values());
+async function favoriteRelationshipGroups(userId) {
+  const [incomingRows, outgoingRows, hiddenRows] = await Promise.all([
+    getAll(C.memberInteractions, {
+      targetUserId: Number(userId),
+      actionType: 'favorite'
+    }, 2000),
+    getAll(C.memberInteractions, {
+      userId: Number(userId),
+      actionType: 'favorite'
+    }, 2000),
+    getAll(C.memberInteractions, {
+      userId: Number(userId),
+      actionType: 'hide'
+    }, 2000)
+  ]);
+  return partitionFavoriteRelationships({
+    viewerUserId: userId,
+    incomingRows,
+    outgoingRows,
+    hiddenRows
+  });
 }
 
 async function memberRequestView(row) {
@@ -2253,46 +2297,105 @@ const member = {
     };
   },
 
-  async likedMe(userId, filters = {}) {
-    const [favoriteRows, isPremiumMember, viewerProfile, publicRows] = await Promise.all([
-      likedMeFavoriteRows(userId),
+  async relationships(userId, filters = {}) {
+    const selectedType = relationshipType(filters.type);
+    const [groups, isPremiumMember, publicRows] = await Promise.all([
+      favoriteRelationshipGroups(userId),
       hasPremiumMemberEntitlement(userId),
-      getOne(C.profiles, { userId: Number(userId) }),
       publicShowcaseRows({ keepUserId: true })
     ]);
     const rowsByUserId = publicRows.reduce((map, row) => {
       map[String(row.userId)] = row;
       return map;
     }, {});
+    const visibleGroups = {
+      incoming: groups.incoming.filter(item => rowsByUserId[String(item.userId)]),
+      mutual: groups.mutual.filter(item => rowsByUserId[String(item.userId)])
+    };
+    const selectedRows = visibleGroups[selectedType];
+    const counts = {
+      incoming: visibleGroups.incoming.length,
+      mutual: visibleGroups.mutual.length
+    };
+
+    if (!isPremiumMember) {
+      const previewRows = selectedRows.slice(0, RELATIONSHIP_LOCKED_PREVIEW_LIMIT);
+      return {
+        type: selectedType,
+        counts,
+        total: selectedRows.length,
+        page: 1,
+        pageSize: RELATIONSHIP_LOCKED_PREVIEW_LIMIT,
+        list: previewRows.map((_item, index) => createLockedRelationshipPreview({
+          kind: selectedType,
+          index
+        })),
+        isPremiumMember: false,
+        unlockRequired: true,
+        unlockText: '联系红娘开通会员',
+        previewCount: previewRows.length
+      };
+    }
+
+    const visibleRows = selectedRows.map(item => ({
+      ...rowsByUserId[String(item.userId)],
+      relationshipType: selectedType,
+      relationshipAt: item.relationshipAt,
+      likedAt: item.incomingInteraction.updatedAt || item.incomingInteraction.createdAt || '',
+      locked: false,
+      blurred: false,
+      canViewDetail: true,
+      canRespond: selectedType === 'incoming',
+      canChat: selectedType === 'mutual'
+    }));
+    const page = await resolveMemberMediaPage(paginate(visibleRows, filters.page, filters.pageSize || 12));
+    return {
+      ...page,
+      type: selectedType,
+      counts,
+      isPremiumMember: true,
+      unlockRequired: false,
+      unlockText: '',
+      previewCount: page.list.length
+    };
+  },
+
+  async likedMe(userId, filters = {}) {
+    const [groups, isPremiumMember, publicRows] = await Promise.all([
+      favoriteRelationshipGroups(userId),
+      hasPremiumMemberEntitlement(userId),
+      publicShowcaseRows({ keepUserId: true })
+    ]);
+    const rowsByUserId = publicRows.reduce((map, row) => {
+      map[String(row.userId)] = row;
+      return map;
+    }, {});
+    const favoriteRows = [...groups.incoming, ...groups.mutual]
+      .filter(item => rowsByUserId[String(item.userId)])
+      .sort((a, b) => new Date(b.relationshipAt || 0).getTime() - new Date(a.relationshipAt || 0).getTime());
     const total = favoriteRows.length;
 
     if (!isPremiumMember) {
-      const lockedPage = paginate(favoriteRows, filters.page, filters.pageSize || LIKED_ME_LOCKED_PREVIEW_LIMIT);
+      const previewRows = favoriteRows.slice(0, LIKED_ME_LOCKED_PREVIEW_LIMIT);
       return {
-        ...lockedPage,
         total,
-        list: lockedPage.list
-          .slice(0, LIKED_ME_LOCKED_PREVIEW_LIMIT)
-          .map((interaction, index) => likedMeLockedPreview(
-            rowsByUserId[String(interaction.userId)] || {},
-            interaction,
-            index,
-            viewerProfile || {}
-          )),
+        page: 1,
+        pageSize: LIKED_ME_LOCKED_PREVIEW_LIMIT,
+        list: previewRows.map((_item, index) => createLockedRelationshipPreview({ kind: 'incoming', index })),
         isPremiumMember: false,
         unlockRequired: true,
         unlockText: '开通会员查看完整资料',
-        previewCount: Math.min(total, LIKED_ME_LOCKED_PREVIEW_LIMIT)
+        previewCount: previewRows.length
       };
     }
 
     const visibleRows = favoriteRows
-      .map(interaction => {
-        const row = rowsByUserId[String(interaction.userId)];
+      .map(item => {
+        const row = rowsByUserId[String(item.userId)];
         if (!row) return null;
         return {
           ...row,
-          likedAt: interaction.updatedAt || interaction.createdAt || '',
+          likedAt: item.incomingInteraction.updatedAt || item.incomingInteraction.createdAt || '',
           locked: false,
           blurred: false,
           canViewDetail: true
@@ -2945,6 +3048,7 @@ exports.main = async (event = {}) => {
     if (method === 'GET' && path === '/member/resources') return ok(await member.resources(session.userId, data));
     if (method === 'GET' && path === '/member/showcase') return ok(await member.showcase(session.userId, data));
     if (method === 'GET' && path === '/member/gifts') return ok(await member.gifts());
+    if (method === 'GET' && path === '/member/relationships') return ok(await member.relationships(session.userId, data));
     if (method === 'GET' && path === '/member/liked-me') return ok(await member.likedMe(session.userId, data));
     if (method === 'POST' && path === '/member/interactions') return ok(await member.interact(session.userId, data));
     if (method === 'POST' && path === '/member/gifts/send') return ok(await member.sendGift(session.userId, data));

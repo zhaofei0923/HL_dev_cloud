@@ -331,7 +331,9 @@ Page({
                 favoriteQuotaText: favoriteQuotaText(favoriteQuota)
             } : {});
             wx.showToast({
-                title: result && result.canChat ? '已互关，可在消息里聊天' : '已关注，对方会收到通知',
+                title: result && result.mutualFavorite
+                    ? (result.canChat ? '已互相喜欢，可在消息里聊天' : '已互相喜欢，开通会员后可聊天')
+                    : '已关注，对方会收到通知',
                 icon: 'none'
             });
         }
@@ -416,7 +418,15 @@ Page({
                 favoriteQuota,
                 favoriteQuotaText: favoriteQuotaText(favoriteQuota)
             } : {});
-            wx.showToast({ title: '赠送成功，已关注', icon: 'success' });
+            const favoriteResult = result && result.favorite;
+            wx.showToast({
+                title: favoriteResult && favoriteResult.mutualFavorite
+                    ? (favoriteResult.canChat
+                        ? '赠送成功，已互相喜欢，可在消息里聊天'
+                        : '赠送成功，已互相喜欢，开通会员后可聊天')
+                    : '赠送成功，已关注',
+                icon: favoriteResult && favoriteResult.mutualFavorite && !favoriteResult.canChat ? 'none' : 'success'
+            });
         }
         catch (err) {
             console.warn('send gift failed', err);
