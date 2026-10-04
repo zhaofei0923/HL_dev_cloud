@@ -127,7 +127,7 @@ function memberTarget(member) {
     };
 }
 function countText(total) {
-    return total ? `${total} 位会员可浏览 · 左右滑切换 · 下滑看详情` : '暂无可浏览会员';
+    return total ? `${total} 位会员可浏览 · 左右滑动或点击下一位` : '暂无可浏览会员';
 }
 Page({
     data: {
@@ -436,6 +436,15 @@ Page({
         }
     },
     noop() { },
+    goMemberDetail() {
+        const member = this.data.currentMember;
+        if (!member || !member.id) {
+            wx.showToast({ title: '暂无法查看该会员', icon: 'none' });
+            return;
+        }
+        wx.setStorageSync('selectedUserMember', member);
+        wx.navigateTo({ url: `/pages/user/member-detail?id=${encodeURIComponent(String(member.id))}` });
+    },
     goProfile() {
         wx.navigateTo({ url: '/pages/user/profile' });
     }

@@ -60,6 +60,10 @@ assertRule(
   cms.protectedCollections.includes('hl_payment_orders'),
   'hl_payment_orders must stay protected from manual operator edits.'
 );
+assertRule(
+  cms.protectedCollections.includes('hl_member_private_archives'),
+  'hl_member_private_archives must stay protected from operator views.'
+);
 
 const requestAuditView = viewsByCollection.get('hl_member_matchmaker_requests');
 assertRule(requestAuditView.manualCmsAllowed === false, 'Member-matchmaker requests must be read-only in CMS.');

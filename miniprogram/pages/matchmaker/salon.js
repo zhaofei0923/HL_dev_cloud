@@ -75,6 +75,7 @@ Page({
         loading: false,
         cancellingId: '',
         invitingId: '',
+        managingEventId: '',
         canOperate: false,
         shareCode: '',
         statusText: '待审批',
@@ -151,10 +152,14 @@ Page({
             selectedMemberName: selected ? (selected.realName || selected.nickname || '我的会员') : ''
         });
     },
+    toggleEventManagement(e) {
+        const id = String(e.currentTarget.dataset.id || '');
+        this.setData({ managingEventId: this.data.managingEventId === id ? '' : id });
+    },
     async loadMine() {
         if (!this.data.canOperate)
             return;
-        this.setData({ active: 'mine', loading: true });
+        this.setData({ active: 'mine', loading: true, managingEventId: '' });
         try {
             const result = await salon_1.salonApi.myEvents({ page: 1, pageSize: 50 });
             const list = (result.list || []).map((row) => normalizeSalonRow(row));
@@ -171,7 +176,7 @@ Page({
     async loadAll() {
         if (!this.data.canOperate)
             return;
-        this.setData({ active: 'all', loading: true });
+        this.setData({ active: 'all', loading: true, managingEventId: '' });
         try {
             const result = await salon_1.salonApi.list({ page: 1, pageSize: 50 });
             const list = (result.list || []).map((row) => normalizeSalonRow(row));

@@ -166,6 +166,12 @@ export const memberApi = {
   addManual(data: Record<string, any>) {
     return request('/member/manual', { method: 'POST', data })
   },
+  createIdentityClaimInvite(id: number | string) {
+    return request(`/member/${id}/identity-claim-invite`, { method: 'POST' })
+  },
+  detail(id: number | string) {
+    return request(`/member/${id}`)
+  },
   update(id: number | string, data: Record<string, any>) {
     return request(`/member/${id}`, { method: 'PUT', data })
   },

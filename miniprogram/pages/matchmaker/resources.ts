@@ -19,6 +19,7 @@ Page({
     primaryMemberName: '',
     recommendButtonText: '先录入自己的会员',
     accessNote: '已认证主理人可查看其他主理人的会员资源，并用自己的会员发起互推。',
+    selectorOpen: false,
     loading: false,
     recommendLoadingId: ''
   },
@@ -70,8 +71,13 @@ Page({
     this.setData({
       selectedMemberIndex: index,
       primaryMemberName: name,
-      recommendButtonText: selected ? `用 ${name} 发起互推` : '先录入自己的会员'
+      recommendButtonText: selected ? `用 ${name} 发起互推` : '先录入自己的会员',
+      selectorOpen: false
     })
+  },
+
+  toggleMemberSelector() {
+    this.setData({ selectorOpen: !this.data.selectorOpen })
   },
 
   async recommend(e: WechatMiniprogram.TouchEvent) {

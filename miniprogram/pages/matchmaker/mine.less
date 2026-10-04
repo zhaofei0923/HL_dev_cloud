@@ -1,89 +1,71 @@
-.mine-hero {
-  min-height: 306rpx;
-}
+.mine-header { padding: 14rpx 4rpx 24rpx; }
+.mine-header .eyebrow, .mine-header .title { display: block; }
+.mine-header .eyebrow { color: #a17750; }
+.mine-header .title { margin-top: 6rpx; font-size: 40rpx; }
 
-.identity-head {
-  align-items: flex-start;
-  margin-bottom: 20rpx;
-}
-
-.mine-grid {
-  margin-top: 18rpx;
-}
-
-.mine-actions-card {
-  margin-bottom: 0;
-}
-
-.invite-head {
-  align-items: flex-start;
-}
-
-.invite-status {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-.invite-panel {
+.identity-card {
   display: flex;
-  gap: 18rpx;
-  margin-top: 22rpx;
+  align-items: center;
+  gap: 20rpx;
+  padding: 24rpx;
 }
 
-.invite-code-box,
-.invite-qr-box {
-  box-sizing: border-box;
-  border: 1rpx solid rgba(151, 119, 82, 0.14);
-  border-radius: 14rpx;
-  background: rgba(255, 253, 248, 0.76);
-}
-
-.invite-code-box {
-  flex: 1;
-  min-width: 0;
-  padding: 20rpx;
-}
-
-.invite-label {
-  margin-top: 18rpx;
-}
-
-.invite-code {
-  display: block;
-  margin-top: 8rpx;
-  color: #241f1b;
-  font-size: 30rpx;
-  font-weight: 900;
-  line-height: 1.2;
-  word-break: break-all;
-}
-
-.invite-qr-box {
+.identity-avatar {
   display: flex;
-  flex: 0 0 188rpx;
+  flex: none;
   align-items: center;
   justify-content: center;
-  width: 188rpx;
-  min-height: 188rpx;
-  padding: 14rpx;
+  width: 112rpx;
+  height: 112rpx;
+  border-radius: 24rpx;
+  background: #eee3d7;
 }
 
-.invite-qr {
-  width: 160rpx;
-  height: 160rpx;
+.identity-avatar.fallback { color: #775139; font-size: 34rpx; font-weight: 900; }
+.identity-copy { flex: 1; min-width: 0; }
+.identity-name-row { display: flex; align-items: center; gap: 12rpx; }
+.identity-name { min-width: 0; color: #302923; font-size: 32rpx; font-weight: 800; }
+.identity-number, .identity-note { display: block; }
+.identity-number { margin-top: 9rpx; color: #776d65; font-size: 23rpx; }
+.identity-note { margin-top: 5rpx; color: #9a7252; font-size: 21rpx; }
+
+.invite-card { padding: 0 24rpx; }
+.invite-entry { display: flex; align-items: center; gap: 14rpx; min-height: 104rpx; }
+.invite-entry-copy { flex: 1; min-width: 0; }
+.invite-status { color: #61705b; font-size: 21rpx; font-weight: 700; }
+.invite-arrow { color: #9b8f85; font-size: 30rpx; }
+.invite-body { padding: 20rpx 0 24rpx; border-top: 1rpx solid rgba(151, 119, 82, 0.12); }
+.invite-panel { display: flex; gap: 16rpx; }
+
+.invite-code-box,
+.invite-qr-box { box-sizing: border-box; border: 1rpx solid rgba(151, 119, 82, 0.14); border-radius: 12rpx; background: #faf7f2; }
+.invite-code-box { flex: 1; min-width: 0; padding: 18rpx; }
+.invite-code { display: block; margin-top: 7rpx; color: #302923; font-size: 31rpx; font-weight: 900; word-break: break-all; }
+.invite-help { display: block; margin-top: 10rpx; color: #8a8179; font-size: 20rpx; line-height: 1.45; }
+.invite-qr-box { display: flex; flex: 0 0 170rpx; align-items: center; justify-content: center; width: 170rpx; min-height: 170rpx; padding: 12rpx; }
+.invite-qr { width: 146rpx; height: 146rpx; }
+.invite-qr-placeholder { color: #857a71; font-size: 21rpx; text-align: center; }
+.invite-actions { margin-top: 16rpx; }
+
+.reset-link,
+.logout-button {
+  width: 100%;
+  height: 66rpx;
+  margin: 12rpx 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 23rpx;
+  line-height: 66rpx;
 }
 
-.invite-qr-placeholder {
-  color: #7f6650;
-  font-size: 22rpx;
-  line-height: 1.35;
-  text-align: center;
-}
-
-.invite-actions {
-  margin-top: 20rpx;
-}
-
-.action-btn {
-  margin-top: 18rpx;
-}
+.reset-link { color: #8a6a50; }
+.settings-card { margin-bottom: 0; }
+.settings-list { margin-top: 16rpx; border-top: 1rpx solid rgba(151, 119, 82, 0.12); }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; min-height: 78rpx; border-bottom: 1rpx solid rgba(151, 119, 82, 0.1); }
+.settings-label { color: #514941; font-size: 25rpx; }
+.settings-value { color: #8b8179; font-size: 23rpx; }
+.settings-note { display: block; margin-top: 16rpx; color: #806d5e; font-size: 22rpx; line-height: 1.5; }
+.settings-action { margin-top: 18rpx; }
+.logout-button { margin-top: 16rpx; border-top: 1rpx solid rgba(151, 119, 82, 0.12); color: #9b4d47; }

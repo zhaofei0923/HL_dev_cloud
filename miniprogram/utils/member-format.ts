@@ -182,6 +182,7 @@ export function normalizeMemberProfile(row: MemberRow, internal = false) {
     ...row,
     avatarUrl,
     photos,
+    hasUploadedPhotos: memberPhotos.length > 0,
     coverUrl: memberPhotos[0] || avatarUrl,
     displayName,
     metaText: `${age} · ${height} · ${city}`,

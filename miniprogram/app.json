@@ -1,6 +1,7 @@
 {
   "pages": [
     "pages/index/index",
+    "pages/user/member-claim",
     "pages/user/members",
     "pages/user/member-detail",
     "pages/user/salon",

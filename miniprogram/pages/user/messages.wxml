@@ -1,56 +1,81 @@
 <view class="page with-bottom-nav messages-page">
-  <view class="relationship-shell">
-    <view class="relationship-header">
-      <view class="relationship-heading">
-        <text class="eyebrow">心动关系</text>
-        <text class="section-title">看看谁正在等你的回应</text>
-        <text class="section-note">{{isPremiumMember ? '会员权益已开通，可查看资料并开启互选聊天。' : '人数公开，完整资料和互选聊天需开通会员。'}}</text>
+  <view class="messages-intro">
+    <text class="messages-title">消息</text>
+    <text class="messages-note">先处理最新会话，心动关系可在下方按需查看。</text>
+  </view>
+
+  <view class="conversation-shell">
+    <view class="row list-header conversation-header">
+      <view>
+        <text class="section-title">会话</text>
+        <text class="section-note">{{conversationLoading ? '正在加载消息' : '按最新消息排序'}}</text>
       </view>
-      <text class="relationship-status {{isPremiumMember ? 'open' : 'locked'}}">{{isPremiumMember ? '已开通' : '待开通'}}</text>
+      <text class="conversation-total">{{conversationLoading ? '刷新中' : total + ' 条'}}</text>
     </view>
 
-    <view class="relationship-switch">
+    <block wx:if="{{list.length}}">
+      <view wx:for="{{list}}" wx:key="id" class="conversation-card" data-id="{{item.id}}" bindtap="openChat">
+        <image class="conversation-avatar" src="{{item.peerAvatar}}" mode="aspectFill"></image>
+        <view class="conversation-copy">
+          <view class="row conversation-title-row">
+            <text class="item-title conversation-title">{{item.peerName}}</text>
+            <text class="conversation-time">{{item.timeText}}</text>
+          </view>
+          <text class="item-meta conversation-preview">{{item.preview}}</text>
+          <text class="conversation-type">{{item.typeText}}</text>
+        </view>
+        <text wx:if="{{item.hasUnread}}" class="unread-badge">{{item.unreadText}}</text>
+      </view>
+    </block>
+
+    <view wx:else class="empty conversation-empty">
+      <text class="empty-title">{{conversationLoading ? '正在加载消息' : emptyTitle}}</text>
+      <text class="empty-note">{{conversationLoading ? '请稍候，正在整理你的会话。' : emptyNote}}</text>
+      <button class="btn ghost empty-action" bindtap="goMembers">去看推荐</button>
+    </view>
+  </view>
+
+  <view class="relationship-shell">
+    <view class="relationship-header compact">
+      <view class="relationship-heading">
+        <text class="section-title">心动关系</text>
+        <text class="section-note">喜欢我的与互相喜欢</text>
+      </view>
+      <text class="relationship-status {{isPremiumMember ? 'open' : 'locked'}}">{{isPremiumMember ? '已开通' : '会员可见'}}</text>
+    </view>
+
+    <view class="relationship-switch compact-switch">
       <view
-        class="relationship-tab incoming {{relationshipType === 'incoming' ? 'active' : ''}}"
+        class="relationship-tab compact-tab incoming {{relationshipType === 'incoming' ? 'active' : ''}}"
         data-type="incoming"
         bindtap="switchRelationship"
         aria-role="button"
         aria-label="查看喜欢我的人"
       >
-        <view class="relationship-symbol relationship-symbol-heart">
-          <view class="heart-shape"></view>
-        </view>
-        <view class="relationship-tab-copy">
-          <text class="relationship-count">{{relationshipCounts.incoming}}</text>
-          <text class="relationship-label">喜欢我的</text>
-          <text class="relationship-tab-note">等待我的回应</text>
-        </view>
+        <text class="relationship-count">{{relationshipCounts.incoming}}</text>
+        <text class="relationship-label">喜欢我的</text>
       </view>
-
       <view
-        class="relationship-tab mutual {{relationshipType === 'mutual' ? 'active' : ''}}"
+        class="relationship-tab compact-tab mutual {{relationshipType === 'mutual' ? 'active' : ''}}"
         data-type="mutual"
         bindtap="switchRelationship"
         aria-role="button"
         aria-label="查看互相喜欢的人"
       >
-        <view class="relationship-symbol relationship-symbol-mutual">
-          <view class="heart-shape heart-one"></view>
-          <view class="heart-shape heart-two"></view>
-        </view>
-        <view class="relationship-tab-copy">
-          <text class="relationship-count">{{relationshipCounts.mutual}}</text>
-          <text class="relationship-label">互相喜欢</text>
-          <text class="relationship-tab-note">开启心动聊天</text>
-        </view>
+        <text class="relationship-count">{{relationshipCounts.mutual}}</text>
+        <text class="relationship-label">互相喜欢</text>
       </view>
     </view>
 
-    <view class="relationship-panel">
+    <button class="relationship-expand" bindtap="toggleRelationshipOpen">
+      {{relationshipOpen ? '收起心动关系' : '查看心动关系'}}
+    </button>
+
+    <view wx:if="{{relationshipOpen}}" class="relationship-panel">
       <view class="relationship-panel-head">
         <view>
           <text class="relationship-panel-title">{{relationshipType === 'incoming' ? '喜欢我的人' : '互相喜欢的人'}}</text>
-          <text class="relationship-panel-note">{{relationshipType === 'incoming' ? '回应爱心后会移入互相喜欢' : '双方都表达了好感'}}</text>
+          <text class="relationship-panel-note">{{relationshipType === 'incoming' ? '回应后会移入互相喜欢' : '双方都表达了好感'}}</text>
         </view>
         <text class="relationship-panel-count">{{relationshipTotal}} 人</text>
       </view>
@@ -63,8 +88,8 @@
 
       <view wx:elif="{{relationshipLoading && !relationshipItems.length}}" class="relationship-state">
         <view class="relationship-loading-mark"></view>
-        <text class="relationship-state-title">正在整理心动关系</text>
-        <text class="relationship-state-note">请稍候，正在更新最新互动。</text>
+        <text class="relationship-state-title">正在更新心动关系</text>
+        <text class="relationship-state-note">请稍候，正在读取最新互动。</text>
       </view>
 
       <view
@@ -98,7 +123,7 @@
             data-id="{{item.id}}"
             catchtap="respondFavorite"
             aria-role="button"
-            aria-label="回应爱心"
+            aria-label="回应喜欢"
             aria-disabled="{{respondingId !== ''}}"
           >
             <view class="heart-shape"></view>
@@ -120,7 +145,7 @@
 
       <view wx:else class="relationship-state empty">
         <text class="relationship-state-title">{{relationshipType === 'incoming' ? '暂时没有待回应的喜欢' : '还没有互相喜欢的人'}}</text>
-        <text class="relationship-state-note">{{relationshipType === 'incoming' ? '完善资料并多看看推荐会员，会提高被喜欢的机会。' : '双方都点亮爱心后，会自动出现在这里。'}}</text>
+        <text class="relationship-state-note">{{relationshipType === 'incoming' ? '完善资料并多看看推荐会员，会提高被喜欢的机会。' : '双方都表达喜欢后，会自动出现在这里。'}}</text>
       </view>
 
       <button
@@ -139,39 +164,6 @@
           bindtap="loadMoreRelationships"
         >加载更多</button>
       </view>
-    </view>
-  </view>
-
-  <view class="card list-shell conversation-shell">
-    <view class="row list-header">
-      <view>
-        <text class="section-title">会话列表</text>
-        <text class="section-note">{{conversationLoading ? '正在加载消息' : '按最新消息排序'}}</text>
-      </view>
-      <text class="tag gold">{{conversationLoading ? '刷新中' : total + ' 条'}}</text>
-    </view>
-
-    <block wx:if="{{list.length}}">
-      <view wx:for="{{list}}" wx:key="id" class="list-card conversation-card" data-id="{{item.id}}" bindtap="openChat">
-        <image class="conversation-avatar" src="{{item.peerAvatar}}" mode="aspectFill"></image>
-        <view class="conversation-copy">
-          <view class="row conversation-title-row">
-            <text class="item-title conversation-title">{{item.peerName}}</text>
-            <text class="conversation-time">{{item.timeText}}</text>
-          </view>
-          <text class="item-meta conversation-preview">{{item.preview}}</text>
-          <view class="tag-row conversation-tags">
-            <text class="tag gold">{{item.typeText}}</text>
-          </view>
-        </view>
-        <text wx:if="{{item.hasUnread}}" class="unread-badge">{{item.unreadText}}</text>
-      </view>
-    </block>
-
-    <view wx:else class="empty">
-      <text class="empty-title">{{conversationLoading ? '正在加载消息' : emptyTitle}}</text>
-      <text class="empty-note">{{conversationLoading ? '请稍候，正在整理你的会话。' : emptyNote}}</text>
-      <button class="btn ghost empty-action" bindtap="goMembers">去看推荐</button>
     </view>
   </view>
 

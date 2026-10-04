@@ -1,82 +1,197 @@
 <view class="page safe-bottom detail-page">
   <block wx:if="{{member}}">
-    <view class="card hero detail-hero">
-      <image class="hero-cover" src="{{member.coverUrl}}" mode="aspectFill"></image>
-      <view class="hero-mask"></view>
-      <view class="hero-content">
-        <image class="detail-avatar" src="{{member.avatarUrl}}" mode="aspectFill"></image>
-        <text class="eyebrow">{{isOwn ? '内部会员档案' : '资源池会员'}}</text>
-        <text class="title">{{member.displayName}}</text>
-        <text class="subtitle">{{member.metaText}}</text>
-        <view class="tag-row hero-tags">
-          <text wx:for="{{member.profileTags}}" wx:key="*this" class="tag gold">{{item}}</text>
+    <view class="card identity-card">
+      <image class="detail-avatar" src="{{member.avatarUrl}}" mode="aspectFill"></image>
+      <view class="identity-copy">
+        <view class="identity-name-row">
+          <text class="title">{{member.displayName}}</text>
+          <text class="tag gold">{{isOwn ? '我的会员' : '合作资源'}}</text>
+          <text wx:if="{{isOwn}}" class="identity-state {{member.identityStatus}}">{{member.identityStatusText}}</text>
+        </view>
+        <text class="identity-meta">{{member.metaText}} · {{member.occupationText}}</text>
+        <text wx:if="{{isOwn && member.memberNo}}" class="member-number">会员编号 {{member.memberNo}}</text>
+        <view class="tag-row identity-tags">
+          <text wx:for="{{member.profileTags}}" wx:key="*this" class="tag">{{item}}</text>
         </view>
       </view>
     </view>
 
-    <view class="card gallery-card">
-      <view class="row list-header">
+    <view wx:if="{{isOwn}}" class="card primary-actions-card">
+      <button wx:if="{{member.identityStatus === 'pending' && claimInvite}}" class="btn gold primary-chat" open-type="share" data-claim="member" loading="{{claimInviteLoading}}" disabled="{{claimInviteLoading}}">发送给会员</button>
+      <button wx:elif="{{member.identityStatus === 'pending'}}" class="btn gold primary-chat" loading="{{claimInviteLoading}}" disabled="{{claimInviteLoading}}" bindtap="prepareClaimInvite">{{member.phone ? '生成认领邀请' : '补录手机号'}}</button>
+      <button wx:else class="btn gold primary-chat" loading="{{chatStarting}}" disabled="{{chatStarting}}" bindtap="startChat">发消息</button>
+      <view class="display-control">
         <view>
-          <text class="section-title">照片墙</text>
-          <text class="section-note">用于判断生活方式和展示完整度。</text>
+          <text class="display-label">公开展示</text>
+          <text class="display-note">{{member.displayEnabled ? '已进入浏览与资源池' : '仅内部可见'}}</text>
         </view>
-        <text class="tag gold">{{member.photos.length}} 张</text>
+        <switch checked="{{member.displayEnabled}}" color="#9a6a45" disabled="{{displaySaving}}" bindchange="onDisplayEnabledChange"></switch>
       </view>
-      <swiper class="photo-swiper" indicator-dots circular>
-        <swiper-item wx:for="{{member.photos}}" wx:key="*this" class="photo-slide">
-          <image class="photo-item" src="{{item}}" mode="aspectFit"></image>
-        </swiper-item>
-      </swiper>
     </view>
 
-    <view class="card info-card">
-      <text class="section-title">基础资料</text>
-      <view class="info-grid">
-        <view wx:for="{{member.baseRows}}" wx:key="label" class="info-cell">
-          <text class="metric-label">{{item.label}}</text>
-          <text class="metric-value small">{{item.value}}</text>
+    <view wx:if="{{isOwn && member.identityStatus === 'pending'}}" class="claim-notice-card">
+      <view class="claim-notice-copy">
+        <text class="claim-notice-title">等待会员绑定微信</text>
+        <text class="claim-notice-note">发送一次性邀请后，会员需用本人微信登录并验证留存手机号。认领成功前不会开放在线消息。</text>
+      </view>
+      <view wx:if="{{!member.phone}}" class="claim-phone-row">
+        <input class="claim-phone-input" type="number" maxlength="11" value="{{claimPhone}}" focus="{{claimPhoneFocus}}" bindinput="onClaimPhoneInput" bindblur="onClaimPhoneBlur" placeholder="补录会员本人手机号" />
+        <button class="btn gold claim-phone-button" loading="{{claimPhoneSaving}}" disabled="{{claimPhoneSaving}}" bindtap="saveClaimPhoneAndPrepare">保存并生成</button>
+      </view>
+      <view wx:if="{{claimInvite && claimInvite.member}}" class="claim-share-ready">
+        <text class="claim-ready-text">已为 {{claimInvite.member.phoneMasked}} 生成邀请</text>
+        <button class="btn ghost claim-share-button" loading="{{claimInviteLoading}}" disabled="{{claimInviteLoading}}" bindtap="regenerateClaimInvite">重新生成</button>
+      </view>
+    </view>
+
+    <view wx:if="{{isOwn}}" class="detail-tabs">
+      <view class="detail-tab {{activeDetailTab === 'profile' ? 'active' : ''}}" data-tab="profile" bindtap="setDetailTab">会员档案</view>
+      <view class="detail-tab {{activeDetailTab === 'matching' ? 'active' : ''}}" data-tab="matching" bindtap="setDetailTab">匹配跟进</view>
+      <view class="detail-tab {{activeDetailTab === 'service' ? 'active' : ''}}" data-tab="service" bindtap="setDetailTab">服务记录</view>
+    </view>
+
+    <block wx:if="{{!isOwn || activeDetailTab === 'profile'}}">
+      <view wx:if="{{isOwn && privateSections.length}}" class="private-notice">
+        <text class="private-mark">内部</text>
+        <view class="private-notice-copy">
+          <text class="private-title">敏感资料仅限内部服务</text>
+          <text class="private-note">验资、资产、联系方式和风险备注不会进入资源池。</text>
+        </view>
+        <text class="private-state">{{complianceVerified ? '已确认' : '待确认'}}</text>
+      </view>
+
+      <view wx:if="{{member.hasUploadedPhotos}}" class="card gallery-card">
+        <view class="row list-header">
+          <text class="section-title">照片</text>
+          <text class="section-note">{{member.photos.length}} 张</text>
+        </view>
+        <swiper class="photo-swiper" indicator-dots circular>
+          <swiper-item wx:for="{{member.photos}}" wx:key="*this" class="photo-slide">
+            <image class="photo-item" src="{{item}}" mode="aspectFit"></image>
+          </swiper-item>
+        </swiper>
+      </view>
+
+      <view class="card info-card">
+        <text class="section-title">基础资料</text>
+        <view class="info-list">
+          <view wx:for="{{member.baseRows}}" wx:key="label" class="info-row">
+            <text class="info-label">{{item.label}}</text>
+            <text class="info-value">{{item.value}}</text>
+          </view>
         </view>
       </view>
-    </view>
 
-    <view class="card info-card">
-      <text class="section-title">职业与服务画像</text>
-      <view class="info-grid">
-        <view wx:for="{{member.careerRows}}" wx:key="label" class="info-cell">
-          <text class="metric-label">{{item.label}}</text>
-          <text class="metric-value small">{{item.value}}</text>
+      <view class="card info-card">
+        <text class="section-title">职业与生活</text>
+        <view class="info-list">
+          <view wx:for="{{member.careerRows}}" wx:key="label" class="info-row">
+            <text class="info-label">{{item.label}}</text>
+            <text class="info-value">{{item.value}}</text>
+          </view>
+          <view wx:for="{{member.lifeRows}}" wx:key="label" class="info-row">
+            <text class="info-label">{{item.label}}</text>
+            <text class="info-value">{{item.value}}</text>
+          </view>
         </view>
       </view>
-      <view class="tag-row">
-        <text wx:for="{{member.lifeRows}}" wx:key="label" class="tag">{{item.label}}：{{item.value}}</text>
+
+      <view class="card story-card">
+        <text class="section-title">个人介绍</text>
+        <text class="story-text">{{member.introText}}</text>
+        <block wx:if="{{!isOwn}}">
+          <view class="divider"></view>
+          <text class="section-title">择偶期待</text>
+          <text class="story-text">{{member.partnerText}}</text>
+        </block>
       </view>
-    </view>
 
-    <view class="card story-card">
-      <text class="section-title">自我介绍</text>
-      <text class="item-desc">{{member.introText}}</text>
-      <view class="divider"></view>
-      <text class="section-title">择偶期待</text>
-      <text class="item-desc">{{member.partnerText}}</text>
-    </view>
-
-    <view wx:if="{{isOwn}}" class="card notice-card">
-      <view class="display-control-row">
-        <view class="display-control-copy">
-          <text class="section-title">展示状态</text>
-          <text class="section-note">{{member.displayEnabled ? '公开到会员浏览和主理人资源池，联系方式和主理人备注不公开。' : '仅内部服务跟进，不进入公开会员浏览和主理人资源池。'}}</text>
+      <view wx:if="{{isOwn && privateLifePhotos.length}}" class="card private-gallery-card">
+        <view class="row list-header">
+          <view>
+            <text class="section-title">内部生活照</text>
+            <text class="section-note">仅用于内部匹配参考</text>
+          </view>
+          <text class="private-count">{{privateLifePhotos.length}} 张</text>
         </view>
-        <switch checked="{{member.displayEnabled}}" color="#b4814f" disabled="{{displaySaving}}" bindchange="onDisplayEnabledChange"></switch>
+        <view class="private-photo-grid">
+          <image wx:for="{{privateLifePhotos}}" wx:key="*this" class="private-photo" src="{{item}}" mode="aspectFill"></image>
+        </view>
       </view>
-      <view class="divider"></view>
-      <text class="section-title">主理人备注</text>
-      <text class="section-note">{{member.remarkText}}</text>
-      <button class="btn gold chat-btn" loading="{{chatStarting}}" disabled="{{chatStarting}}" bindtap="startChat">发消息</button>
-    </view>
 
-    <view wx:else class="card notice-card">
-      <text class="section-title">协作边界</text>
-      <text class="section-note">资源池档案仅展示协作所需信息，对方主理人的内部备注和服务记录不会公开。</text>
+      <block wx:if="{{isOwn && profilePrivateSections.length}}">
+        <view wx:for="{{profilePrivateSections}}" wx:key="title" wx:for-item="section" class="card private-section-card">
+          <text class="section-title">{{section.title}}</text>
+          <view class="private-row-list">
+            <view wx:for="{{section.rows}}" wx:key="label" wx:for-item="row" class="private-row {{row.sensitive ? 'sensitive' : ''}}">
+              <text class="private-label">{{row.label}}</text>
+              <text class="private-value">{{row.value}}</text>
+            </view>
+          </view>
+        </view>
+      </block>
+    </block>
+
+    <block wx:if="{{isOwn && activeDetailTab === 'matching'}}">
+      <view class="card matching-summary">
+        <view class="row">
+          <view>
+            <text class="section-title">匹配状态</text>
+            <text class="section-note">最近推荐：{{member.lastRecommendStatusText}}</text>
+          </view>
+          <text class="tag gold">{{member.displayStatusText}}</text>
+        </view>
+      </view>
+      <view class="card story-card">
+        <text class="section-title">择偶期待</text>
+        <text class="story-text">{{member.partnerText}}</text>
+      </view>
+      <view wx:for="{{matchingPrivateSections}}" wx:key="title" wx:for-item="section" class="card private-section-card">
+        <text class="section-title">{{section.title}}</text>
+        <view class="private-row-list">
+          <view wx:for="{{section.rows}}" wx:key="label" wx:for-item="row" class="private-row {{row.sensitive ? 'sensitive' : ''}}">
+            <text class="private-label">{{row.label}}</text>
+            <text class="private-value">{{row.value}}</text>
+          </view>
+        </view>
+      </view>
+      <button wx:if="{{member.identityStatus !== 'pending'}}" class="btn gold tab-action" loading="{{chatStarting}}" disabled="{{chatStarting}}" bindtap="startChat">联系会员跟进</button>
+      <button wx:else class="btn ghost tab-action" disabled>会员认领后可联系</button>
+    </block>
+
+    <block wx:if="{{isOwn && activeDetailTab === 'service'}}">
+      <view wx:for="{{servicePrivateSections}}" wx:key="title" wx:for-item="section" class="card private-section-card">
+        <text class="section-title">{{section.title}}</text>
+        <view class="private-row-list">
+          <view wx:for="{{section.rows}}" wx:key="label" wx:for-item="row" class="private-row {{row.sensitive ? 'sensitive' : ''}}">
+            <text class="private-label">{{row.label}}</text>
+            <text class="private-value">{{row.value}}</text>
+          </view>
+        </view>
+      </view>
+      <view class="card remark-card">
+        <text class="section-title">主理人备注</text>
+        <text class="story-text">{{member.remarkText}}</text>
+      </view>
+      <view class="card service-status-card">
+        <view class="service-status-row">
+          <text class="service-label">资料完整度</text>
+          <text class="service-value">{{member.profileCompletionText}}</text>
+        </view>
+        <view class="service-status-row">
+          <text class="service-label">服务等级</text>
+          <text class="service-value">{{member.serviceLevelText}}</text>
+        </view>
+        <view class="service-status-row">
+          <text class="service-label">公开状态</text>
+          <text class="service-value">{{member.displayStatusText}}</text>
+        </view>
+      </view>
+    </block>
+
+    <view wx:if="{{!isOwn}}" class="collaboration-note">
+      <text class="private-title">合作资料范围</text>
+      <text class="private-note">仅展示协作所需信息，对方主理人的内部备注和服务记录不会公开。</text>
     </view>
   </block>
 

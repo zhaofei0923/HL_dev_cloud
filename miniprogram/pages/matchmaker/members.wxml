@@ -1,33 +1,63 @@
 <view class="page safe-bottom {{canOperate ? 'with-bottom-nav' : ''}}">
   <block wx:if="{{canOperate}}">
-    <view class="card hero members-hero">
-      <text class="eyebrow">会员经营</text>
-      <text class="title">会员经营</text>
-      <text class="subtitle">录入、筛选和维护名下会员，沉淀可展示、可互推的服务资源。</text>
-      <view class="summary-strip">
-        <view class="summary-item">
-          <text class="summary-value">{{total}}</text>
-          <text class="summary-label">名下会员</text>
+    <view class="members-header">
+      <view class="members-heading">
+        <text class="eyebrow">会员管理</text>
+        <text class="title">我的会员</text>
+        <text class="subtitle">{{total}} 位会员</text>
+      </view>
+      <button class="add-member-btn" bindtap="goAdd">＋ 录入会员</button>
+    </view>
+
+    <view class="card search-card">
+      <view class="search-bar">
+        <text class="search-icon">⌕</text>
+        <input class="search-input" value="{{keyword}}" bindinput="onKeyword" confirm-type="search" bindconfirm="load" placeholder="搜索姓名、城市或职业" />
+        <button class="search-submit" loading="{{loading}}" disabled="{{loading}}" bindtap="load">搜索</button>
+      </view>
+      <view class="quick-filter-row">
+        <view class="quick-filter {{gender === '' ? 'active' : ''}}" data-gender="" bindtap="setGender">全部</view>
+        <view class="quick-filter {{gender === '1' ? 'active' : ''}}" data-gender="1" bindtap="setGender">男士</view>
+        <view class="quick-filter {{gender === '2' ? 'active' : ''}}" data-gender="2" bindtap="setGender">女士</view>
+        <view class="quick-filter filter-trigger {{filtersOpen ? 'active' : ''}}" bindtap="toggleFilters">筛选{{filtersOpen ? '收起' : ''}}</view>
+      </view>
+      <view wx:if="{{filtersOpen}}" class="advanced-filters">
+        <view class="field filter-field">
+          <text class="field-label">城市</text>
+          <input class="field-input" value="{{city}}" bindinput="onCity" confirm-type="search" bindconfirm="load" placeholder="输入城市" />
         </view>
-        <view class="summary-item">
-          <text class="summary-value">资源池</text>
-          <text class="summary-label">可互推</text>
+        <view class="filter-grid">
+          <picker mode="selector" range="{{memberTypeOptions}}" bindchange="onMemberTypeChange">
+            <view class="field picker-field">
+              <text class="field-label">会员类型</text>
+              <text class="field-input picker-value">{{memberTypeLabel}}</text>
+            </view>
+          </picker>
+          <picker mode="selector" range="{{serviceLevelOptions}}" bindchange="onServiceLevelChange">
+            <view class="field picker-field">
+              <text class="field-label">服务等级</text>
+              <text class="field-input picker-value">{{serviceLevelLabel}}</text>
+            </view>
+          </picker>
         </view>
-        <view class="summary-item">
-          <text class="summary-value">录入</text>
-          <text class="summary-label">持续维护</text>
+        <view class="button-row filter-actions">
+          <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="load">应用筛选</button>
+          <button class="btn ghost" disabled="{{loading}}" bindtap="clearFilters">重置</button>
         </view>
       </view>
     </view>
 
-    <view wx:if="{{pendingRequests.length}}" class="card request-card">
-      <view class="row request-head">
-        <view>
-          <text class="section-title">待审批会员申请</text>
-          <text class="section-note">{{pendingRequests.length}} 位会员申请添加你为主理人。</text>
-        </view>
-        <text class="tag gold">待处理</text>
+    <view wx:if="{{pendingRequests.length}}" class="notice-entry {{approvalsOpen ? 'open' : ''}}" bindtap="toggleApprovals">
+      <view class="notice-dot"></view>
+      <view class="notice-copy">
+        <text class="notice-title">会员申请待处理</text>
+        <text class="notice-note">{{pendingRequests.length}} 位会员申请由你服务</text>
       </view>
+      <text class="notice-count">{{pendingRequests.length}}</text>
+      <text class="notice-arrow">{{approvalsOpen ? '⌃' : '›'}}</text>
+    </view>
+
+    <view wx:if="{{pendingRequests.length && approvalsOpen}}" class="card request-card">
       <view wx:for="{{pendingRequests}}" wx:key="id" class="request-item">
         <view class="request-copy">
           <text class="item-title">{{item.displayName}}</text>
@@ -41,137 +71,92 @@
       </view>
     </view>
 
-    <view class="card internal-recommend-card">
-      <view class="row recommend-head">
-        <view>
-          <text class="section-title">名下会员互推</text>
-          <text class="section-note">选择两名名下会员，创建待跟进互推记录并通知双方。</text>
-        </view>
-        <text class="tag gold">{{recommendReady ? '可互推' : '待选择'}}</text>
-      </view>
-      <view class="recommend-select-grid">
-        <picker wx:if="{{recommendAOptions.length}}" mode="selector" range="{{recommendAOptions}}" value="{{recommendAIndex}}" bindchange="onRecommendAChange">
-          <view class="field recommend-picker">
-            <text class="field-label">会员 A</text>
-            <text class="field-input picker-value">{{recommendA.name || '请选择会员'}}</text>
-          </view>
-        </picker>
-        <picker wx:if="{{recommendBOptions.length}}" mode="selector" range="{{recommendBOptions}}" value="{{recommendBIndex}}" bindchange="onRecommendBChange">
-          <view class="field recommend-picker">
-            <text class="field-label">会员 B</text>
-            <text class="field-input picker-value">{{recommendB.name || '请选择会员'}}</text>
-          </view>
-        </picker>
-      </view>
-      <view class="recommend-pair">
-        <view class="recommend-person {{recommendA.id ? '' : 'empty'}}">
-          <text class="recommend-name">{{recommendA.name || '会员 A'}}</text>
-          <text class="recommend-meta">{{recommendA.metaText || '请选择第一位会员'}}</text>
-          <text class="recommend-meta">{{recommendA.occupationText || '职业待完善'}}</text>
-          <view class="tag-row recommend-tags">
-            <text class="tag gold">完整度 {{recommendA.completionText || '-'}}</text>
-            <text class="tag">推荐 {{recommendA.statusText || '-'}}</text>
-          </view>
-        </view>
-        <view class="recommend-person {{recommendB.id ? '' : 'empty'}}">
-          <text class="recommend-name">{{recommendB.name || '会员 B'}}</text>
-          <text class="recommend-meta">{{recommendB.metaText || '请选择第二位会员'}}</text>
-          <text class="recommend-meta">{{recommendB.occupationText || '职业待完善'}}</text>
-          <view class="tag-row recommend-tags">
-            <text class="tag gold">完整度 {{recommendB.completionText || '-'}}</text>
-            <text class="tag">推荐 {{recommendB.statusText || '-'}}</text>
-          </view>
-        </view>
-      </view>
-      <text class="recommend-hint">{{recommendHint}}</text>
-      <button class="btn gold internal-recommend-btn" loading="{{recommendLoading}}" disabled="{{recommendLoading || !recommendReady}}" bindtap="recommendInternal">发起互推</button>
-    </view>
-
-    <view class="card search-card">
-      <view class="row search-head">
-        <view>
-          <text class="section-title">查找会员</text>
-          <text class="section-note">按姓名、城市、性别、会员类型和服务等级筛选。</text>
-        </view>
-        <text class="tag gold">{{loading ? '加载中' : '已整理'}}</text>
-      </view>
-      <view class="field search-field">
-        <text class="field-label">关键词</text>
-        <input class="field-input" value="{{keyword}}" bindinput="onKeyword" confirm-type="search" bindconfirm="load" placeholder="输入姓名 / 城市 / 职业" />
-      </view>
-      <view class="field search-field compact-field">
-        <text class="field-label">城市</text>
-        <input class="field-input" value="{{city}}" bindinput="onCity" confirm-type="search" bindconfirm="load" placeholder="输入城市" />
-      </view>
-      <view class="quick-filter-row">
-        <view class="quick-filter {{gender === '' ? 'active' : ''}}" data-gender="" bindtap="setGender">全部</view>
-        <view class="quick-filter {{gender === '1' ? 'active' : ''}}" data-gender="1" bindtap="setGender">男士</view>
-        <view class="quick-filter {{gender === '2' ? 'active' : ''}}" data-gender="2" bindtap="setGender">女士</view>
-      </view>
-      <view class="filter-grid">
-        <picker mode="selector" range="{{memberTypeOptions}}" bindchange="onMemberTypeChange">
-          <view class="field picker-field">
-            <text class="field-label">会员类型</text>
-            <text class="field-input picker-value">{{memberTypeLabel}}</text>
-          </view>
-        </picker>
-        <picker mode="selector" range="{{serviceLevelOptions}}" bindchange="onServiceLevelChange">
-          <view class="field picker-field">
-            <text class="field-label">服务等级</text>
-            <text class="field-input picker-value">{{serviceLevelLabel}}</text>
-          </view>
-        </picker>
-      </view>
-      <view class="button-row">
-        <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="load">搜索</button>
-        <button class="btn secondary" disabled="{{loading}}" bindtap="clearFilters">重置筛选</button>
-        <button class="btn secondary" bindtap="goAdd">录入会员</button>
-      </view>
-      <button class="btn ghost resource-link" bindtap="goResources">进入会员展示资源池</button>
-    </view>
-
-    <view class="card list-shell">
+    <view class="card list-shell members-list-shell">
       <view class="row list-header">
         <view>
-          <text class="section-title">会员列表</text>
-          <text class="section-note">{{total}} 位会员</text>
+          <text class="section-title">会员名单</text>
+          <text class="section-note">{{loading ? '正在更新' : total + ' 位符合条件'}}</text>
         </view>
+        <text class="list-state">{{loading ? '刷新中' : '点击查看档案'}}</text>
       </view>
-
       <block wx:if="{{list.length}}">
-        <view wx:for="{{list}}" wx:key="id" class="list-card member-card" data-id="{{item.id}}" bindtap="openDetail">
-          <view class="member-media">
-            <image class="member-cover" src="{{item.coverUrl}}" mode="aspectFill"></image>
-            <image class="member-avatar" src="{{item.avatarUrl}}" mode="aspectFill"></image>
-          </view>
-          <view class="row member-head">
-            <view class="member-copy">
-              <text class="item-title">{{item.displayName}}</text>
-              <text class="item-meta">{{item.metaText}}</text>
-              <text class="item-meta">{{item.occupationText}}</text>
+        <view wx:for="{{list}}" wx:key="id" class="member-list-item" data-id="{{item.id}}" bindtap="openDetail">
+          <image class="member-avatar" src="{{item.avatarUrl}}" mode="aspectFill"></image>
+          <view class="member-copy">
+            <view class="member-name-row">
+              <text class="item-title member-name">{{item.displayName}}</text>
+              <text class="member-type">{{item.memberTypeText}}</text>
             </view>
-            <text class="tag gold">{{item.memberTypeText}}</text>
+            <text class="item-meta member-meta">{{item.metaText}}</text>
+            <text class="item-meta member-meta">{{item.occupationText}}</text>
+            <view class="member-status-row">
+              <text class="status-text {{item.needsAttention ? 'attention' : ''}}">资料 {{item.profileCompletionText}}</text>
+              <text class="status-divider">·</text>
+              <text class="status-text">{{item.lastRecommendStatusText}}</text>
+              <text class="status-divider">·</text>
+              <text class="status-text">{{item.serviceLevelText}}</text>
+            </view>
           </view>
-          <view class="tag-row">
-            <text class="tag">{{item.city || '城市待确认'}}</text>
-            <text class="tag rose">{{item.incomeText}}</text>
-            <text class="tag gold">{{item.displayStatusText}}</text>
+          <view class="member-side">
+            <text class="claim-state {{item.claimPending ? 'pending' : ''}}">{{item.identityStatusText}}</text>
+            <text class="display-state">{{item.displayStatusText}}</text>
+            <button class="more-btn" data-id="{{item.id}}" catchtap="toggleMemberActions">•••</button>
           </view>
-          <view class="member-status-row">
-            <text class="status-pill">完整度 {{item.profileCompletionText}}</text>
-            <text class="status-pill">推荐 {{item.lastRecommendStatusText}}</text>
-            <text class="status-pill">{{item.serviceLevelText}}</text>
-          </view>
-          <view class="card-action-row">
-            <text class="detail-link">查看完整档案</text>
-            <button class="btn danger remove-btn" data-id="{{item.id}}" loading="{{removingId === item.id}}" disabled="{{removingId === item.id}}" catchtap="remove">移除会员</button>
+          <view wx:if="{{activeMemberActionId === item.idText}}" class="member-action-panel" catchtap="holdTap">
+            <button class="btn secondary compact-action" data-id="{{item.id}}" catchtap="openDetail">查看完整档案</button>
+            <button class="btn danger compact-action" data-id="{{item.id}}" loading="{{removingId === item.idText}}" disabled="{{removingId === item.idText}}" catchtap="remove">移除会员</button>
           </view>
         </view>
       </block>
-
       <view wx:else class="empty">
         <text class="empty-title">{{loading ? '正在加载会员' : '暂无会员'}}</text>
-        <text class="empty-note">{{loading ? '请稍候，正在整理会员列表。' : '先录入一位会员，再进入资源展示和互推流程。'}}</text>
+        <text class="empty-note">{{loading ? '请稍候，正在整理会员列表。' : '先录入一位会员，建立第一份服务档案。'}}</text>
+        <button wx:if="{{!loading}}" class="btn gold empty-action" bindtap="goAdd">录入第一位会员</button>
+      </view>
+    </view>
+
+    <view class="card collaboration-card">
+      <view class="collaboration-entry" bindtap="toggleRecommend">
+        <view class="collaboration-copy">
+          <text class="section-title">会员协作</text>
+          <text class="section-note">名下会员互推与跨主理人资源</text>
+        </view>
+        <text class="collaboration-arrow">{{recommendOpen ? '收起' : '展开'}}</text>
+      </view>
+      <view wx:if="{{recommendOpen}}" class="collaboration-body">
+        <view class="collaboration-links">
+          <button class="btn secondary" bindtap="goResources">浏览合作资源</button>
+        </view>
+        <text class="subsection-title">名下会员互推</text>
+        <text class="section-note">选择两名会员，创建待跟进记录并通知双方。</text>
+        <view class="recommend-select-grid">
+          <picker wx:if="{{recommendAOptions.length}}" mode="selector" range="{{recommendAOptions}}" value="{{recommendAIndex}}" bindchange="onRecommendAChange">
+            <view class="field recommend-picker">
+              <text class="field-label">会员 A</text>
+              <text class="field-input picker-value">{{recommendA.name || '请选择会员'}}</text>
+            </view>
+          </picker>
+          <picker wx:if="{{recommendBOptions.length}}" mode="selector" range="{{recommendBOptions}}" value="{{recommendBIndex}}" bindchange="onRecommendBChange">
+            <view class="field recommend-picker">
+              <text class="field-label">会员 B</text>
+              <text class="field-input picker-value">{{recommendB.name || '请选择会员'}}</text>
+            </view>
+          </picker>
+        </view>
+        <view class="recommend-pair">
+          <view class="recommend-person {{recommendA.id ? '' : 'empty'}}">
+            <text class="recommend-name">{{recommendA.name || '会员 A'}}</text>
+            <text class="recommend-meta">{{recommendA.metaText || '请选择第一位会员'}}</text>
+            <text class="recommend-meta">完整度 {{recommendA.completionText || '-'}}</text>
+          </view>
+          <view class="recommend-person {{recommendB.id ? '' : 'empty'}}">
+            <text class="recommend-name">{{recommendB.name || '会员 B'}}</text>
+            <text class="recommend-meta">{{recommendB.metaText || '请选择第二位会员'}}</text>
+            <text class="recommend-meta">完整度 {{recommendB.completionText || '-'}}</text>
+          </view>
+        </view>
+        <text class="recommend-hint">{{recommendHint}}</text>
+        <button class="btn gold internal-recommend-btn" loading="{{recommendLoading}}" disabled="{{recommendLoading || !recommendReady}}" bindtap="recommendInternal">发起互推</button>
       </view>
     </view>
   </block>
@@ -179,7 +164,7 @@
   <view wx:else class="card approval-card">
     <view class="row approval-head">
       <view>
-        <text class="section-title">会员经营待开通</text>
+        <text class="section-title">会员管理待开通</text>
         <text class="section-note">{{statusNote}}</text>
       </view>
       <text class="tag {{statusTagClass}}">{{statusText}}</text>

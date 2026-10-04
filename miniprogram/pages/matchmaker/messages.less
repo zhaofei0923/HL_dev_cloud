@@ -2,12 +2,43 @@
   padding-top: 24rpx;
 }
 
-.messages-hero {
-  min-height: 260rpx;
+.messages-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20rpx;
+  padding: 12rpx 4rpx 26rpx;
+}
+
+.messages-header .eyebrow,
+.messages-header .title,
+.messages-header .subtitle {
+  display: block;
+}
+
+.messages-header .eyebrow {
+  color: #a17750;
+}
+
+.messages-header .title {
+  margin-top: 6rpx;
+  font-size: 40rpx;
+}
+
+.messages-header .subtitle {
+  margin-top: 7rpx;
+  color: #81776f;
+  font-size: 24rpx;
+}
+
+.pull-hint,
+.loading-text {
+  color: #94877d;
+  font-size: 21rpx;
 }
 
 .conversation-shell {
-  padding: 22rpx;
+  padding: 20rpx 22rpx;
 }
 
 .conversation-card {
@@ -16,7 +47,14 @@
   grid-template-columns: 92rpx minmax(0, 1fr);
   gap: 20rpx;
   align-items: center;
-  min-height: 132rpx;
+  min-height: 124rpx;
+  margin: 0;
+  padding: 20rpx 0;
+  border: 0;
+  border-top: 1rpx solid rgba(151, 119, 82, 0.12);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .conversation-avatar {
@@ -53,8 +91,11 @@
   line-height: 1.4;
 }
 
-.conversation-tags {
-  margin-top: 10rpx;
+.conversation-type {
+  display: block;
+  margin-top: 7rpx;
+  color: #9a7252;
+  font-size: 20rpx;
 }
 
 .unread-badge {

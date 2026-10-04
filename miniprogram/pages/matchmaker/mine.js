@@ -64,6 +64,7 @@ Page({
         inviteCard: defaultInviteCard(),
         inviteLoading: false,
         inviteResetting: false,
+        inviteOpen: false,
         canOperate: false,
         statusText: '待审批',
         statusTagClass: '',
@@ -151,6 +152,9 @@ Page({
         if (!fileID)
             return;
         wx.previewImage({ urls: [fileID] });
+    },
+    toggleInvite() {
+        this.setData({ inviteOpen: !this.data.inviteOpen });
     },
     async resetInviteCode() {
         if (this.data.inviteResetting)

@@ -46,6 +46,8 @@ test('internal checkout and confirmation require the server callback token', () 
   assert.match(apiSource, /async confirmPayment\(data[\s\S]*assertPaymentCallbackToken\(data\.callbackToken\)/);
   assert.match(apiSource, /paymentConfirmationMatches\(currentOrder, data\)/);
   assert.match(apiSource, /db\.runTransaction/);
+  assert.match(apiSource, /memberRef\.update\(\{ data: memberPatch \}\)/);
+  assert.match(apiSource, /orderRef\.update\(\{ data: orderPatch \}\)/);
 });
 
 test('mini program sends only the server order number to the payment function', () => {

@@ -1,5 +1,5 @@
 {
-  "navigationBarTitleText": "沙龙管理",
+  "navigationBarTitleText": "活动管理",
   "usingComponents": {
     "bottom-nav": "/components/bottom-nav/bottom-nav"
   }

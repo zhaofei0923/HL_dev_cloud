@@ -3,7 +3,13 @@ import { normalizeMemberProfile } from '../../utils/member-format'
 import { matchmakerApi } from '../../services/matchmaker'
 
 function normalizeMember(row: any) {
-  return normalizeMemberProfile(row, true)
+  const member = normalizeMemberProfile(row, true)
+  return {
+    ...member,
+    idText: String(row.id || ''),
+    needsAttention: Number((member.profileCompletion || {}).percent || 0) < 70,
+    claimPending: (member as any).identityStatus === 'pending'
+  }
 }
 
 function memberName(member: any) {
@@ -114,6 +120,10 @@ Page({
     recommendReady: false,
     recommendHint: '至少需要两名名下会员。',
     recommendLoading: false,
+    filtersOpen: false,
+    approvalsOpen: false,
+    recommendOpen: false,
+    activeMemberActionId: '',
     loading: false,
     removingId: '',
     canOperate: false,
@@ -286,6 +296,25 @@ Page({
     this.load()
   },
 
+  toggleFilters() {
+    this.setData({ filtersOpen: !this.data.filtersOpen })
+  },
+
+  toggleApprovals() {
+    this.setData({ approvalsOpen: !this.data.approvalsOpen })
+  },
+
+  toggleRecommend() {
+    this.setData({ recommendOpen: !this.data.recommendOpen })
+  },
+
+  toggleMemberActions(e: WechatMiniprogram.TouchEvent) {
+    const id = String(e.currentTarget.dataset.id || '')
+    this.setData({ activeMemberActionId: this.data.activeMemberActionId === id ? '' : id })
+  },
+
+  holdTap() {},
+
   onRecommendAChange(e: any) {
     const index = Number(e.detail.value || 0)
     this.setData(recommendState(this.data.list, index, 0))
@@ -345,9 +374,7 @@ Page({
 
   openDetail(e: WechatMiniprogram.TouchEvent) {
     const id = String(e.currentTarget.dataset.id || '')
-    const member = this.data.list.find((item: any) => String(item.id) === id)
-    if (!member) return
-    wx.setStorageSync('selectedMatchmakerMember', member)
+    if (!this.data.list.some((item: any) => String(item.id) === id)) return
     wx.navigateTo({ url: `/pages/matchmaker/member-detail?id=${id}&scope=own` })
   },
 

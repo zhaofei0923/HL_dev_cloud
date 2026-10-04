@@ -100,6 +100,24 @@ test('premium entitlement honors expiry while preserving legacy lifetime records
   assert.equal(isPremiumMembership({ memberType: 'paid', expireAt: 'invalid' }, now), false);
 });
 
+test('date-only membership expiry remains active through the full Shanghai expiry date', () => {
+  assert.equal(
+    isPremiumMembership(
+      { memberType: 'paid', expireAt: '2026-09-13' },
+      new Date('2026-09-13T15:59:59.999Z')
+    ),
+    true
+  );
+  assert.equal(
+    isPremiumMembership(
+      { memberType: 'paid', expireAt: '2026-09-13' },
+      new Date('2026-09-13T16:00:00.000Z')
+    ),
+    false
+  );
+  assert.equal(isPremiumMembership({ memberType: 'paid', expireAt: '2026-02-31' }), false);
+});
+
 test('locked relationship preview is synthetic and contains no identity, media, or profile fingerprints', () => {
   const preview = createLockedRelationshipPreview({
     kind: 'mutual',

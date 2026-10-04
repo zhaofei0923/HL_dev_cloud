@@ -28,7 +28,8 @@
   ],
   "protectedCollections": [
     "hl_counters",
-    "hl_payment_orders"
+    "hl_payment_orders",
+    "hl_member_private_archives"
   ],
   "statusDictionary": {
     "matchmakerCertificationStatus": [
@@ -117,6 +118,7 @@
       ],
       "readonlyFields": [
         "id",
+        "memberNo",
         "userId",
         "matchmakerNo",
         "inviteCode",

@@ -1,0 +1,172 @@
+.claim-page {
+  padding-top: 36rpx;
+}
+
+.claim-hero {
+  padding: 18rpx 8rpx 34rpx;
+}
+
+.claim-kicker,
+.claim-title,
+.claim-subtitle,
+.state-title,
+.state-note,
+.action-title,
+.action-note,
+.privacy-note,
+.claim-expiry {
+  display: block;
+}
+
+.claim-kicker {
+  color: #9a6a45;
+  font-size: 22rpx;
+  font-weight: 800;
+  letter-spacing: 2rpx;
+}
+
+.claim-title {
+  margin-top: 12rpx;
+  color: #241f1b;
+  font-size: 44rpx;
+  font-weight: 900;
+  line-height: 1.28;
+}
+
+.claim-subtitle {
+  margin-top: 16rpx;
+  color: #776e67;
+  font-size: 25rpx;
+  line-height: 1.7;
+}
+
+.claim-state-card {
+  padding: 40rpx 30rpx;
+  text-align: center;
+}
+
+.claim-state-card.error {
+  border-color: rgba(145, 63, 53, 0.22);
+  background: #fff9f7;
+}
+
+.claim-state-card.success {
+  padding-top: 48rpx;
+}
+
+.success-mark {
+  display: flex;
+  width: 82rpx;
+  height: 82rpx;
+  margin: 0 auto 22rpx;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #66725f;
+  color: #fff;
+  font-size: 42rpx;
+  font-weight: 900;
+}
+
+.state-title,
+.action-title {
+  color: #2d2722;
+  font-size: 30rpx;
+  font-weight: 800;
+}
+
+.state-note,
+.action-note {
+  margin-top: 12rpx;
+  color: #7e746c;
+  font-size: 23rpx;
+  line-height: 1.65;
+}
+
+.state-action {
+  margin-top: 26rpx;
+}
+
+.state-actions {
+  margin-top: 30rpx;
+}
+
+.preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.claim-status {
+  flex: none;
+  padding: 8rpx 14rpx;
+  border-radius: 999rpx;
+  background: rgba(154, 106, 69, 0.12);
+  color: #8a5f3e;
+  font-size: 20rpx;
+  font-weight: 800;
+}
+
+.claim-info-list {
+  margin-top: 26rpx;
+  border-top: 1rpx solid rgba(151, 119, 82, 0.13);
+}
+
+.claim-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24rpx;
+  min-height: 82rpx;
+  border-bottom: 1rpx solid rgba(151, 119, 82, 0.11);
+}
+
+.claim-label {
+  color: #81776f;
+  font-size: 23rpx;
+}
+
+.claim-value {
+  color: #312a25;
+  font-size: 25rpx;
+  font-weight: 800;
+  text-align: right;
+}
+
+.claim-expiry {
+  margin-top: 18rpx;
+  color: #8f6544;
+  font-size: 21rpx;
+  text-align: right;
+}
+
+.claim-action-panel {
+  margin-top: 20rpx;
+  padding: 28rpx;
+  border: 1rpx solid rgba(151, 119, 82, 0.14);
+  border-radius: 20rpx;
+  background: #fffdf8;
+}
+
+.main-action {
+  margin-top: 26rpx;
+}
+
+.action-error {
+  margin-top: 18rpx;
+  padding: 16rpx 18rpx;
+  border-radius: 12rpx;
+  background: #fff1ee;
+  color: #8f433c;
+  font-size: 21rpx;
+  line-height: 1.55;
+}
+
+.privacy-note {
+  margin-top: 20rpx;
+  color: #92877e;
+  font-size: 20rpx;
+  line-height: 1.6;
+  text-align: center;
+}

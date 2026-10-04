@@ -206,8 +206,8 @@
 
 .recommend-card {
   position: relative;
-  height: calc(100vh - 344rpx);
-  min-height: 780rpx;
+  height: calc(100vh - 430rpx);
+  min-height: 700rpx;
   overflow: hidden;
   border: 1rpx solid rgba(151, 119, 82, 0.16);
   border-radius: 30rpx;
@@ -244,6 +244,11 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 16rpx;
+}
+
+.recommend-photo-placeholder {
+  top: 22rpx;
+  left: 22rpx;
 }
 
 .status-chip,
@@ -554,7 +559,7 @@
   left: 0;
   z-index: 2;
   box-sizing: border-box;
-  padding: 0 118rpx 38rpx 32rpx;
+  padding: 0 32rpx 38rpx;
 }
 
 .privacy-chip {
@@ -588,6 +593,77 @@
   display: block;
   color: #fffdf8;
   text-shadow: 0 6rpx 20rpx rgba(0, 0, 0, 0.32);
+}
+
+.recommend-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12rpx;
+  margin-top: 18rpx;
+}
+
+.recommend-action {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 84rpx;
+  margin: 0;
+  padding: 0 12rpx;
+  border: 1rpx solid rgba(151, 119, 82, 0.2);
+  border-radius: 16rpx;
+  background: rgba(255, 253, 248, 0.96);
+  color: #5d5149;
+  font-size: 25rpx;
+  font-weight: 800;
+  line-height: 84rpx;
+}
+
+.recommend-action::after,
+.recommend-text-action::after {
+  border: 0;
+}
+
+.recommend-action.detail {
+  border-color: rgba(180, 129, 79, 0.42);
+  color: #7b573a;
+}
+
+.recommend-action.favorite {
+  border-color: #8f493f;
+  background: #8f493f;
+  color: #fffdf8;
+}
+
+.recommend-action[disabled],
+.recommend-text-action[disabled] {
+  opacity: 0.56;
+}
+
+.recommend-secondary-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  margin-top: 10rpx;
+}
+
+.recommend-text-action {
+  width: auto;
+  min-width: 168rpx;
+  height: 58rpx;
+  margin: 0;
+  padding: 0 18rpx;
+  border: 0;
+  background: transparent;
+  color: #8f6544;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 58rpx;
+}
+
+.recommend-text-action.quiet {
+  color: #81756d;
 }
 
 .recommend-name {
@@ -881,7 +957,7 @@
 }
 
 .gift-star {
-  background: #6a58d8;
+  background: #567064;
 }
 
 .gift-sweet {

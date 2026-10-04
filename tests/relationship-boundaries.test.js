@@ -54,7 +54,9 @@ test('conversation creation uses a deterministic document and a transaction', ()
   const createConversation = between('async function createChatConversationAtomically', 'async function ensureChatConversation');
   assert.match(createConversation, /conversationDocumentId\(participantKey, conversationType\)/);
   assert.match(createConversation, /db\.runTransaction/);
-  assert.match(createConversation, /ref\.create\(payload\)/);
+  assert.match(createConversation, /where\(\{ _id: documentId \}\)\.limit\(1\)/);
+  assert.match(createConversation, /ref\.set\(\{ data: payload \}\)/);
+  assert.doesNotMatch(createConversation, /\.create\(/);
 });
 
 test('formal-pair promotion is transactional and always clears mutual-only metadata', () => {
@@ -64,6 +66,7 @@ test('formal-pair promotion is transactional and always clears mutual-only metad
   assert.match(metadataPatch, /if \(metadata\.matchRecordId\)[\s\S]*patch\.chatOpenReason = null/);
   assert.match(promotion, /db\.runTransaction/);
   assert.match(promotion, /transaction\.collection\(C\.conversations\)\.doc\(conversation\._id\)/);
+  assert.match(promotion, /ref\.update\(\{ data: update \}\)/);
 });
 
 test('free relationship previews cannot be enumerated with later pages', () => {

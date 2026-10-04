@@ -1,4 +1,4 @@
-<view class="bottom-nav-shell">
+<view class="bottom-nav-shell" aria-role="navigation" aria-label="底部导航">
   <view class="bottom-nav bottom-nav-{{role}}">
     <button
       wx:for="{{tabs}}"
@@ -8,6 +8,8 @@
       data-path="{{item.path}}"
       bindtap="switchTab"
       hover-class="bottom-nav-hover"
+      aria-label="{{item.label}}"
+      aria-current="{{active === item.key ? 'page' : 'false'}}"
     >
       <view class="nav-icon nav-icon-{{item.icon}}">
         <view class="nav-icon-mark"></view>

@@ -24,7 +24,7 @@ const FORM_DEFAULTS: ProfileForm = {
   photoText: '',
   photoDisplayUrls: [],
   displayEnabled: false,
-  gender: '2',
+  gender: '',
   age: '',
   height: '',
   city: '',
@@ -32,9 +32,9 @@ const FORM_DEFAULTS: ProfileForm = {
   education: '',
   occupation: '',
   incomeRange: '',
-  maritalStatus: '未婚',
-  houseStatus: '计划购房',
-  carStatus: '无车',
+  maritalStatus: '',
+  houseStatus: '',
+  carStatus: '',
   selfIntro: '',
   partnerRequirement: ''
 }
@@ -107,7 +107,7 @@ function normalizeForm(raw: ProfileForm, user: any) {
   }
   form.realName = form.realName || (user && user.nickname) || ''
   form.displayEnabled = form.displayEnabled === true || form.displayEnabled === 1 || form.displayEnabled === '1' || form.displayEnabled === 'true'
-  form.gender = String(form.gender || (user && user.gender) || '2')
+  form.gender = String(form.gender || (user && user.gender) || '')
   form.photoText = form.photoText ? photosFromText(String(form.photoText)).join('\n') : photosToText(form.photos)
   form.photoDisplayUrls = Array.isArray(form.photoDisplayUrls) && form.photoDisplayUrls.length
     ? form.photoDisplayUrls.slice(0, PHOTO_WALL_LIMIT)
@@ -273,6 +273,10 @@ Page({
     matchmakerRequesting: false,
     referralCard: { canShare: false } as any,
     referralLoading: false,
+    editingProfile: false,
+    previewOpen: false,
+    matchmakerPanelOpen: false,
+    accountPanelOpen: false,
     ...selectorTextFor(FORM_DEFAULTS),
     form: { ...FORM_DEFAULTS },
     preview: previewFor(FORM_DEFAULTS),
@@ -351,6 +355,22 @@ Page({
 
   updateForm(field: string, value: string) {
     this.setForm({ ...this.data.form, [field]: value })
+  },
+
+  toggleProfileEditor() {
+    this.setData({ editingProfile: !this.data.editingProfile })
+  },
+
+  togglePreview() {
+    this.setData({ previewOpen: !this.data.previewOpen })
+  },
+
+  toggleMatchmakerPanel() {
+    this.setData({ matchmakerPanelOpen: !this.data.matchmakerPanelOpen })
+  },
+
+  toggleAccountPanel() {
+    this.setData({ accountPanelOpen: !this.data.accountPanelOpen })
   },
 
   onInput(e: WechatMiniprogram.Input) {
@@ -559,7 +579,8 @@ Page({
         photoCount: photoCountFor(form),
         ...selectorTextFor(form),
         completionText: completion.text,
-        completionNote: completion.note
+        completionNote: completion.note,
+        editingProfile: false
       })
       wx.showToast({ title: '已保存' })
     } catch (err) {

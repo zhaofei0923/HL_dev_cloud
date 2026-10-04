@@ -1,103 +1,128 @@
-<view class="page safe-bottom with-bottom-nav">
-  <view class="card switch-card">
-    <text class="section-title">{{matchmakerEntryTitle}}</text>
-    <text class="section-note">{{matchmakerEntryNote}}</text>
-    <view class="button-row">
-      <button class="btn {{matchmakerApproved ? 'gold' : 'secondary'}}" bindtap="goMatchmaker">{{matchmakerEntryButton}}</button>
-      <button class="btn ghost" bindtap="logout">退出登录</button>
+<view class="page safe-bottom with-bottom-nav profile-page">
+  <view class="profile-summary">
+    <image class="profile-summary-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
+    <view class="profile-summary-copy">
+      <text class="profile-kicker">我的档案</text>
+      <text class="profile-name">{{preview.displayName || '我的资料'}}</text>
+      <text class="profile-meta">{{preview.metaText || '完善资料，让主理人更了解你'}}</text>
     </view>
+    <text class="profile-visibility {{form.displayEnabled ? 'open' : ''}}">{{form.displayEnabled ? '展示中' : '仅自己'}}</text>
   </view>
 
-  <view class="card hero profile-hero">
-    <image class="hero-cover" src="{{preview.coverUrl}}" mode="aspectFill"></image>
-    <view class="hero-mask"></view>
-    <view class="hero-content">
-      <image class="profile-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
-      <text class="eyebrow">个人档案</text>
-      <text class="title">{{preview.displayName || '我的资料'}}</text>
-      <text class="subtitle">{{form.displayEnabled ? '资料已进入会员浏览和主理人资源池，联系方式不会公开。' : '资料仅用于主理人服务跟进，开启展示后进入会员区。'}}</text>
-      <view class="summary-strip">
-        <view class="summary-item">
-          <text class="summary-value">{{completionText}}</text>
-          <text class="summary-label">资料完成度</text>
-        </view>
-        <view class="summary-item">
-          <text class="summary-value">{{photoCount}}</text>
-          <text class="summary-label">照片墙</text>
-        </view>
-        <view class="summary-item">
-          <text class="summary-value">{{form.displayEnabled ? '展示' : '私密'}}</text>
-          <text class="summary-label">展示状态</text>
-        </view>
+  <view class="profile-completion">
+    <view class="completion-copy">
+      <text class="completion-value">{{completionText}}</text>
+      <view class="completion-detail">
+        <text class="section-title">资料完成度</text>
+        <text class="section-note">{{completionNote}}</text>
       </view>
     </view>
+    <button class="profile-primary-action" bindtap="toggleProfileEditor">{{editingProfile ? '收起编辑' : '编辑资料'}}</button>
   </view>
 
-  <view class="card notice-card profile-progress">
-    <text class="section-title">资料状态</text>
-    <text class="section-note">{{completionNote}}</text>
-  </view>
-
-  <view class="card membership-entry" bindtap="goMembership" aria-role="button" aria-label="查看会员权益">
-    <view class="membership-entry-copy">
-      <text class="section-title">会员权益</text>
-      <text class="section-note">查看会员状态，解锁心动关系与互选聊天。</text>
+  <view class="profile-menu">
+    <view class="profile-menu-row" bindtap="goMembership" aria-role="button" aria-label="查看会员服务">
+      <view class="profile-menu-copy">
+        <text class="profile-menu-title">会员服务</text>
+        <text class="profile-menu-note">查看会员状态与可用权益</text>
+      </view>
+      <view class="profile-menu-chevron"></view>
     </view>
-    <view class="membership-entry-chevron"></view>
+    <view class="profile-menu-row" bindtap="toggleMatchmakerPanel" aria-role="button" aria-label="查看我的主理人">
+      <view class="profile-menu-copy">
+        <text class="profile-menu-title">我的主理人</text>
+        <text class="profile-menu-note">添加主理人或进入主理人端</text>
+      </view>
+      <text class="profile-menu-state">{{matchmakerPanelOpen ? '收起' : '查看'}}</text>
+    </view>
+    <view class="profile-menu-row" bindtap="togglePreview" aria-role="button" aria-label="查看档案预览">
+      <view class="profile-menu-copy">
+        <text class="profile-menu-title">档案预览</text>
+        <text class="profile-menu-note">确认他人看到的公开资料</text>
+      </view>
+      <text class="profile-menu-state">{{previewOpen ? '收起' : '查看'}}</text>
+    </view>
+    <view class="profile-menu-row" bindtap="toggleAccountPanel" aria-role="button" aria-label="查看公开与账号设置">
+      <view class="profile-menu-copy">
+        <text class="profile-menu-title">公开与账号设置</text>
+        <text class="profile-menu-note">管理资料展示和登录状态</text>
+      </view>
+      <text class="profile-menu-state">{{accountPanelOpen ? '收起' : '查看'}}</text>
+    </view>
   </view>
 
-  <view class="card privacy-card">
+  <block wx:if="{{matchmakerPanelOpen}}">
+    <view class="card switch-card profile-subpanel">
+      <text class="section-title">{{matchmakerEntryTitle}}</text>
+      <text class="section-note">{{matchmakerEntryNote}}</text>
+      <button class="btn {{matchmakerApproved ? 'gold' : 'secondary'}} panel-action" bindtap="goMatchmaker">{{matchmakerEntryButton}}</button>
+    </view>
+
+    <view class="card privacy-card profile-subpanel">
+      <text class="section-title">添加主理人</text>
+      <text class="section-note">可扫码或输入邀请码；提交后需由主理人审批。</text>
+      <view class="matchmaker-option-grid">
+        <view class="matchmaker-option" bindtap="scanMatchmakerInvite">
+          <text class="option-title">扫码添加</text>
+          <text class="option-note">扫主理人小程序码</text>
+        </view>
+        <view class="matchmaker-option active">
+          <text class="option-title">邀请码</text>
+          <text class="option-note">手动输入编号</text>
+        </view>
+      </view>
+      <view class="matchmaker-request-row">
+        <input class="request-input" value="{{matchmakerCode}}" bindinput="onMatchmakerCodeInput" placeholder="主理人编号 / 邀请码" />
+        <button class="btn gold request-btn" loading="{{matchmakerRequesting}}" disabled="{{matchmakerRequesting}}" bindtap="submitMatchmakerRequest">下一步</button>
+      </view>
+    </view>
+
+    <view wx:if="{{referralCard.canShare}}" class="card referral-card profile-subpanel">
+      <view class="referral-head">
+        <view class="referral-copy">
+          <text class="section-title">邀请好友注册</text>
+          <text class="section-note">好友会成为同一主理人名下的免费会员。</text>
+        </view>
+        <text class="tag gold">同一主理人</text>
+      </view>
+      <view class="referral-matchmaker">
+        <image class="referral-avatar" src="{{referralCard.matchmaker.avatarUrl || '/assets/members/avatar-female-1.png'}}" mode="aspectFill"></image>
+        <view class="referral-copy">
+          <text class="item-title">{{referralCard.matchmaker.nickname || '主理人'}}</text>
+          <text class="item-meta">主理人编号 {{referralCard.matchmaker.matchmakerNo}}</text>
+        </view>
+      </view>
+      <view class="button-row referral-actions">
+        <button class="btn secondary" bindtap="showInviteLinkTip">链接说明</button>
+        <button class="btn gold" open-type="share">分享注册链接</button>
+      </view>
+    </view>
+  </block>
+
+  <view wx:if="{{accountPanelOpen}}" class="card profile-subpanel account-panel">
     <view class="privacy-row">
       <view class="privacy-copy">
         <text class="section-title">资料展示</text>
-        <text class="section-note">开启后，资料会进入会员浏览和主理人资源池；关闭后仅用于服务跟进。</text>
+        <text class="section-note">开启后进入会员浏览与主理人资源池；联系方式仍不公开。</text>
       </view>
       <switch checked="{{form.displayEnabled}}" color="#b4814f" bindchange="onDisplayEnabledChange"></switch>
     </view>
     <view class="divider"></view>
-    <text class="section-title">添加主理人</text>
-    <text class="section-note">可通过扫码或手动邀请码添加；提交后需要主理人审批，通过后才会成为该主理人名下会员。</text>
-    <view class="matchmaker-option-grid">
-      <view class="matchmaker-option" bindtap="scanMatchmakerInvite">
-        <text class="option-title">扫码添加</text>
-        <text class="option-note">扫主理人小程序码</text>
-      </view>
-      <view class="matchmaker-option active">
-        <text class="option-title">邀请码</text>
-        <text class="option-note">手动输入编号</text>
-      </view>
-    </view>
-    <view class="matchmaker-request-row">
-      <input class="request-input" value="{{matchmakerCode}}" bindinput="onMatchmakerCodeInput" placeholder="主理人编号 / 邀请码" />
-      <button class="btn gold request-btn" loading="{{matchmakerRequesting}}" disabled="{{matchmakerRequesting}}" bindtap="submitMatchmakerRequest">下一步</button>
-    </view>
+    <button class="btn ghost logout-action" bindtap="logout">退出登录</button>
   </view>
 
-  <view wx:if="{{referralCard.canShare}}" class="card referral-card">
-    <view class="referral-head">
-      <view class="referral-copy">
-        <text class="section-title">邀请好友注册</text>
-        <text class="section-note">好友通过你的注册链接进入后，会成为同一主理人名下的免费会员。</text>
+  <view wx:if="{{editingProfile}}" class="card form-card profile-subpanel">
+    <view class="profile-panel-heading">
+      <view>
+        <text class="section-title">编辑资料</text>
+        <text class="section-note">按实际情况填写，保存后会同步档案预览。</text>
       </view>
-      <text class="tag gold">同一主理人</text>
+      <button class="panel-close" bindtap="toggleProfileEditor">收起</button>
     </view>
-    <view class="referral-matchmaker">
-      <image class="referral-avatar" src="{{referralCard.matchmaker.avatarUrl || '/assets/members/avatar-female-1.png'}}" mode="aspectFill"></image>
-      <view class="referral-copy">
-        <text class="item-title">{{referralCard.matchmaker.nickname || '主理人'}}</text>
-        <text class="item-meta">主理人编号 {{referralCard.matchmaker.matchmakerNo}}</text>
-      </view>
-    </view>
-    <view class="button-row referral-actions">
-      <button class="btn secondary" bindtap="showInviteLinkTip">链接说明</button>
-      <button class="btn gold" open-type="share">分享注册链接</button>
-    </view>
-  </view>
 
-  <view class="card form-card">
     <view class="form-section">
       <text class="section-title">形象资料</text>
-      <text class="section-note">只需维护照片墙，第一张照片会自动作为头像和封面；未选择时会自动使用预设图片。</text>
+      <text class="section-note">第一张照片会自动作为头像和封面；未上传时仅显示系统示意图。</text>
       <view wx:if="{{photoCount}}" class="photo-grid">
         <view wx:for="{{form.photoDisplayUrls}}" wx:key="*this" class="photo-tile">
           <image class="photo-thumb" src="{{item}}" mode="aspectFill"></image>
@@ -107,16 +132,15 @@
           </view>
         </view>
       </view>
-      <view wx:else class="photo-empty">暂无照片墙照片，展示页会先使用默认图兜底。</view>
-      <text class="photo-ratio-note">支持 1:1 方图、3:2 横图（推荐生活照/封面）、4:5 竖图；上传后可拖动选择截取区域。</text>
-      <button class="btn ghost upload-wall-btn" bindtap="choosePhotos">上传照片墙</button>
+      <view wx:else class="photo-empty">尚未上传本人照片，当前仅使用系统示意图。</view>
+      <text class="photo-ratio-note">支持 1:1 方图、3:2 横图、4:5 竖图；上传后可选择截取区域。</text>
+      <button class="btn ghost upload-wall-btn" bindtap="choosePhotos">上传照片</button>
     </view>
 
     <view class="divider"></view>
 
     <view class="form-section">
       <text class="section-title">基础信息</text>
-      <text class="section-note">姓名、性别、年龄和身高会作为服务档案的核心信息。</text>
       <view class="field">
         <text class="field-label">姓名</text>
         <input class="field-input" value="{{form.realName}}" data-field="realName" bindinput="onInput" placeholder="请输入真实姓名或常用称呼" />
@@ -125,7 +149,7 @@
         <view class="field half">
           <text class="field-label">性别</text>
           <picker mode="selector" range="{{genderOptions}}" bindchange="onGenderChange">
-            <view class="field-input picker-value">{{form.gender === '1' ? '男' : '女'}}</view>
+            <view class="field-input picker-value {{form.gender ? '' : 'placeholder'}}">{{form.gender === '1' ? '男' : form.gender === '2' ? '女' : '请选择'}}</view>
           </picker>
         </view>
         <view class="field half">
@@ -155,7 +179,6 @@
 
     <view class="form-section">
       <text class="section-title">城市与职业</text>
-      <text class="section-note">城市、学历、职业和收入是后续匹配判断的重要参考。</text>
       <view class="field">
         <text class="field-label">城市</text>
         <picker mode="region" bindchange="onCityChange">
@@ -188,25 +211,25 @@
 
     <view class="form-section">
       <text class="section-title">生活状态</text>
-      <text class="section-note">这些信息仅用于主理人服务判断，不会公开展示。</text>
+      <text class="section-note">婚况、房产和车辆概况会用于公开匹配资料；联系方式与验资材料仅主理人可见。</text>
       <view class="field-row">
         <view class="field half">
           <text class="field-label">婚况</text>
           <picker mode="selector" range="{{maritalOptions}}" bindchange="onMaritalChange">
-            <view class="field-input picker-value">{{form.maritalStatus}}</view>
+            <view class="field-input picker-value {{form.maritalStatus ? '' : 'placeholder'}}">{{form.maritalStatus || '请选择'}}</view>
           </picker>
         </view>
         <view class="field half">
           <text class="field-label">房产</text>
           <picker mode="selector" range="{{houseOptions}}" bindchange="onHouseChange">
-            <view class="field-input picker-value">{{form.houseStatus}}</view>
+            <view class="field-input picker-value {{form.houseStatus ? '' : 'placeholder'}}">{{form.houseStatus || '请选择'}}</view>
           </picker>
         </view>
       </view>
       <view class="field">
         <text class="field-label">车辆</text>
         <picker mode="selector" range="{{carOptions}}" bindchange="onCarChange">
-          <view class="field-input picker-value">{{form.carStatus}}</view>
+          <view class="field-input picker-value {{form.carStatus ? '' : 'placeholder'}}">{{form.carStatus || '请选择'}}</view>
         </picker>
       </view>
     </view>
@@ -215,7 +238,6 @@
 
     <view class="form-section">
       <text class="section-title">介绍与期待</text>
-      <text class="section-note">简要说明兴趣、生活状态和期待的关系方向。</text>
       <view class="field">
         <text class="field-label">自我介绍</text>
         <textarea class="field-input" value="{{form.selfIntro}}" data-field="selfIntro" bindinput="onInput" placeholder="写几句让主理人快速了解你的信息" />
@@ -229,14 +251,22 @@
     <button class="btn gold save-btn" loading="{{saving}}" disabled="{{saving || loading}}" bindtap="save">保存资料</button>
   </view>
 
-  <view class="card preview-card">
-    <text class="section-title">档案预览</text>
-    <text class="section-note">以下是主理人服务中看到的资料结构，保持和会员档案一致。</text>
-    <swiper class="photo-swiper" indicator-dots circular>
-      <swiper-item wx:for="{{preview.photos}}" wx:key="*this">
-        <image class="photo-item" src="{{item}}" mode="aspectFill"></image>
-      </swiper-item>
-    </swiper>
+  <view wx:if="{{previewOpen}}" class="card preview-card profile-subpanel">
+    <view class="profile-panel-heading">
+      <view>
+        <text class="section-title">档案预览</text>
+        <text class="section-note">联系方式、主理人备注和服务记录不会在这里展示。</text>
+      </view>
+      <button class="panel-close" bindtap="togglePreview">收起</button>
+    </view>
+    <view class="preview-photo-shell">
+      <swiper class="photo-swiper" indicator-dots circular>
+        <swiper-item wx:for="{{preview.photos}}" wx:key="*this">
+          <image class="photo-item" src="{{item}}" mode="aspectFill"></image>
+        </swiper-item>
+      </swiper>
+      <text wx:if="{{!preview.hasUploadedPhotos}}" class="photo-placeholder-badge">系统示意图 · 尚未上传本人照片</text>
+    </view>
     <view class="info-grid">
       <view wx:for="{{preview.baseRows}}" wx:key="label" class="info-cell">
         <text class="metric-label">{{item.label}}</text>

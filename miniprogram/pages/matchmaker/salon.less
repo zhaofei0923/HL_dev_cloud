@@ -1,71 +1,110 @@
-.salon-ops-hero {
-  min-height: 310rpx;
-}
-
-.action-head,
-.ops-head {
-  align-items: flex-start;
-}
-
-.approval-head {
-  align-items: flex-start;
-}
-
-.approval-btn {
-  margin-top: 22rpx;
-}
-
-.create-btn {
-  margin-top: 20rpx;
-}
-
-.invite-picker {
-  margin-top: 16rpx;
-  padding: 18rpx 20rpx;
-  border: 1rpx solid rgba(151, 119, 82, 0.16);
-  border-radius: 12rpx;
-  background: #fffdf8;
-}
-
-.invite-picker .picker-value {
-  display: block;
-  color: #241f1b;
-  font-size: 26rpx;
-  font-weight: 800;
-  line-height: 1.4;
-}
-
-.ops-copy {
-  flex: 1;
-  min-width: 0;
-  margin-right: 14rpx;
-}
-
-.invite-actions {
+.salon-header {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12rpx;
-  margin-top: 18rpx;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18rpx;
+  padding: 16rpx 4rpx 26rpx;
 }
 
-.invite-btn {
-  flex: 1 1 190rpx;
-  height: 70rpx;
+.salon-header .eyebrow,
+.salon-header .title,
+.salon-header .subtitle { display: block; }
+.salon-header .eyebrow { color: #a17750; }
+.salon-header .title { margin-top: 6rpx; font-size: 40rpx; }
+.salon-header .subtitle { margin-top: 6rpx; color: #81776f; font-size: 24rpx; }
+
+.create-button {
+  flex: none;
+  height: 76rpx;
+  margin: 0;
+  padding: 0 22rpx;
+  border: 0;
+  border-radius: 14rpx;
+  background: #8a6243;
+  color: #fffdf8;
   font-size: 24rpx;
-  line-height: 70rpx;
+  font-weight: 800;
+  line-height: 76rpx;
 }
 
-.review-note {
-  display: block;
-  margin-top: 18rpx;
-  padding: 14rpx 16rpx;
+.approval-head, .list-header, .salon-title-row { align-items: flex-start; }
+.approval-btn, .empty-action { margin-top: 20rpx; }
+.salon-segment { margin-bottom: 18rpx; }
+.salon-list-shell { padding: 20rpx 22rpx; }
+.list-state { color: #94877d; font-size: 21rpx; }
+
+.salon-item {
+  padding: 22rpx 0;
+  border-top: 1rpx solid rgba(151, 119, 82, 0.12);
+}
+
+.salon-item:first-of-type { margin-top: 12rpx; }
+.salon-main { display: flex; align-items: flex-start; gap: 16rpx; }
+.salon-date-mark { flex: none; }
+
+.date-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 70rpx;
+  height: 70rpx;
+  border-radius: 16rpx;
+  background: #eee3d7;
+  color: #775139;
+  font-size: 24rpx;
+  font-weight: 900;
+}
+
+.salon-copy { flex: 1; min-width: 0; }
+.salon-title { flex: 1; min-width: 0; }
+
+.status-chip {
+  flex: none;
+  margin-left: 12rpx;
+  padding: 5rpx 10rpx;
+  border-radius: 8rpx;
+  background: #eef1eb;
+  color: #61705b;
+  font-size: 20rpx;
+  font-weight: 700;
+}
+
+.salon-facts { display: flex; flex-wrap: wrap; gap: 8rpx 16rpx; margin-top: 12rpx; }
+.salon-fact { color: #786e66; font-size: 21rpx; }
+.salon-fact.price { color: #9a5f43; font-weight: 700; }
+
+.manage-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 62rpx;
+  margin-top: 16rpx;
+  padding: 0 14rpx;
   border-radius: 10rpx;
-  background: rgba(177, 134, 83, 0.1);
-  color: #74513a;
-  font-size: 23rpx;
-  line-height: 1.45;
+  background: #f7f3ee;
+  color: #8b633f;
+  font-size: 22rpx;
+  font-weight: 700;
 }
 
-.cancel-btn {
-  margin-top: 18rpx;
+.manage-panel { margin-top: 10rpx; padding: 16rpx; border-radius: 12rpx; background: #f7f3ee; }
+.invite-picker { padding: 16rpx 18rpx; border: 1rpx solid rgba(151, 119, 82, 0.14); border-radius: 11rpx; background: #fffdf8; }
+.invite-picker .picker-value { display: block; margin-top: 5rpx; color: #302923; font-size: 25rpx; font-weight: 800; }
+.invite-actions { display: flex; gap: 10rpx; margin-top: 14rpx; }
+.invite-btn { height: 68rpx; font-size: 22rpx; line-height: 68rpx; }
+.share-btn { height: 66rpx; margin-top: 10rpx; font-size: 22rpx; line-height: 66rpx; }
+.review-note { display: block; color: #806d5e; font-size: 22rpx; line-height: 1.5; }
+
+.cancel-link {
+  width: 100%;
+  height: 60rpx;
+  margin: 12rpx 0 0;
+  padding: 0;
+  border: 0;
+  border-top: 1rpx solid rgba(151, 119, 82, 0.12);
+  border-radius: 0;
+  background: transparent;
+  color: #9b4d47;
+  font-size: 22rpx;
+  line-height: 60rpx;
 }

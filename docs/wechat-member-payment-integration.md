@@ -21,11 +21,18 @@
 
 | 变量 | 用途 |
 | --- | --- |
+| `JWT_SECRET` | 生产必填的令牌签名密钥，至少 32 个随机字符；只放云函数环境变量。 |
+| `ALLOW_LOCAL_JWT` | 仅隔离的本地开发环境可设为 `true`，允许改用 `JWT_DEV_SECRET`；生产环境必须关闭。 |
+| `JWT_DEV_SECRET` | 本地/mock 模式专用签名密钥，至少 32 个字符，不得与生产密钥共用。 |
 | `PAYMENT_INTEGRATION_READY` | 全链路联调完成后设为 `true`；此前保持未设置或 `false`。 |
 | `PAYMENT_FUNCTION_NAME` | 集成中心实际生成的支付 HTTP 云函数名称。 |
 | `PAYMENT_CREATE_PATH` | 生成函数内实际部署的会员下单路径。 |
 | `PAYMENT_CALLBACK_TOKEN` | `hlApi` 与支付函数共享的高强度随机内部令牌，只放云函数环境变量。 |
 | `ALLOW_MOCK_WECHAT_LOGIN` | 仅隔离测试环境可设为 `true`，生产环境必须关闭。 |
+
+`JWT_SECRET` 未配置或少于 32 个字符时，`hlApi` 会拒绝启动令牌服务。只有显式设置 `ALLOW_LOCAL_JWT=true`（或隔离测试使用的 `ALLOW_MOCK_WECHAT_LOGIN=true`）时，才允许在没有 `JWT_SECRET` 的情况下读取 `JWT_DEV_SECRET`；`NODE_ENV=production` 时始终禁止该回退。用户 access token 有效期 24 小时，refresh token 有效期 30 天，管理员 token 有效期 2 小时，且三类令牌不能互换调用接口。
+
+升级到此令牌格式后，旧的两段式令牌会立即失效，用户和管理员需要重新登录；`/auth/wx-login` 的 `token`、`refreshToken`、`user` 返回结构不变。
 
 `PAYMENT_CALLBACK_TOKEN` 至少使用 32 个随机字符，同时配置到支付函数环境，不能写入 Git、小程序代码、HTTP 响应或运营后台。支付商户私钥、APIv3 密钥和证书只配置在 CloudBase 集成中心。
 

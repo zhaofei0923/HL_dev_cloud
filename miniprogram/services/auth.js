@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bindWechatPhone = exports.loginByWechat = void 0;
+exports.confirmManualMemberClaim = exports.previewManualMemberClaim = exports.bindWechatPhone = exports.loginByWechat = void 0;
 const api_1 = require("./api");
 function loginByWechat(role) {
     return new Promise((resolve, reject) => {
@@ -43,3 +43,26 @@ async function bindWechatPhone(code) {
     return user;
 }
 exports.bindWechatPhone = bindWechatPhone;
+function previewManualMemberClaim(token) {
+    return (0, api_1.request)('/auth/member-claim/preview', {
+        method: 'POST',
+        auth: false,
+        showError: false,
+        data: { token }
+    });
+}
+exports.previewManualMemberClaim = previewManualMemberClaim;
+async function confirmManualMemberClaim(token, code) {
+    if (!token)
+        throw new Error('认领邀请不能为空');
+    if (!code)
+        throw new Error('手机号授权 code 不能为空');
+    const session = await (0, api_1.request)('/auth/member-claim/confirm', {
+        method: 'POST',
+        preserveSessionOnUnauthorized: true,
+        data: { token, code }
+    });
+    (0, api_1.setSession)(session);
+    return session;
+}
+exports.confirmManualMemberClaim = confirmManualMemberClaim;

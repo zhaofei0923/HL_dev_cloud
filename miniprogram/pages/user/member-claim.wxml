@@ -1,0 +1,81 @@
+<view class="page safe-bottom claim-page">
+  <view class="claim-hero">
+    <text class="claim-kicker">会员档案认领</text>
+    <text class="claim-title">接回主理人为你建立的档案</text>
+    <text class="claim-subtitle">核对脱敏信息并验证本人微信手机号后，原会员编号、服务记录和主理人关系都会保留。</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="card claim-state-card">
+    <text class="state-title">正在核对邀请</text>
+    <text class="state-note">请稍候，系统正在确认档案状态。</text>
+  </view>
+
+  <view wx:elif="{{errorText}}" class="card claim-state-card error">
+    <text class="state-title">暂时无法认领</text>
+    <text class="state-note">{{errorText}}</text>
+    <button class="btn ghost state-action" bindtap="loadPreview">重新读取</button>
+  </view>
+
+  <view wx:elif="{{completed}}" class="card claim-state-card success">
+    <text class="success-mark">✓</text>
+    <text class="state-title">档案已完成认领</text>
+    <text class="state-note">现在可以使用当前微信账号查看资料、会员服务和主理人消息。</text>
+    <button wx:if="{{!loggedIn}}" class="btn gold state-action" loading="{{loginLoading}}" disabled="{{loginLoading}}" bindtap="login">登录当前微信</button>
+    <view wx:else class="button-row state-actions">
+      <button class="btn secondary" bindtap="goMembers">查看推荐</button>
+      <button class="btn gold" bindtap="goProfile">查看我的档案</button>
+    </view>
+  </view>
+
+  <block wx:elif="{{preview && preview.status === 'pending' && preview.member && preview.matchmaker}}">
+    <view class="card claim-preview-card">
+      <view class="preview-head">
+        <view>
+          <text class="section-title">请核对档案</text>
+          <text class="section-note">这里只显示必要的脱敏信息。</text>
+        </view>
+        <text class="claim-status">待认领</text>
+      </view>
+      <view class="claim-info-list">
+        <view class="claim-info-row">
+          <text class="claim-label">会员姓名</text>
+          <text class="claim-value">{{preview.member.nameMasked}}</text>
+        </view>
+        <view class="claim-info-row">
+          <text class="claim-label">会员编号</text>
+          <text class="claim-value">{{preview.member.memberNoMasked}}</text>
+        </view>
+        <view class="claim-info-row">
+          <text class="claim-label">留存手机号</text>
+          <text class="claim-value">{{preview.member.phoneMasked}}</text>
+        </view>
+        <view class="claim-info-row">
+          <text class="claim-label">所属主理人</text>
+          <text class="claim-value">{{preview.matchmaker.nickname}}</text>
+        </view>
+      </view>
+      <text wx:if="{{expiresText}}" class="claim-expiry">{{expiresText}}</text>
+    </view>
+
+    <view class="claim-action-panel">
+      <block wx:if="{{!loggedIn}}">
+        <text class="action-title">先登录当前微信</text>
+        <text class="action-note">登录只用于确认接收档案的微信身份。</text>
+        <button class="btn gold main-action" loading="{{loginLoading}}" disabled="{{loginLoading}}" bindtap="login">微信登录并继续</button>
+      </block>
+      <block wx:else>
+        <text class="action-title">确认由本人接收</text>
+        <text class="action-note">系统会通过微信官方接口核验手机号，不会要求手工输入验证码。</text>
+        <button
+          class="btn gold main-action"
+          open-type="getPhoneNumber"
+          bindgetphonenumber="confirmClaim"
+          loading="{{confirmLoading}}"
+          disabled="{{confirmLoading}}"
+        >验证手机号并认领</button>
+      </block>
+      <view wx:if="{{actionErrorText}}" class="action-error">{{actionErrorText}}</view>
+      <text class="privacy-note">认领后以主理人已建档账号为准；原会员资料和内部验资材料不会在此页面展示。</text>
+    </view>
+  </block>
+</view>

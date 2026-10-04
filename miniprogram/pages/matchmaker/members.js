@@ -4,7 +4,13 @@ const member_1 = require("../../services/member");
 const member_format_1 = require("../../utils/member-format");
 const matchmaker_1 = require("../../services/matchmaker");
 function normalizeMember(row) {
-    return (0, member_format_1.normalizeMemberProfile)(row, true);
+    const member = (0, member_format_1.normalizeMemberProfile)(row, true);
+    return {
+        ...member,
+        idText: String(row.id || ''),
+        needsAttention: Number((member.profileCompletion || {}).percent || 0) < 70,
+        claimPending: member.identityStatus === 'pending'
+    };
 }
 function memberName(member) {
     return member ? (member.displayName || member.realName || member.nickname || '会员') : '';
@@ -109,6 +115,10 @@ Page({
         recommendReady: false,
         recommendHint: '至少需要两名名下会员。',
         recommendLoading: false,
+        filtersOpen: false,
+        approvalsOpen: false,
+        recommendOpen: false,
+        activeMemberActionId: '',
         loading: false,
         removingId: '',
         canOperate: false,
@@ -284,6 +294,20 @@ Page({
         });
         this.load();
     },
+    toggleFilters() {
+        this.setData({ filtersOpen: !this.data.filtersOpen });
+    },
+    toggleApprovals() {
+        this.setData({ approvalsOpen: !this.data.approvalsOpen });
+    },
+    toggleRecommend() {
+        this.setData({ recommendOpen: !this.data.recommendOpen });
+    },
+    toggleMemberActions(e) {
+        const id = String(e.currentTarget.dataset.id || '');
+        this.setData({ activeMemberActionId: this.data.activeMemberActionId === id ? '' : id });
+    },
+    holdTap() { },
     onRecommendAChange(e) {
         const index = Number(e.detail.value || 0);
         this.setData(recommendState(this.data.list, index, 0));
@@ -343,10 +367,8 @@ Page({
     },
     openDetail(e) {
         const id = String(e.currentTarget.dataset.id || '');
-        const member = this.data.list.find((item) => String(item.id) === id);
-        if (!member)
+        if (!this.data.list.some((item) => String(item.id) === id))
             return;
-        wx.setStorageSync('selectedMatchmakerMember', member);
         wx.navigateTo({ url: `/pages/matchmaker/member-detail?id=${id}&scope=own` });
     },
     async remove(e) {

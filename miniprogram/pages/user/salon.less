@@ -1,9 +1,50 @@
-.salon-hero {
-  min-height: 300rpx;
+.salon-page {
+  padding-top: 20rpx;
+}
+
+.salon-heading {
+  margin-bottom: 22rpx;
+}
+
+.salon-title,
+.salon-note,
+.salon-date,
+.salon-location {
+  display: block;
+}
+
+.salon-title {
+  color: #241f1b;
+  font-size: 42rpx;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.salon-note {
+  margin-top: 8rpx;
+  color: #81756d;
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+
+.salon-list-shell {
+  margin-top: 22rpx;
+}
+
+.salon-count {
+  color: #9b7b5d;
+  font-size: 22rpx;
+  font-weight: 700;
 }
 
 .salon-card {
   position: relative;
+  box-sizing: border-box;
+  margin-top: 14rpx;
+  padding: 24rpx;
+  border: 1rpx solid rgba(151, 119, 82, 0.14);
+  border-radius: 18rpx;
+  background: #fffdf8;
 }
 
 .salon-card-head {
@@ -16,11 +57,41 @@
   margin-right: 14rpx;
 }
 
-.tap-hint {
-  display: block;
-  margin-top: 16rpx;
-  color: #b4814f;
+.salon-date,
+.salon-location {
+  color: #81756d;
   font-size: 23rpx;
-  font-weight: 800;
+  line-height: 1.45;
+}
+
+.salon-date {
+  margin-top: 8rpx;
+}
+
+.salon-location {
+  margin-top: 14rpx;
+}
+
+.salon-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+  margin-top: 20rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid rgba(151, 119, 82, 0.12);
+}
+
+.salon-seat,
+.salon-price {
+  color: #81756d;
+  font-size: 23rpx;
   line-height: 1.3;
+}
+
+.salon-price {
+  display: block;
+  color: #8f493f;
+  font-size: 25rpx;
+  font-weight: 800;
 }

@@ -59,5 +59,6 @@ export function regionValueText(region: string[] | undefined) {
   if (!Array.isArray(region)) return ''
   const province = cleanText(region[0])
   const city = cleanText(region[1])
-  return [province, city].filter(Boolean).join(' ')
+  const district = cleanText(region[2])
+  return [province, city, district].filter(Boolean).join(' ')
 }

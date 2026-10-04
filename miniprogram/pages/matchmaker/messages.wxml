@@ -1,31 +1,20 @@
 <view class="page with-bottom-nav messages-page">
-  <view class="card hero messages-hero">
-    <text class="eyebrow">消息</text>
-    <text class="title">会员沟通</text>
-    <text class="subtitle">集中处理名下会员服务消息和配对后的沟通跟进。</text>
-    <view class="summary-strip">
-      <view class="summary-item">
-        <text class="summary-value">{{total}}</text>
-        <text class="summary-label">会话</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">文字</text>
-        <text class="summary-label">第一版</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">跟进</text>
-        <text class="summary-label">会员服务</text>
-      </view>
+  <view class="messages-header">
+    <view>
+      <text class="eyebrow">会员沟通</text>
+      <text class="title">消息</text>
+      <text class="subtitle">{{loading ? '正在更新会话' : total + ' 个会话'}}</text>
     </view>
+    <text class="pull-hint">下拉刷新</text>
   </view>
 
   <view class="card list-shell conversation-shell">
     <view class="row list-header">
       <view>
-        <text class="section-title">会话列表</text>
-        <text class="section-note">{{loading ? '正在加载消息' : '按最新消息排序'}}</text>
+        <text class="section-title">最近会话</text>
+        <text class="section-note">按最新消息排序</text>
       </view>
-      <text class="tag gold">{{loading ? '刷新中' : total + ' 条'}}</text>
+      <text wx:if="{{loading}}" class="loading-text">刷新中</text>
     </view>
 
     <block wx:if="{{list.length}}">
@@ -37,9 +26,7 @@
             <text class="conversation-time">{{item.timeText}}</text>
           </view>
           <text class="item-meta conversation-preview">{{item.preview}}</text>
-          <view class="tag-row conversation-tags">
-            <text class="tag gold">{{item.typeText}}</text>
-          </view>
+          <text class="conversation-type">{{item.typeText}}</text>
         </view>
         <text wx:if="{{item.hasUnread}}" class="unread-badge">{{item.unreadText}}</text>
       </view>

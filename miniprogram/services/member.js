@@ -56,6 +56,12 @@ exports.memberApi = {
     addManual(data) {
         return (0, api_1.request)('/member/manual', { method: 'POST', data });
     },
+    createIdentityClaimInvite(id) {
+        return (0, api_1.request)(`/member/${id}/identity-claim-invite`, { method: 'POST' });
+    },
+    detail(id) {
+        return (0, api_1.request)(`/member/${id}`);
+    },
     update(id, data) {
         return (0, api_1.request)(`/member/${id}`, { method: 'PUT', data });
     },

@@ -71,10 +71,24 @@ function isPremiumMemberType(value) {
   return PREMIUM_MEMBER_TYPES.has(String(value || '').trim().toLowerCase());
 }
 
+function membershipExpiryTime(value) {
+  const raw = String(value || '').trim();
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!dateOnly) return new Date(value).getTime();
+  const year = Number(dateOnly[1]);
+  const month = Number(dateOnly[2]);
+  const day = Number(dateOnly[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+    return NaN;
+  }
+  return Date.UTC(year, month - 1, day + 1) - (8 * 60 * 60 * 1000);
+}
+
 function isPremiumMembership(row = {}, now = new Date()) {
   if (!isPremiumMemberType(row.memberType)) return false;
   if (row.expireAt === null || row.expireAt === undefined || String(row.expireAt).trim() === '') return true;
-  const expireAt = new Date(row.expireAt).getTime();
+  const expireAt = membershipExpiryTime(row.expireAt);
   const referenceTime = new Date(now).getTime();
   return Number.isFinite(expireAt) && Number.isFinite(referenceTime) && expireAt > referenceTime;
 }

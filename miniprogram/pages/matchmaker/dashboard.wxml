@@ -1,75 +1,86 @@
 <view wx:if="{{canOperate}}" class="page safe-bottom with-bottom-nav">
-  <view class="card hero dashboard-hero">
-    <text class="eyebrow">主理人运营</text>
-    <text class="title">{{user.nickname || '主理人工作台'}}</text>
-    <text class="subtitle">集中处理会员经营、沙龙运营和资源协作，保持每个服务动作可跟进。</text>
-    <view class="summary-strip">
-      <view class="summary-item">
-        <text class="summary-value">{{dashboard.matchmaker.memberCount || 0}}</text>
-        <text class="summary-label">会员</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">{{dashboard.resourceCount || dashboard.operations.resourceCount || 0}}</text>
-        <text class="summary-label">资源池</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">{{dashboard.todoCounts.pendingRecommendations || dashboard.operations.todoCounts.pendingRecommendations || 0}}</text>
-        <text class="summary-label">待跟进</text>
-      </view>
+  <view class="dashboard-header">
+    <view class="dashboard-heading">
+      <text class="eyebrow">工作台</text>
+      <text class="title">{{user.nickname || '主理人'}}，你好</text>
+      <text class="subtitle">先处理今天最重要的会员服务事项。</text>
     </view>
+    <text class="tag {{statusTagClass}}">{{statusText}}</text>
   </view>
 
-  <view class="card">
-    <view class="row">
+  <view class="card todo-card">
+    <view class="row section-head">
       <view>
-        <text class="section-title">运营闭环</text>
-        <text class="section-note">{{loading ? '正在整理工作台数据' : '按会员资料、资源互推和沙龙报名拆分待办。'}}</text>
+        <text class="section-title">今日待办</text>
+        <text class="section-note">{{loading ? '正在整理待办' : '按优先级逐项处理'}}</text>
       </view>
-      <text class="tag {{statusTagClass}}">{{statusText}}</text>
+      <text class="todo-state">{{loading ? '刷新中' : '待处理'}}</text>
     </view>
-    <view class="grid dashboard-grid">
-      <view class="metric">
-        <text class="metric-label">资料待完善</text>
-        <text class="metric-value">{{dashboard.todoCounts.incompleteMembers || dashboard.operations.todoCounts.incompleteMembers || 0}}</text>
-        <text class="metric-hint">低于展示完整度</text>
+
+    <view class="todo-list">
+      <view class="todo-row" bindtap="goMembers">
+        <view class="todo-index urgent">1</view>
+        <view class="todo-copy">
+          <text class="todo-title">完善会员资料</text>
+          <text class="todo-note">资料不完整的会员需要补充</text>
+        </view>
+        <text class="todo-count">{{dashboard.todoCounts.incompleteMembers || dashboard.operations.todoCounts.incompleteMembers || 0}}</text>
+        <text class="todo-arrow">›</text>
       </view>
-      <view class="metric">
-        <text class="metric-label">资源池</text>
-        <text class="metric-value">{{dashboard.resourceCount || dashboard.operations.resourceCount || 0}}</text>
-        <text class="metric-hint">可协作会员</text>
+      <view class="todo-row" bindtap="goResources">
+        <view class="todo-index">2</view>
+        <view class="todo-copy">
+          <text class="todo-title">跟进会员互推</text>
+          <text class="todo-note">查看仍在沟通中的推荐</text>
+        </view>
+        <text class="todo-count">{{dashboard.todoCounts.pendingRecommendations || dashboard.operations.todoCounts.pendingRecommendations || 0}}</text>
+        <text class="todo-arrow">›</text>
       </view>
-      <view class="metric">
-        <text class="metric-label">互推待跟进</text>
-        <text class="metric-value">{{dashboard.todoCounts.pendingRecommendations || dashboard.operations.todoCounts.pendingRecommendations || 0}}</text>
-        <text class="metric-hint">推荐记录 pending</text>
-      </view>
-      <view class="metric">
-        <text class="metric-label">沙龙报名</text>
-        <text class="metric-value">{{dashboard.registrationCount || dashboard.operations.registrationCount || 0}}</text>
-        <text class="metric-hint">我的活动报名</text>
+      <view class="todo-row" bindtap="goSalon">
+        <view class="todo-index">3</view>
+        <view class="todo-copy">
+          <text class="todo-title">查看活动报名</text>
+          <text class="todo-note">确认近期活动和报名情况</text>
+        </view>
+        <text class="todo-count">{{dashboard.registrationCount || dashboard.operations.registrationCount || 0}}</text>
+        <text class="todo-arrow">›</text>
       </view>
     </view>
   </view>
 
-  <view class="card task-card">
-    <text class="section-title">快捷任务</text>
-    <text class="section-note">优先处理会员资料、资源池互推和近期活动。</text>
-    <view class="task-list">
-      <view class="task-btn" bindtap="goMembers">
-        <text class="task-title">会员经营</text>
-        <text class="task-badge">{{dashboard.matchmaker.memberCount || 0}}</text>
-        <text class="task-note">录入、搜索和维护名下会员资料</text>
+  <view class="card quick-card">
+    <text class="section-title">快捷入口</text>
+    <view class="quick-grid">
+      <view class="quick-item" bindtap="goMembers">
+        <view class="quick-icon">员</view>
+        <text class="quick-title">会员管理</text>
+        <text class="quick-note">录入与查找</text>
       </view>
-      <view class="task-btn" bindtap="goResources">
-        <text class="task-title">会员展示资源池</text>
-        <text class="task-badge">{{dashboard.resourceCount || dashboard.operations.resourceCount || 0}}</text>
-        <text class="task-note">查看其他主理人资源并发起互推</text>
+      <view class="quick-item" bindtap="goResources">
+        <view class="quick-icon">协</view>
+        <text class="quick-title">合作资源</text>
+        <text class="quick-note">浏览与互推</text>
       </view>
-      <view class="task-btn" bindtap="goSalon">
-        <text class="task-title">沙龙管理</text>
-        <text class="task-badge">{{dashboard.registrationCount || dashboard.operations.registrationCount || 0}}</text>
-        <text class="task-note">创建活动，查看报名热度和席位</text>
+      <view class="quick-item" bindtap="goSalon">
+        <view class="quick-icon">活</view>
+        <text class="quick-title">活动管理</text>
+        <text class="quick-note">创建与报名</text>
       </view>
+    </view>
+  </view>
+
+  <view class="overview-row">
+    <view class="overview-item">
+      <text class="overview-value">{{dashboard.matchmaker.memberCount || 0}}</text>
+      <text class="overview-label">名下会员</text>
+    </view>
+    <view class="overview-item">
+      <text class="overview-value">{{dashboard.resourceCount || dashboard.operations.resourceCount || 0}}</text>
+      <text class="overview-label">合作资源</text>
+    </view>
+    <view class="overview-item">
+      <text class="overview-value">{{dashboard.operations.salonCount || 0}}</text>
+      <text class="overview-label">我的活动</text>
     </view>
   </view>
 
@@ -77,7 +88,7 @@
 </view>
 
 <view wx:else class="page safe-bottom">
-  <view class="card hero approval-hero">
+  <view class="card approval-hero">
     <text class="eyebrow">主理人申请</text>
     <text class="title">{{statusText}}</text>
     <text class="subtitle">{{loading ? '正在确认主理人申请状态。' : statusNote}}</text>

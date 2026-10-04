@@ -1,28 +1,17 @@
 <view class="page safe-bottom {{canOperate ? 'with-bottom-nav' : ''}}">
-  <view class="card hero salon-ops-hero">
-    <text class="eyebrow">活动运营</text>
-    <text class="title">沙龙管理</text>
-    <text class="subtitle">创建线下活动，查看报名热度，并管理自己组织的沙龙节奏。</text>
-    <view class="summary-strip">
-      <view class="summary-item">
-        <text class="summary-value">{{list.length}}</text>
-        <text class="summary-label">{{active === 'mine' ? '我的活动' : '全部活动'}}</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">报名</text>
-        <text class="summary-label">席位跟踪</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">{{statusText}}</text>
-        <text class="summary-label">权限状态</text>
-      </view>
+  <view class="salon-header">
+    <view>
+      <text class="eyebrow">活动管理</text>
+      <text class="title">沙龙活动</text>
+      <text class="subtitle">{{canOperate ? list.length + ' 场活动' : statusNote}}</text>
     </view>
+    <button wx:if="{{canOperate}}" class="create-button" bindtap="goCreate">＋ 创建活动</button>
   </view>
 
   <view wx:if="{{!canOperate}}" class="card approval-card">
     <view class="row approval-head">
       <view>
-        <text class="section-title">沙龙权限待开通</text>
+        <text class="section-title">活动权限待开通</text>
         <text class="section-note">{{statusNote}}</text>
       </view>
       <text class="tag {{statusTagClass}}">{{statusText}}</text>
@@ -30,66 +19,74 @@
     <button wx:if="{{statusText === '已拒绝'}}" class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="applyAgain">重新提交申请</button>
   </view>
 
-  <view wx:if="{{canOperate}}" class="card action-card">
-    <view class="row action-head">
-      <view>
-        <text class="section-title">组织新活动</text>
-        <text class="section-note">建议先确认标题、时间、地点和席位；创建后会员即可看到。</text>
-      </view>
-    </view>
-    <button class="btn gold create-btn" bindtap="goCreate">创建沙龙</button>
-    <picker wx:if="{{memberOptions.length}}" mode="selector" range="{{memberOptions}}" value="{{selectedMemberIndex}}" bindchange="onInviteMemberChange">
-      <view class="invite-picker">
-        <text class="field-label">活动推送会员</text>
-        <text class="picker-value">{{selectedMemberName}}</text>
-      </view>
-    </picker>
-  </view>
-
-  <view wx:if="{{canOperate}}" class="segment">
-    <button class="btn {{active === 'mine' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadMine">我的活动</button>
-    <button class="btn {{active === 'all' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadAll">全部活动</button>
-  </view>
-
-  <view wx:if="{{canOperate}}" class="card list-shell">
-    <view class="row list-header">
-      <view>
-        <text class="section-title">{{active === 'mine' ? '我的活动' : '全部活动'}}</text>
-        <text class="section-note">{{list.length}} 场活动</text>
-      </view>
-      <text class="tag gold">{{loading ? '加载中' : '已整理'}}</text>
+  <block wx:if="{{canOperate}}">
+    <view class="segment salon-segment">
+      <button class="btn {{active === 'mine' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadMine">我的活动</button>
+      <button class="btn {{active === 'all' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadAll">全部活动</button>
     </view>
 
-    <block wx:if="{{list.length}}">
-      <view wx:for="{{list}}" wx:key="id" class="list-card ops-card">
-        <view class="row ops-head">
-          <view class="ops-copy">
-            <text class="item-title">{{item.title}}</text>
-            <text class="item-meta">{{item.eventDateText}}</text>
-            <text class="item-meta">{{item.locationText}}</text>
+    <view class="card list-shell salon-list-shell">
+      <view class="row list-header">
+        <view>
+          <text class="section-title">{{active === 'mine' ? '我创建的活动' : '活动广场'}}</text>
+          <text class="section-note">先查看时间、地点和报名状态</text>
+        </view>
+        <text class="list-state">{{loading ? '刷新中' : list.length + ' 场'}}</text>
+      </view>
+
+      <block wx:if="{{list.length}}">
+        <view wx:for="{{list}}" wx:key="id" class="salon-item">
+          <view class="salon-main">
+            <view class="salon-date-mark">
+              <text class="date-icon">活</text>
+            </view>
+            <view class="salon-copy">
+              <view class="row salon-title-row">
+                <text class="item-title salon-title">{{item.title}}</text>
+                <text class="status-chip">{{item.statusText}}</text>
+              </view>
+              <text class="item-meta">{{item.eventDateText}}</text>
+              <text class="item-meta">{{item.locationText}}</text>
+              <view class="salon-facts">
+                <text class="salon-fact">{{item.participantText}}</text>
+                <text class="salon-fact">{{item.seatText}}</text>
+                <text class="salon-fact price">{{item.priceText}}</text>
+              </view>
+            </view>
           </view>
-          <text class="tag gold">{{item.statusText}}</text>
-        </view>
-        <view class="tag-row">
-          <text class="tag">{{item.participantText}}</text>
-          <text class="tag">{{item.seatText}}</text>
-          <text class="tag rose">{{item.priceText}}</text>
-        </view>
-        <view wx:if="{{active === 'mine' && item.canInvite}}" class="invite-actions">
-          <button class="btn gold invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':one'}}" disabled="{{invitingId || !selectedMemberName}}" bindtap="inviteSelected">推送选中会员</button>
-          <button class="btn secondary invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':all'}}" disabled="{{invitingId || !members.length}}" bindtap="inviteAll">推送全部会员</button>
-          <button class="btn ghost invite-btn" open-type="share" data-id="{{item.id}}" data-title="{{item.title}}">微信分享</button>
-        </view>
-        <text wx:if="{{active === 'mine' && !item.canInvite}}" class="review-note">活动通过管理员审核后可推送给名下会员。</text>
-        <button wx:if="{{active === 'mine'}}" class="btn danger cancel-btn" data-id="{{item.id}}" loading="{{cancellingId === item.idText}}" disabled="{{cancellingId === item.idText}}" bindtap="cancel">取消活动</button>
-      </view>
-    </block>
 
-    <view wx:else class="empty">
-      <text class="empty-title">{{loading ? '正在加载活动' : '暂无活动'}}</text>
-      <text class="empty-note">{{loading ? '请稍候，正在整理沙龙列表。' : '先创建一场沙龙，会员即可看到活动。'}}</text>
+          <view wx:if="{{active === 'mine'}}" class="manage-entry" data-id="{{item.id}}" bindtap="toggleEventManagement">
+            <text>{{managingEventId === item.idText ? '收起管理操作' : '管理活动'}}</text>
+            <text>{{managingEventId === item.idText ? '⌃' : '›'}}</text>
+          </view>
+
+          <view wx:if="{{active === 'mine' && managingEventId === item.idText}}" class="manage-panel">
+            <block wx:if="{{item.canInvite}}">
+              <picker wx:if="{{memberOptions.length}}" mode="selector" range="{{memberOptions}}" value="{{selectedMemberIndex}}" bindchange="onInviteMemberChange">
+                <view class="invite-picker">
+                  <text class="field-label">推送给</text>
+                  <text class="picker-value">{{selectedMemberName || '选择会员'}}</text>
+                </view>
+              </picker>
+              <view class="invite-actions">
+                <button class="btn gold invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':one'}}" disabled="{{invitingId || !selectedMemberName}}" bindtap="inviteSelected">推送选中会员</button>
+                <button class="btn secondary invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':all'}}" disabled="{{invitingId || !members.length}}" bindtap="inviteAll">推送全部会员</button>
+              </view>
+              <button class="btn ghost share-btn" open-type="share" data-id="{{item.id}}" data-title="{{item.title}}">微信分享</button>
+            </block>
+            <text wx:else class="review-note">活动通过审核并开始报名后，可推送给名下会员。</text>
+            <button class="cancel-link" data-id="{{item.id}}" loading="{{cancellingId === item.idText}}" disabled="{{cancellingId === item.idText}}" bindtap="cancel">取消活动</button>
+          </view>
+        </view>
+      </block>
+
+      <view wx:else class="empty">
+        <text class="empty-title">{{loading ? '正在加载活动' : '暂无活动'}}</text>
+        <text class="empty-note">{{loading ? '请稍候，正在整理活动列表。' : '创建一场活动，会员即可查看和报名。'}}</text>
+        <button wx:if="{{!loading && active === 'mine'}}" class="btn gold empty-action" bindtap="goCreate">创建第一场活动</button>
+      </view>
     </view>
-  </view>
+  </block>
 
   <bottom-nav wx:if="{{canOperate}}" role="matchmaker" active="salon"></bottom-nav>
 </view>

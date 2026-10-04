@@ -1,167 +1,450 @@
-<view class="page safe-bottom">
-  <view class="card hero member-form-hero">
-    <text class="eyebrow">新会员档案</text>
-    <text class="title">录入会员</text>
-    <text class="subtitle">先录入关键资料，形成可维护、可展示、可互推的基础会员档案。</text>
+<view class="page safe-bottom intake-page">
+  <view class="card hero intake-hero">
+    <view class="hero-index">SECURE INTAKE · {{currentStageNo}} / 03</view>
+    <text class="eyebrow">主理人工作台</text>
+    <text class="title">新建会员档案</text>
+    <text class="subtitle">分三阶段录入身份验资、个人择偶和业务确认；最终提交时仍会校验全部必填信息。</text>
+    <view class="privacy-band">
+      <text class="privacy-mark">内</text>
+      <text class="privacy-copy">高敏资料 · 仅当前认证主理人可查看</text>
+    </view>
   </view>
 
-  <view class="card form-card">
-    <view class="form-section">
-      <text class="section-title">形象资料</text>
-      <text class="section-note">只需维护照片墙，第一张照片会自动作为头像和封面；未选择时会自动匹配预设图片。</text>
-      <view wx:if="{{form.photoDisplayUrls.length}}" class="photo-grid">
-        <view wx:for="{{form.photoDisplayUrls}}" wx:key="*this" class="photo-tile">
-          <image class="photo-thumb" src="{{item}}" mode="aspectFill"></image>
-          <view class="photo-delete" data-index="{{index}}" catchtap="deletePhoto" aria-role="button" aria-label="删除照片">
-            <view class="photo-delete-line photo-delete-line-a"></view>
-            <view class="photo-delete-line photo-delete-line-b"></view>
+  <view class="stage-nav" aria-role="navigation" aria-label="会员录入阶段">
+    <view
+      wx:for="{{stageNav}}"
+      wx:key="key"
+      class="stage-step {{item.active ? 'active' : ''}} {{item.complete ? 'complete' : ''}}"
+      data-stage-index="{{index}}"
+      bindtap="switchStage"
+      aria-role="button"
+      aria-label="第{{item.no}}阶段 {{item.title}} {{item.statusText}}"
+    >
+      <view class="stage-step-head">
+        <text class="stage-no">{{item.no}}</text>
+        <text class="stage-state">{{item.complete ? '完成' : '待补'}}</text>
+      </view>
+      <text class="stage-name">{{item.short}}</text>
+      <text class="stage-pending">{{item.statusText}}</text>
+    </view>
+  </view>
+
+  <view class="stage-summary {{currentStageComplete ? 'complete' : ''}}">
+    <view class="stage-summary-copy">
+      <text class="stage-summary-kicker">第 {{currentStageNo}} 阶段</text>
+      <text class="stage-summary-title">{{currentStageTitle}}</text>
+      <text class="stage-summary-note">{{currentStageNote}}</text>
+    </view>
+    <text class="stage-summary-status">{{currentStageStatusText}}</text>
+  </view>
+
+  <view class="stage-content" hidden="{{currentStageIndex !== 0}}">
+  <view id="section-basic" class="card dossier-section {{errorSection === 'basic' ? 'has-error' : ''}}">
+    <view class="section-head" data-section="basic" bindtap="toggleSection" aria-role="button" aria-label="展开或收起基础个人信息">
+      <view class="section-number">01</view>
+      <view class="section-heading">
+        <text class="section-title">基础个人信息</text>
+        <text class="section-note">身份、联络与基础画像 · 全部必填</text>
+      </view>
+      <text class="section-toggle">{{openSections.basic ? '收起' : '展开'}}</text>
+    </view>
+    <view hidden="{{!openSections.basic}}" class="section-body">
+      <view class="field">
+        <text class="field-label">姓名 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.realName}}" data-field="realName" bindinput="onInput" maxlength="30" placeholder="请输入真实姓名" />
+      </view>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">性别 <text class="required">*</text></text>
+          <picker mode="selector" range="{{genderOptions}}" bindchange="onGenderChange">
+            <view class="field-input picker-value {{form.gender ? '' : 'placeholder'}}">{{genderText}}</view>
+          </picker>
+        </view>
+        <view class="field half">
+          <text class="field-label">出生年月 <text class="required">*</text></text>
+          <picker mode="date" value="{{form.birthDate}}" end="{{today}}" bindchange="onBirthDateChange">
+            <view class="field-input picker-value {{form.birthDate ? '' : 'placeholder'}}">{{birthDateText}}</view>
+          </picker>
+        </view>
+      </view>
+      <view class="field-row">
+        <view class="field half readonly-field">
+          <text class="field-label">年龄 <text class="required">*</text></text>
+          <view class="field-input field-readonly">{{ageText}}</view>
+        </view>
+        <view class="field half">
+          <text class="field-label">联系电话 <text class="required">*</text></text>
+          <input class="field-input" value="{{form.phone}}" data-field="phone" bindinput="onInput" type="number" maxlength="11" placeholder="11位手机号" />
+        </view>
+      </view>
+      <view class="field">
+        <text class="field-label">现居城市 / 区域 <text class="required">*</text></text>
+        <picker mode="region" bindchange="onCityChange">
+          <view class="field-input picker-value {{form.city ? '' : 'placeholder'}}">{{cityText}}</view>
+        </picker>
+        <text class="field-help">成都会员请精确选择到区县。</text>
+      </view>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">身高（cm）<text class="required">*</text></text>
+          <input class="field-input" value="{{form.height}}" data-field="height" bindinput="onInput" type="number" maxlength="3" placeholder="如 168" />
+        </view>
+        <view class="field half">
+          <text class="field-label">体重（kg）<text class="required">*</text></text>
+          <input class="field-input" value="{{form.weightKg}}" data-field="weightKg" bindinput="onInput" type="digit" maxlength="5" placeholder="如 55" />
+        </view>
+      </view>
+      <view class="field">
+        <text class="field-label">学历 <text class="required">*</text></text>
+        <picker mode="selector" range="{{educationOptions}}" bindchange="onEducationChange">
+          <view class="field-input picker-value {{form.education ? '' : 'placeholder'}}">{{educationText}}</view>
+        </picker>
+      </view>
+      <view class="field">
+        <text class="field-label">毕业院校 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.graduateSchool}}" data-field="graduateSchool" bindinput="onInput" maxlength="80" placeholder="请输入院校全称" />
+      </view>
+      <view class="field">
+        <text class="field-label">婚姻状态 <text class="required">*</text></text>
+        <picker mode="selector" range="{{maritalOptions}}" bindchange="onMaritalChange">
+          <view class="field-input picker-value {{form.maritalStatus ? '' : 'placeholder'}}">{{maritalText}}</view>
+        </picker>
+      </view>
+      <view class="field">
+        <text class="field-label">有无子女 <text class="required">*</text></text>
+        <radio-group class="choice-row" data-field="hasChildren" bindchange="onBooleanRadioChange">
+          <label class="choice-item"><radio value="false" checked="{{form.hasChildren === false}}" color="#a35d45" />无</label>
+          <label class="choice-item"><radio value="true" checked="{{form.hasChildren === true}}" color="#a35d45" />有</label>
+        </radio-group>
+      </view>
+      <view wx:if="{{form.hasChildren}}" class="field conditional-field">
+        <text class="field-label">子女数量 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.childrenCount}}" data-field="childrenCount" bindinput="onInput" type="number" maxlength="2" placeholder="请输入数量" />
+      </view>
+    </view>
+  </view>
+
+  <view id="section-career" class="card dossier-section {{errorSection === 'career' ? 'has-error' : ''}}">
+    <view class="section-head" data-section="career" bindtap="toggleSection" aria-role="button" aria-label="展开或收起职业与收入验资">
+      <view class="section-number">02</view>
+      <view class="section-heading">
+        <text class="section-title">职业与收入验资</text>
+        <text class="section-note">职业收入与凭证留存 · 全部必填</text>
+      </view>
+      <text class="section-toggle">{{openSections.career ? '收起' : '展开'}}</text>
+    </view>
+    <view hidden="{{!openSections.career}}" class="section-body">
+      <view class="field">
+        <text class="field-label">当前职业 / 行业 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.occupation}}" data-field="occupation" bindinput="onInput" maxlength="60" placeholder="如 互联网 / 产品管理" />
+      </view>
+      <view class="field">
+        <text class="field-label">公司名称 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.companyName}}" data-field="companyName" bindinput="onInput" maxlength="100" placeholder="请输入公司全称" />
+      </view>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">职位 <text class="required">*</text></text>
+          <input class="field-input" value="{{form.jobTitle}}" data-field="jobTitle" bindinput="onInput" maxlength="50" placeholder="当前职位" />
+        </view>
+        <view class="field half">
+          <text class="field-label">税前年收入（万元）<text class="required">*</text></text>
+          <input class="field-input" value="{{form.annualIncomePreTax}}" data-field="annualIncomePreTax" bindinput="onInput" type="digit" maxlength="8" placeholder="如 50" />
+        </view>
+      </view>
+      <view class="field">
+        <text class="field-label">收入来源 <text class="required">*</text></text>
+        <checkbox-group class="choice-grid" data-field="incomeSources" bindchange="onCheckboxChange">
+          <label wx:for="{{incomeSourceOptions}}" wx:key="value" class="choice-item"><checkbox value="{{item.value}}" color="#a35d45" />{{item.label}}</label>
+        </checkbox-group>
+      </view>
+      <view wx:if="{{hasOtherIncomeSource}}" class="field conditional-field">
+        <text class="field-label">其他收入来源 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.otherIncomeSource}}" data-field="otherIncomeSource" bindinput="onInput" maxlength="80" placeholder="请说明其他收入来源" />
+      </view>
+      <view class="field secure-field">
+        <text class="field-label">验资凭证留存 <text class="required">*</text></text>
+        <checkbox-group class="choice-grid" data-field="verificationEvidenceTypes" bindchange="onCheckboxChange">
+          <label wx:for="{{evidenceOptions}}" wx:key="value" class="choice-item"><checkbox value="{{item.value}}" color="#61705b" />{{item.label}}</label>
+        </checkbox-group>
+      </view>
+      <view class="field secure-field">
+        <text class="field-label">凭证存放位置 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.verificationCredentialLocation}}" data-field="verificationCredentialLocation" bindinput="onInput" maxlength="120" placeholder="如 加密盘 / 会员编号 / 文件夹名称" />
+        <text class="field-help">这里只记录内部索引，不向会员浏览端返回。</text>
+      </view>
+    </view>
+  </view>
+
+  <view id="section-assets" class="card dossier-section {{errorSection === 'assets' ? 'has-error' : ''}}">
+    <view class="section-head" data-section="assets" bindtap="toggleSection" aria-role="button" aria-label="展开或收起资产内部存档">
+      <view class="section-number">03</view>
+      <view class="section-heading">
+        <text class="section-title">资产验资存档</text>
+        <text class="section-note">内部参考 · 不进入公开画像</text>
+      </view>
+      <text class="section-toggle">{{openSections.assets ? '收起' : '展开'}}</text>
+    </view>
+    <view hidden="{{!openSections.assets}}" class="section-body">
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">房产套数 <text class="required">*</text></text>
+          <input class="field-input" value="{{form.assetVerification.propertyCount}}" data-field="assetVerification.propertyCount" bindinput="onInput" type="number" maxlength="2" placeholder="无则填 0" />
+        </view>
+        <view class="field half">
+          <text class="field-label">城市分布</text>
+          <input class="field-input" value="{{form.assetVerification.propertyCities}}" data-field="assetVerification.propertyCities" bindinput="onInput" maxlength="100" placeholder="如 成都、重庆" />
+        </view>
+      </view>
+      <view wx:if="{{hasProperty}}" class="field secure-field conditional-field">
+        <text class="field-label">房产凭证 <text class="required">*</text></text>
+        <checkbox-group class="choice-grid" data-field="assetVerification.propertyProofTypes" bindchange="onCheckboxChange">
+          <label wx:for="{{propertyProofOptions}}" wx:key="value" class="choice-item"><checkbox value="{{item.value}}" color="#61705b" />{{item.label}}</label>
+        </checkbox-group>
+      </view>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">车辆数量 <text class="required">*</text></text>
+          <input class="field-input" value="{{form.assetVerification.vehicleCount}}" data-field="assetVerification.vehicleCount" bindinput="onInput" type="number" maxlength="2" placeholder="无则填 0" />
+        </view>
+        <view class="field half">
+          <text class="field-label">品牌型号</text>
+          <input class="field-input" value="{{form.assetVerification.vehicleModels}}" data-field="assetVerification.vehicleModels" bindinput="onInput" maxlength="100" placeholder="如 宝马 X3" />
+        </view>
+      </view>
+      <view wx:if="{{hasVehicle}}" class="field secure-field conditional-field">
+        <text class="field-label">车辆凭证 <text class="required">*</text></text>
+        <checkbox-group class="choice-grid" data-field="assetVerification.vehicleProofTypes" bindchange="onCheckboxChange">
+          <label wx:for="{{vehicleProofOptions}}" wx:key="value" class="choice-item"><checkbox value="{{item.value}}" color="#61705b" />{{item.label}}</label>
+        </checkbox-group>
+      </view>
+      <view class="field secure-field">
+        <text class="field-label">金融资产大致区间 <text class="required">*</text></text>
+        <picker mode="selector" range="{{financialAssetOptions}}" bindchange="onFinancialAssetChange">
+          <view class="field-input picker-value {{form.assetVerification.financialAssetRange ? '' : 'placeholder'}}">{{financialAssetText}}</view>
+        </picker>
+      </view>
+      <view class="field">
+        <text class="field-label">家庭背景简述（可选）</text>
+        <textarea class="field-input" value="{{form.assetVerification.familyBackground}}" data-field="assetVerification.familyBackground" bindinput="onInput" maxlength="500" placeholder="仅记录与匹配判断相关的必要信息" />
+      </view>
+    </view>
+  </view>
+  </view>
+
+  <view class="stage-content" hidden="{{currentStageIndex !== 1}}">
+  <view id="section-personal" class="card dossier-section {{errorSection === 'personal' ? 'has-error' : ''}}">
+    <view class="section-head" data-section="personal" bindtap="toggleSection" aria-role="button" aria-label="展开或收起个人情况">
+      <view class="section-number">04</view>
+      <view class="section-heading">
+        <text class="section-title">个人情况与生活照</text>
+        <text class="section-note">生活方式记录 · 照片至少 3 张</text>
+      </view>
+      <text class="section-toggle">{{openSections.personal ? '收起' : '展开'}}</text>
+    </view>
+    <view hidden="{{!openSections.personal}}" class="section-body">
+      <view class="field">
+        <text class="field-label">性格简述</text>
+        <textarea class="field-input" value="{{form.personalProfile.personalitySummary}}" data-field="personalProfile.personalitySummary" bindinput="onInput" maxlength="300" placeholder="如 温和坦诚、行动力强" />
+      </view>
+      <view class="field">
+        <text class="field-label">爱好</text>
+        <textarea class="field-input compact-textarea" value="{{form.personalProfile.hobbies}}" data-field="personalProfile.hobbies" bindinput="onInput" maxlength="300" placeholder="运动、旅行、阅读等" />
+      </view>
+      <view class="field">
+        <text class="field-label">生活作息</text>
+        <textarea class="field-input compact-textarea" value="{{form.personalProfile.dailyRoutine}}" data-field="personalProfile.dailyRoutine" bindinput="onInput" maxlength="300" placeholder="工作日与周末作息概况" />
+      </view>
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">是否抽烟</text>
+          <picker mode="selector" range="{{smokingOptions}}" bindchange="onSmokingChange">
+            <view class="field-input picker-value {{form.personalProfile.smokingStatus ? '' : 'placeholder'}}">{{smokingText}}</view>
+          </picker>
+        </view>
+        <view class="field half">
+          <text class="field-label">是否喝酒</text>
+          <picker mode="selector" range="{{drinkingOptions}}" bindchange="onDrinkingChange">
+            <view class="field-input picker-value {{form.personalProfile.drinkingStatus ? '' : 'placeholder'}}">{{drinkingText}}</view>
+          </picker>
+        </view>
+      </view>
+      <view class="photo-vault secure-field">
+        <view class="row photo-vault-head">
+          <view>
+            <text class="field-label">本人生活照 <text class="required">*</text></text>
+            <text class="field-help">内部档案，至少 3 张，最多 9 张</text>
+          </view>
+          <text class="photo-count {{lifePhotoCount >= 3 ? 'ready' : ''}}">{{lifePhotoCount}} / 9</text>
+        </view>
+        <view wx:if="{{lifePhotoDisplayUrls.length}}" class="photo-grid">
+          <view wx:for="{{lifePhotoDisplayUrls}}" wx:key="*this" class="photo-tile">
+            <image class="photo-thumb" src="{{item}}" mode="aspectFill"></image>
+            <view class="photo-delete {{saving || uploading ? 'disabled' : ''}}" data-index="{{index}}" catchtap="deleteLifePhoto" aria-role="button" aria-disabled="{{saving || uploading}}" aria-label="删除生活照">×</view>
           </view>
         </view>
-      </view>
-      <view wx:else class="photo-empty">暂无照片墙照片，保存后展示页会先使用默认图兜底。</view>
-      <text class="photo-ratio-note">支持 1:1 方图、3:2 横图（推荐生活照/封面）、4:5 竖图；上传后可拖动选择截取区域。</text>
-      <button class="btn ghost upload-wall-btn" bindtap="choosePhotos">上传照片墙</button>
-    </view>
-
-    <view class="divider"></view>
-
-    <view class="form-section">
-      <text class="section-title">基础信息</text>
-      <text class="section-note">姓名、性别、年龄和身高会作为会员卡片的核心展示信息。</text>
-      <view class="field">
-        <text class="field-label">姓名</text>
-        <input class="field-input" value="{{form.realName}}" data-field="realName" bindinput="onInput" placeholder="请输入会员姓名" />
-      </view>
-      <view class="field-row">
-        <view class="field half">
-          <text class="field-label">性别</text>
-          <picker mode="selector" range="{{genderOptions}}" bindchange="onGenderChange">
-            <view class="field-input picker-value">{{form.gender === '1' ? '男' : '女'}}</view>
-          </picker>
-        </view>
-        <view class="field half">
-          <text class="field-label">年龄</text>
-          <picker mode="selector" range="{{ageOptions}}" bindchange="onAgeChange">
-            <view class="field-input picker-value">{{ageText}}</view>
-          </picker>
-        </view>
-      </view>
-      <view class="field-row">
-        <view class="field half">
-          <text class="field-label">身高</text>
-          <picker mode="selector" range="{{heightOptions}}" bindchange="onHeightChange">
-            <view class="field-input picker-value">{{heightText}}</view>
-          </picker>
-        </view>
-        <view class="field half">
-          <text class="field-label">籍贯</text>
-          <picker mode="region" bindchange="onNativePlaceChange">
-            <view class="field-input picker-value">{{nativePlaceText}}</view>
-          </picker>
-        </view>
+        <view wx:else class="photo-empty">尚未上传内部生活照</view>
+        <button class="btn ghost upload-btn" loading="{{uploading}}" disabled="{{saving || uploading}}" bindtap="chooseLifePhotos">{{uploading ? '正在处理照片' : '选择并上传照片'}}</button>
       </view>
     </view>
+  </view>
 
-    <view class="divider"></view>
-
-    <view class="form-section">
-      <text class="section-title">城市与服务画像</text>
-      <text class="section-note">这些字段会影响搜索、展示和互推判断。</text>
+  <view id="section-partner" class="card dossier-section {{errorSection === 'partner' ? 'has-error' : ''}}">
+    <view class="section-head" data-section="partner" bindtap="toggleSection" aria-role="button" aria-label="展开或收起择偶要求">
+      <view class="section-number">05</view>
+      <view class="section-heading">
+        <text class="section-title">择偶要求</text>
+        <text class="section-note">匹配边界与相处期待 · 全部必填</text>
+      </view>
+      <text class="section-toggle">{{openSections.partner ? '收起' : '展开'}}</text>
+    </view>
+    <view hidden="{{!openSections.partner}}" class="section-body">
+      <view class="field-row">
+        <view class="field half">
+          <text class="field-label">年龄下限 <text class="required">*</text></text>
+          <input class="field-input" value="{{form.partnerPreferences.ageMin}}" data-field="partnerPreferences.ageMin" bindinput="onInput" type="number" maxlength="2" placeholder="岁" />
+        </view>
+        <view class="field half">
+          <text class="field-label">年龄上限 <text class="required">*</text></text>
+          <input class="field-input" value="{{form.partnerPreferences.ageMax}}" data-field="partnerPreferences.ageMax" bindinput="onInput" type="number" maxlength="2" placeholder="岁" />
+        </view>
+      </view>
       <view class="field">
-        <text class="field-label">城市</text>
-        <picker mode="region" bindchange="onCityChange">
-          <view class="field-input picker-value">{{cityText}}</view>
+        <text class="field-label">身高要求 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.partnerPreferences.heightRequirement}}" data-field="partnerPreferences.heightRequirement" bindinput="onInput" maxlength="60" placeholder="如 170cm以上 / 不限" />
+      </view>
+      <view class="field">
+        <text class="field-label">学历底线 <text class="required">*</text></text>
+        <picker mode="selector" range="{{partnerEducationOptions}}" bindchange="onPartnerEducationChange">
+          <view class="field-input picker-value {{form.partnerPreferences.educationMinimum ? '' : 'placeholder'}}">{{partnerEducationText}}</view>
         </picker>
       </view>
-      <view class="field-row">
-        <view class="field half">
-          <text class="field-label">学历</text>
-          <picker mode="selector" range="{{educationOptions}}" bindchange="onEducationChange">
-            <view class="field-input picker-value">{{educationText}}</view>
-          </picker>
-        </view>
-        <view class="field half">
-          <text class="field-label">收入</text>
-          <picker mode="selector" range="{{incomeOptions}}" bindchange="onIncomeChange">
-            <view class="field-input picker-value">{{incomeText}}</view>
-          </picker>
-        </view>
+      <view class="field">
+        <text class="field-label">婚姻状态要求 <text class="required">*</text></text>
+        <checkbox-group class="choice-grid" data-field="partnerPreferences.maritalStatuses" bindchange="onCheckboxChange">
+          <label wx:for="{{partnerMaritalOptions}}" wx:key="value" class="choice-item"><checkbox value="{{item.value}}" color="#a35d45" />{{item.label}}</label>
+        </checkbox-group>
       </view>
       <view class="field">
-        <text class="field-label">职业</text>
-        <picker mode="selector" range="{{occupationOptions}}" bindchange="onOccupationChange">
-          <view class="field-input picker-value">{{occupationText}}</view>
+        <text class="field-label">对方收入 / 资产预期 <text class="required">*</text></text>
+        <textarea class="field-input compact-textarea" value="{{form.partnerPreferences.incomeAssetExpectation}}" data-field="partnerPreferences.incomeAssetExpectation" bindinput="onInput" maxlength="300" placeholder="请说明最低预期或不限" />
+      </view>
+      <view class="field">
+        <text class="field-label">地域要求 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.partnerPreferences.regionRequirement}}" data-field="partnerPreferences.regionRequirement" bindinput="onInput" maxlength="120" placeholder="如 成都长期发展 / 不限" />
+      </view>
+      <view class="field">
+        <text class="field-label">核心硬性不能接受点 <text class="required">*</text></text>
+        <textarea class="field-input" value="{{form.partnerPreferences.dealBreakers}}" data-field="partnerPreferences.dealBreakers" bindinput="onInput" maxlength="500" placeholder="如无，请明确填写“无”" />
+      </view>
+      <view class="field">
+        <text class="field-label">期待的相处模式 <text class="required">*</text></text>
+        <textarea class="field-input" value="{{form.partnerPreferences.relationshipMode}}" data-field="partnerPreferences.relationshipMode" bindinput="onInput" maxlength="500" placeholder="沟通频率、生活分工、关系节奏等" />
+      </view>
+    </view>
+  </view>
+  </view>
+
+  <view class="stage-content" hidden="{{currentStageIndex !== 2}}">
+  <view id="section-business" class="card dossier-section {{errorSection === 'business' ? 'has-error' : ''}}">
+    <view class="section-head" data-section="business" bindtap="toggleSection" aria-role="button" aria-label="展开或收起业务相关登记">
+      <view class="section-number">06</view>
+      <view class="section-heading">
+        <text class="section-title">业务相关登记</text>
+        <text class="section-note">内部运营与服务周期</text>
+      </view>
+      <text class="section-toggle">{{openSections.business ? '收起' : '展开'}}</text>
+    </view>
+    <view hidden="{{!openSections.business}}" class="section-body">
+      <view class="system-number">
+        <text class="system-number-label">会员编号</text>
+        <text class="system-number-value">保存后由系统自动生成</text>
+      </view>
+      <view class="field">
+        <text class="field-label">客户来源 <text class="required">*</text></text>
+        <picker mode="selector" range="{{customerSourceOptions}}" range-key="label" bindchange="onCustomerSourceChange">
+          <view class="field-input picker-value {{form.businessRegistration.customerSource ? '' : 'placeholder'}}">{{customerSourceText}}</view>
         </picker>
       </view>
-      <view class="field-row">
-        <view class="field half">
-          <text class="field-label">婚况</text>
-          <picker mode="selector" range="{{maritalOptions}}" bindchange="onMaritalChange">
-            <view class="field-input picker-value">{{form.maritalStatus}}</view>
-          </picker>
-        </view>
-        <view class="field half">
-          <text class="field-label">房产</text>
-          <picker mode="selector" range="{{houseOptions}}" bindchange="onHouseChange">
-            <view class="field-input picker-value">{{form.houseStatus}}</view>
-          </picker>
-        </view>
+      <view wx:if="{{form.businessRegistration.customerSource === 'boss_or_other'}}" class="field conditional-field">
+        <text class="field-label">BOSS / 其他渠道 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.businessRegistration.otherCustomerSource}}" data-field="businessRegistration.otherCustomerSource" bindinput="onInput" maxlength="80" placeholder="请填写渠道名称" />
       </view>
       <view class="field">
-        <text class="field-label">车辆</text>
-        <picker mode="selector" range="{{carOptions}}" bindchange="onCarChange">
-          <view class="field-input picker-value">{{form.carStatus}}</view>
+        <text class="field-label">办理套餐 <text class="required">*</text></text>
+        <picker mode="selector" range="{{packageOptions}}" range-key="label" bindchange="onPackageChange">
+          <view class="field-input picker-value {{form.businessRegistration.packageType ? '' : 'placeholder'}}">{{packageText}}</view>
         </picker>
       </view>
-    </view>
-
-    <view class="divider"></view>
-
-    <view class="form-section">
-      <text class="section-title">介绍与期待</text>
-      <text class="section-note">简要记录性格、偏好、择偶期待和线下沟通备注。</text>
-      <view class="field">
-        <text class="field-label">会员介绍</text>
-        <textarea class="field-input" value="{{form.selfIntro}}" data-field="selfIntro" bindinput="onInput" placeholder="写几句有助于后续推荐的备注" />
+      <view wx:if="{{form.businessRegistration.packageType === 'other'}}" class="field conditional-field">
+        <text class="field-label">其他套餐名称 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.businessRegistration.otherPackageName}}" data-field="businessRegistration.otherPackageName" bindinput="onInput" maxlength="80" placeholder="请输入套餐名称" />
       </view>
       <view class="field">
-        <text class="field-label">择偶期待</text>
-        <textarea class="field-input" value="{{form.partnerRequirement}}" data-field="partnerRequirement" bindinput="onInput" placeholder="说明年龄、城市、价值观或生活方式期待" />
-      </view>
-    </view>
-
-    <view class="divider"></view>
-
-    <view class="form-section">
-      <text class="section-title">服务信息</text>
-      <text class="section-note">会员类型、服务等级和备注仅主理人端可见；展示开关只控制公开档案是否进入资源池。</text>
-      <view class="display-switch-row">
-        <view class="display-switch-copy">
-          <text class="field-label">是否公开展示</text>
-          <text class="display-switch-state">{{form.displayEnabled ? '公开到会员浏览和主理人资源池，联系方式和主理人备注不公开。' : '仅内部服务跟进，不进入公开会员浏览和主理人资源池。'}}</text>
-        </view>
-        <switch checked="{{form.displayEnabled}}" color="#b4814f" bindchange="onDisplayEnabledChange"></switch>
+        <text class="field-label">对接主理人 / 负责人 <text class="required">*</text></text>
+        <input class="field-input" value="{{form.businessRegistration.responsibleMatchmaker}}" data-field="businessRegistration.responsibleMatchmaker" bindinput="onInput" maxlength="50" placeholder="请输入负责人姓名" />
+        <text class="field-help">系统归属始终绑定当前登录主理人，不能由表单修改。</text>
       </view>
       <view class="field-row">
         <view class="field half">
-          <text class="field-label">会员类型</text>
-          <picker mode="selector" range="{{memberTypeOptions}}" bindchange="onMemberTypeChange">
-            <view class="field-input picker-value">{{memberTypeLabel}}</view>
+          <text class="field-label">入会日期 <text class="required">*</text></text>
+          <picker mode="date" value="{{form.businessRegistration.joinDate}}" bindchange="onJoinDateChange">
+            <view class="field-input picker-value">{{form.businessRegistration.joinDate}}</view>
           </picker>
         </view>
-        <view class="field half">
-          <text class="field-label">服务等级</text>
-          <picker mode="selector" range="{{serviceLevelOptions}}" bindchange="onServiceLevelChange">
-            <view class="field-input picker-value">{{form.serviceLevel}}级</view>
+        <view class="field half {{form.businessRegistration.packageType === '9980_3m' ? 'readonly-field' : ''}}">
+          <text class="field-label">到期日期</text>
+          <picker mode="date" value="{{form.businessRegistration.expiryDate}}" disabled="{{form.businessRegistration.packageType === '9980_3m' || form.businessRegistration.packageType === 'unpaid'}}" bindchange="onExpiryDateChange">
+            <view class="field-input picker-value {{form.businessRegistration.expiryDate ? '' : 'placeholder'}}">{{expiryDateText}}</view>
           </picker>
         </view>
       </view>
+      <view wx:if="{{form.businessRegistration.packageType === '9980_3m'}}" class="date-note">9980 三个月套餐已按入会日自动计算三个自然月。</view>
       <view class="field">
-        <text class="field-label">主理人备注</text>
-        <textarea class="field-input" value="{{form.remark}}" data-field="remark" bindinput="onInput" placeholder="记录跟进重点、沟通偏好或服务事项" />
+        <text class="field-label">备注标签</text>
+        <checkbox-group class="choice-grid" data-field="businessRegistration.tags" bindchange="onCheckboxChange">
+          <label wx:for="{{tagOptions}}" wx:key="value" class="choice-item"><checkbox value="{{item.value}}" color="#a35d45" />{{item.label}}</label>
+        </checkbox-group>
+        <input class="field-input other-tag-input" value="{{form.businessRegistration.otherTags}}" data-field="businessRegistration.otherTags" bindinput="onInput" maxlength="120" placeholder="其他标签，用顿号分隔" />
+      </view>
+      <view class="field risk-field">
+        <text class="field-label">重要风险备注</text>
+        <textarea class="field-input" value="{{form.businessRegistration.riskNotes}}" data-field="businessRegistration.riskNotes" bindinput="onInput" maxlength="1000" placeholder="负债、离异纠纷、特殊情况等；无则填写“无”" />
       </view>
     </view>
+  </view>
 
-    <button class="btn gold save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="save">保存会员</button>
+  <view id="section-compliance" class="card dossier-section compliance-section {{errorSection === 'compliance' ? 'has-error' : ''}}">
+    <view class="section-head" data-section="compliance" bindtap="toggleSection" aria-role="button" aria-label="展开或收起合规确认">
+      <view class="section-number">07</view>
+      <view class="section-heading">
+        <text class="section-title">合规确认</text>
+        <text class="section-note">保存前必须完成客户确认</text>
+      </view>
+      <text class="section-toggle">{{openSections.compliance ? '收起' : '展开'}}</text>
+    </view>
+    <view hidden="{{!openSections.compliance}}" class="section-body">
+      <view class="compliance-copy">本人知悉：以上资产、验资材料仅用于平台内部匹配参考，平台严格保密，不会对外泄露。</view>
+      <checkbox-group class="compliance-checks" bindchange="onComplianceChange">
+        <label class="compliance-item"><checkbox value="partialVerificationConfirmed" color="#61705b" />已核验本人部分资料</label>
+        <label class="compliance-item"><checkbox value="voluntarySubmissionConfirmed" color="#61705b" />客户自愿提交资料</label>
+      </checkbox-group>
+      <text class="compliance-footnote">主理人保存即确认已向客户说明资料用途与保密范围。</text>
+    </view>
+  </view>
+  </view>
+
+  <view class="save-dock">
+    <view wx:if="{{formError}}" class="save-error">{{formError}}</view>
+    <view class="draft-copy">
+      <text class="draft-status {{draftDirty ? 'dirty' : ''}}">{{draftStatusText}}</text>
+      <text class="draft-warning">草稿不会写入普通本地缓存，退出本页即清除。</text>
+    </view>
+    <view class="save-row">
+      <button class="btn ghost draft-btn" disabled="{{saving || uploading}}" bindtap="saveDraft">保存草稿</button>
+      <button wx:if="{{currentStageIndex > 0}}" class="btn secondary previous-btn" disabled="{{saving || uploading}}" bindtap="previousStage">上一步</button>
+      <button wx:if="{{currentStageIndex < 2}}" class="btn stage-next-btn" disabled="{{saving || uploading}}" bindtap="nextStage">下一步 · {{nextStageLabel}}</button>
+      <button wx:else class="btn save-btn" loading="{{saving}}" disabled="{{saving || uploading}}" bindtap="save">核验并正式建档</button>
+    </view>
   </view>
 </view>

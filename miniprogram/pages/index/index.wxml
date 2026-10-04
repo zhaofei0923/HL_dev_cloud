@@ -1,55 +1,30 @@
 <view class="page login-page safe-bottom">
-  <view class="card hero entry-hero">
-    <text class="eyebrow">高端私享婚恋服务</text>
-    <text class="title">HL 婚恋服务</text>
-    <text class="subtitle">先浏览会员与沙龙，再完善个人资料；需要经营会员时，可在“我的”中提交主理人申请。</text>
-    <view class="summary-strip">
-      <view class="summary-item">
-        <text class="summary-value">会员</text>
-        <text class="summary-label">脱敏浏览</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">沙龙</text>
-        <text class="summary-label">精选活动</text>
-      </view>
-      <view class="summary-item">
-        <text class="summary-value">我的</text>
-        <text class="summary-label">资料与主理人</text>
-      </view>
-    </view>
+  <view class="entry-brand">
+    <text class="entry-kicker">HL 婚恋服务</text>
+    <text class="entry-title">认真认识一个人</text>
+    <text class="entry-subtitle">浏览真实会员与近期活动，准备好后再逐步完善自己的资料。</text>
   </view>
 
-  <view class="card role-card">
-    <text class="section-title">开始服务</text>
-    <text class="section-note">从会员资源开始浏览，也可以查看沙龙活动或完善个人资料。</text>
-    <view class="button-row">
-      <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="login">登录并进入</button>
-    </view>
+  <view class="login-panel">
+    <text class="section-title">开始使用</text>
+    <text class="section-note">微信快捷登录，不需要另外注册账号。</text>
+    <button class="entry-action" loading="{{loading}}" disabled="{{loading}}" bindtap="login">登录并查看推荐</button>
+    <text class="entry-privacy">联系方式、验资材料和主理人服务记录不会对其他会员公开。</text>
   </view>
 
-  <view class="card notice-card">
-    <text class="section-title">服务路径</text>
-    <view class="capability-list">
-      <view class="capability-item">
-        <text class="capability-index">01</text>
-        <view class="capability-copy">
-          <text class="item-title">浏览会员资源</text>
-          <text class="item-meta">先看城市、职业、学历和婚恋期待，页面隐藏手机号和运营备注。</text>
-        </view>
+  <view class="entry-assurances">
+    <view class="assurance-row">
+      <text class="assurance-index">01</text>
+      <view class="assurance-copy">
+        <text class="assurance-title">资料分层展示</text>
+        <text class="assurance-note">公开资料用于认识彼此，内部资料仅用于主理人服务。</text>
       </view>
-      <view class="capability-item">
-        <text class="capability-index">02</text>
-        <view class="capability-copy">
-          <text class="item-title">选择线下沙龙</text>
-          <text class="item-meta">查看时间、地点、席位和价格，进入详情后完成报名。</text>
-        </view>
-      </view>
-      <view class="capability-item">
-        <text class="capability-index">03</text>
-        <view class="capability-copy">
-          <text class="item-title">完善个人资料</text>
-          <text class="item-meta">让主理人后续跟进更准确，也可从这里查看主理人申请状态。</text>
-        </view>
+    </view>
+    <view class="assurance-row">
+      <text class="assurance-index">02</text>
+      <view class="assurance-copy">
+        <text class="assurance-title">按自己的节奏了解</text>
+        <text class="assurance-note">先看推荐和活动，需要时再联系主理人或开通服务。</text>
       </view>
     </view>
   </view>

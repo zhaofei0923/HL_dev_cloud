@@ -1,6 +1,8 @@
 const cloud = require('wx-server-sdk');
 const crypto = require('node:crypto');
 const {
+  TOKEN_TYPES,
+  createTokenService,
   normalizeWechatPhoneResult,
   resolveWechatOpenid
 } = require('./auth-policy');
@@ -19,6 +21,25 @@ const {
   relationshipNotificationView,
   requiresPremiumForConversation
 } = require('./relationship-policy');
+const {
+  defaultMemberNo,
+  validateMemberIntake
+} = require('./member-intake-policy');
+const {
+  archivedMergedOpenid,
+  claimExpiresAt,
+  claimTokenMatches,
+  createClaimToken,
+  fillTargetProfileBlanks,
+  hashClaimToken,
+  isClaimExpired,
+  isManualIdentity,
+  maskMemberNo,
+  maskName,
+  maskPhone,
+  normalizeMainlandPhone,
+  parseClaimToken
+} = require('./account-claim-policy');
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
@@ -32,6 +53,7 @@ const C = {
   profiles: 'hl_profiles',
   matchmakers: 'hl_matchmakers',
   members: 'hl_members',
+  memberPrivateArchives: 'hl_member_private_archives',
   salonEvents: 'hl_salon_events',
   registrations: 'hl_registrations',
   matchRecords: 'hl_match_records',
@@ -41,6 +63,7 @@ const C = {
   chatMessages: 'hl_chat_messages',
   memberInteractions: 'hl_member_interactions',
   giftRecords: 'hl_gift_records',
+  identityClaims: 'hl_member_identity_claims',
   membershipPlans: 'hl_membership_plans',
   paymentOrders: 'hl_payment_orders',
   counters: 'hl_counters'
@@ -221,7 +244,8 @@ function ok(data = null, message = 'success') {
 function fail(err) {
   const status = err.status || 500;
   const code = err.code || (status >= 500 ? 50000 : 40000);
-  return { code, message: err.message || 'server error', data: null };
+  const details = status < 500 && Array.isArray(err.details) ? clone(err.details) : null;
+  return { code, message: err.message || 'server error', data: details ? { details } : null };
 }
 
 function nowIso() {
@@ -326,28 +350,6 @@ function withMemberMedia(data = {}) {
   };
 }
 
-function createTokenService(secret = process.env.JWT_SECRET || 'hl-dev-secret') {
-  function sign(payload) {
-    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url');
-    return `${body}.${sig}`;
-  }
-
-  function verify(token) {
-    if (!token || typeof token !== 'string' || !token.includes('.')) {
-      throw createHttpError('invalid token', 401, 40100);
-    }
-    const [body, sig] = token.split('.');
-    const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url');
-    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
-      throw createHttpError('invalid token', 401, 40100);
-    }
-    return JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-  }
-
-  return { sign, verify };
-}
-
 const tokenService = createTokenService();
 
 async function ensureCollection(name) {
@@ -373,11 +375,14 @@ async function ensureCollections() {
 function collectionsForPath(path) {
   const common = [C.users, C.profiles, C.counters];
   if (path.startsWith('/admin/')) return Object.values(C);
+  if (path.startsWith('/auth/member-claim')) {
+    return [...common, C.identityClaims, C.members, C.matchmakers, C.memberPrivateArchives];
+  }
   if (path.startsWith('/matchmaker')) {
-    return [...common, C.matchmakers, C.members, C.memberRequests, C.salonEvents, C.registrations, C.matchRecords, C.messages];
+    return [...common, C.matchmakers, C.members, C.memberRequests, C.salonEvents, C.registrations, C.matchRecords, C.messages, C.identityClaims];
   }
   if (path.startsWith('/member')) {
-    return [...common, C.matchmakers, C.members, C.memberRequests, C.matchRecords, C.salonEvents, C.messages, C.memberInteractions, C.giftRecords, C.membershipPlans, C.paymentOrders];
+    return [...common, C.matchmakers, C.members, C.memberPrivateArchives, C.memberRequests, C.matchRecords, C.salonEvents, C.messages, C.memberInteractions, C.giftRecords, C.membershipPlans, C.paymentOrders, C.identityClaims];
   }
   if (path.startsWith('/internal/payment-orders')) {
     return [...common, C.members, C.membershipPlans, C.paymentOrders];
@@ -602,6 +607,10 @@ async function resolveMemberMediaPage(page) {
 function publicUser(user) {
   const safe = stripInternal(user) || {};
   delete safe.openid;
+  delete safe.authVersion;
+  delete safe.claimedFromUserId;
+  delete safe.mergedAt;
+  delete safe.mergedIntoUserId;
   return safe;
 }
 
@@ -659,15 +668,30 @@ function sortMemberRowsDesc(a, b) {
 async function memberView(member, context = {}) {
   const user = await getById(C.users, member.userId) || {};
   const profile = await getOne(C.profiles, { userId: Number(member.userId) }) || {};
+  const identityStatus = isManualIdentity(user.openid) ? 'pending' : 'claimed';
   const photos = normalizeMemberPhotos(profile.photos);
   const media = withMemberMedia({ ...profile, gender: profile.gender || user.gender, photos });
   const row = {
-    ...stripInternal(member),
+    id: Number(member.id),
+    sortId: Number(member.id),
+    source: 'member',
+    memberNo: member.memberNo || defaultMemberNo(member.id, member.createdAt || new Date()),
+    matchmakerId: Number(member.matchmakerId),
+    userId: Number(member.userId),
+    memberType: member.memberType || 'no_consumption',
+    serviceLevel: member.serviceLevel || '',
+    expireAt: member.expireAt || null,
+    remark: member.remark || '',
+    status: member.status === undefined ? 1 : Number(member.status),
+    createdAt: member.createdAt || '',
+    updatedAt: member.updatedAt || '',
     nickname: user.nickname || profile.realName || '',
     phone: user.phone || '',
     avatarUrl: photos[0] || media.avatarUrl,
     gender: user.gender || 0,
     isVerified: user.isVerified || 0,
+    identityStatus,
+    identityStatusText: identityStatus === 'pending' ? '待会员认领' : '已绑定微信',
     realName: profile.realName || user.nickname || '',
     age: profile.age || null,
     height: profile.height || null,
@@ -746,6 +770,7 @@ async function profileMemberView(profile, context = {}) {
 function sanitizePublicMemberRow(row, options = {}) {
   const safe = { ...row };
   delete safe.phone;
+  delete safe.memberNo;
   delete safe.matchmakerId;
   if (!options.keepUserId) delete safe.userId;
   delete safe.displayEnabled;
@@ -753,6 +778,7 @@ function sanitizePublicMemberRow(row, options = {}) {
   delete safe.serviceLevel;
   delete safe.expireAt;
   delete safe.remark;
+  delete safe.privateArchive;
   return safe;
 }
 
@@ -1232,7 +1258,7 @@ async function promoteChatConversation(conversation, metadata = {}) {
     const patch = conversationMetadataPatch(current, metadata);
     if (!Object.keys(patch).length) return { ...current, _id: current._id || conversation._id };
     const update = { ...patch, updatedAt: nowIso() };
-    await ref.update(update);
+    await ref.update({ data: update });
     return { ...current, ...update, _id: current._id || conversation._id };
   });
 }
@@ -1252,13 +1278,14 @@ async function createChatConversationAtomically(normalizedIds, participantKey, c
 
   return db.runTransaction(async transaction => {
     const ref = transaction.collection(C.conversations).doc(documentId);
-    const snapshot = await ref.get();
-    const existing = snapshot && snapshot.data ? snapshot.data : null;
+    const query = transaction.collection(C.conversations).where({ _id: documentId }).limit(1);
+    const snapshot = await query.get();
+    const existing = snapshot && Array.isArray(snapshot.data) ? snapshot.data[0] : null;
     if (existing && Number(existing.status || 1) !== 0) {
       const patch = conversationMetadataPatch(existing, metadata);
       if (!Object.keys(patch).length) return { ...existing, _id: existing._id || documentId };
       const update = { ...patch, updatedAt: nowIso() };
-      await ref.update(update);
+      await ref.update({ data: update });
       return { ...existing, ...update, _id: existing._id || documentId };
     }
 
@@ -1285,8 +1312,7 @@ async function createChatConversationAtomically(normalizedIds, participantKey, c
       updatedAt: timestamp
     };
     delete payload._id;
-    if (existing) await ref.set(payload);
-    else await ref.create(payload);
+    await ref.set({ data: payload });
     return { ...payload, _id: documentId };
   });
 }
@@ -1739,10 +1765,15 @@ async function approveMemberMatchmakerRequest(matchmakerUserId, requestId) {
 
   let memberRow = await getOne(C.members, { matchmakerId: mm.id, userId: Number(request.userId) });
   if (memberRow) {
-    memberRow = await updateRow(C.members, memberRow, { status: 1 });
+    memberRow = await updateRow(C.members, memberRow, {
+      memberNo: memberRow.memberNo || defaultMemberNo(memberRow.id, memberRow.createdAt || new Date()),
+      status: 1
+    });
   } else {
+    const memberId = await nextId('member');
     memberRow = await addRow(C.members, {
-      id: await nextId('member'),
+      id: memberId,
+      memberNo: defaultMemberNo(memberId),
       matchmakerId: mm.id,
       userId: Number(request.userId),
       memberType: 'free',
@@ -1811,12 +1842,15 @@ async function acceptMemberMatchmakerInvite(userId, data = {}) {
 
   if (memberRow) {
     memberRow = await updateRow(C.members, memberRow, {
+      memberNo: memberRow.memberNo || defaultMemberNo(memberRow.id, memberRow.createdAt || new Date()),
       memberType: memberRow.memberType || 'free',
       status: 1
     });
   } else {
+    const memberId = await nextId('member');
     memberRow = await addRow(C.members, {
-      id: await nextId('member'),
+      id: memberId,
+      memberNo: defaultMemberNo(memberId),
       matchmakerId: Number(matchmaker.id),
       userId: Number(userId),
       memberType: 'free',
@@ -1909,18 +1943,529 @@ function matchesMemberFilters(row, filters = {}) {
   return true;
 }
 
-function requireUser(token) {
-  const session = tokenService.verify(token);
-  if (!session.userId) throw createHttpError('unauthorized', 401, 40100);
+async function requireUser(token) {
+  const session = tokenService.verify(token, { expectedType: TOKEN_TYPES.ACCESS });
+  if (!Number.isSafeInteger(session.userId) || session.userId <= 0) {
+    throw createHttpError('unauthorized', 401, 40100);
+  }
+  const user = await getById(C.users, session.userId);
+  if (!user || Number(user.status) !== 1 || user.mergedIntoUserId) {
+    throw createHttpError('登录状态已失效，请重新登录', 401, 40100);
+  }
+  const tokenAuthVersion = Number(session.authVersion || 1);
+  const userAuthVersion = Number(user.authVersion || 1);
+  if (tokenAuthVersion !== userAuthVersion) {
+    throw createHttpError('登录状态已失效，请重新登录', 401, 40100);
+  }
   return session;
 }
 
 function requireAdmin(token) {
-  const session = tokenService.verify(token);
-  if (session.role !== 'admin' || session.type !== 'admin') {
+  const session = tokenService.verify(token, { expectedType: TOKEN_TYPES.ADMIN });
+  if (session.role !== 'admin') {
     throw createHttpError('仅管理员可访问', 403, 40303);
   }
   return session;
+}
+
+function issueUserSession(user) {
+  const authVersion = Number(user.authVersion || 1);
+  return {
+    token: tokenService.sign(
+      { userId: Number(user.id), currentRole: user.currentRole || 'user', authVersion },
+      { type: TOKEN_TYPES.ACCESS }
+    ),
+    refreshToken: tokenService.sign(
+      { userId: Number(user.id), authVersion },
+      { type: TOKEN_TYPES.REFRESH }
+    ),
+    user: publicUser(user)
+  };
+}
+
+async function uniqueActiveUser(query, conflictMessage) {
+  const rows = (await getAll(C.users, query, 3)).filter(row => Number(row.status) !== 0);
+  if (rows.length > 1) {
+    throw createHttpError(conflictMessage || '账号数据存在重复，请联系平台人工核验', 409, 40920);
+  }
+  return rows[0] || null;
+}
+
+function assertWechatCallerOwnsUser(user) {
+  const openid = String((cloud.getWXContext() || {}).OPENID || '').trim();
+  if (!openid && process.env.ALLOW_MOCK_WECHAT_LOGIN === 'true' && /^mock_/.test(String(user.openid || ''))) {
+    return String(user.openid);
+  }
+  if (!openid || openid !== String(user.openid || '')) {
+    throw createHttpError('微信身份校验失败，请重新登录', 401, 40103);
+  }
+  return openid;
+}
+
+async function exchangeWechatPhone(code) {
+  if (!String(code || '').trim()) throw createHttpError('手机号授权 code 不能为空');
+  if (!cloud.openapi || !cloud.openapi.phonenumber || !cloud.openapi.phonenumber.getPhoneNumber) {
+    throw createHttpError('当前云环境暂不支持微信手机号授权', 503, 50302);
+  }
+  let phoneResult;
+  try {
+    phoneResult = await cloud.openapi.phonenumber.getPhoneNumber({ code: String(code).trim() });
+  } catch (err) {
+    console.warn('wechat phone authorization failed', err);
+    throw createHttpError('手机号授权已失效，请重新授权', 400, 40003);
+  }
+  try {
+    return normalizeWechatPhoneResult(phoneResult);
+  } catch (err) {
+    throw createHttpError(err.message || '未获取到有效手机号', 400, 40003);
+  }
+}
+
+function identityClaimDocumentId(memberId) {
+  return `member_${Number(memberId)}`;
+}
+
+async function getIdentityClaimDocument(memberId) {
+  try {
+    const snapshot = await db.collection(C.identityClaims).doc(identityClaimDocumentId(memberId)).get();
+    return snapshot && snapshot.data ? { ...snapshot.data, _id: identityClaimDocumentId(memberId) } : null;
+  } catch (err) {
+    if (isMissingCollectionError(err) || /DOCUMENT_NOT_EXIST|document not exist|not found/i.test(String(err && (err.errMsg || err.message)))) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+function assertUsableIdentityClaim(token, claim) {
+  if (!claim || !claimTokenMatches(token, claim.tokenHash)) {
+    throw createHttpError('认领邀请无效，请联系主理人重新发送', 410, 41020);
+  }
+  if (String(claim.status) !== 'pending') {
+    throw createHttpError('该认领邀请已使用，请勿重复提交', 409, 40921);
+  }
+  if (isClaimExpired(claim.expiresAt)) {
+    throw createHttpError('认领邀请已过期，请联系主理人重新发送', 410, 41021);
+  }
+}
+
+async function identityClaimContext(token) {
+  const parsed = parseClaimToken(token);
+  if (!parsed) throw createHttpError('认领邀请无效，请联系主理人重新发送', 410, 41020);
+  const claim = await getIdentityClaimDocument(parsed.memberId);
+  if (claim && String(claim.status) === 'claimed' && claimTokenMatches(token, claim.tokenHash)) {
+    return { parsed, claim, claimed: true };
+  }
+  assertUsableIdentityClaim(token, claim);
+  const memberRow = await getById(C.members, parsed.memberId);
+  if (!memberRow || Number(memberRow.status) !== 1 || Number(memberRow.userId) !== Number(claim.targetUserId)) {
+    throw createHttpError('待认领会员档案不存在', 404, 40420);
+  }
+  const targetUser = await getById(C.users, memberRow.userId);
+  if (!targetUser || Number(targetUser.status) !== 1 || !isManualIdentity(targetUser.openid)) {
+    throw createHttpError('该会员档案已完成认领或状态已变更', 409, 40921);
+  }
+  const matchmakerRow = await getById(C.matchmakers, memberRow.matchmakerId);
+  if (!matchmakerRow || Number(matchmakerRow.status) !== 1 || Number(matchmakerRow.id) !== Number(claim.matchmakerId)) {
+    throw createHttpError('主理人服务关系已变更，请重新生成邀请', 409, 40922);
+  }
+  return { parsed, claim, memberRow, targetUser, matchmakerRow, claimed: false };
+}
+
+async function identityClaimPreview(token) {
+  const context = await identityClaimContext(token);
+  if (context.claimed) {
+    return { status: 'claimed', title: '该档案已完成认领' };
+  }
+  const profile = await getOne(C.profiles, { userId: Number(context.targetUser.id) }) || {};
+  const matchmakerUser = await getById(C.users, context.matchmakerRow.userId);
+  return {
+    status: 'pending',
+    member: {
+      nameMasked: maskName(profile.realName || context.targetUser.nickname),
+      memberNoMasked: maskMemberNo(context.memberRow.memberNo || defaultMemberNo(context.memberRow.id, context.memberRow.createdAt || new Date())),
+      phoneMasked: maskPhone(context.targetUser.phone)
+    },
+    matchmaker: {
+      nickname: (matchmakerUser && matchmakerUser.nickname) || '主理人',
+      matchmakerNo: context.matchmakerRow.matchmakerNo || defaultMatchmakerNo(context.matchmakerRow.id)
+    },
+    expiresAt: context.claim.expiresAt
+  };
+}
+
+async function sourceAccountConflictReasons(sourceUserId) {
+  const sourceId = Number(sourceUserId);
+  const [
+    matchmakers,
+    members,
+    memberRequests,
+    matchRecordsA,
+    matchRecordsB,
+    sentMessages,
+    receivedMessages,
+    chatMessages,
+    interactionsFrom,
+    interactionsTo,
+    giftsFrom,
+    giftsReceived,
+    giftsTargeted,
+    registrations,
+    paymentOrders,
+    salonEvents,
+    conversations
+  ] = await Promise.all([
+    getAll(C.matchmakers, { userId: sourceId }, 1),
+    getAll(C.members, { userId: sourceId, status: 1 }, 1),
+    getAll(C.memberRequests, { userId: sourceId }, 1),
+    getAll(C.matchRecords, { userAId: sourceId }, 1),
+    getAll(C.matchRecords, { userBId: sourceId }, 1),
+    getAll(C.messages, { senderId: sourceId }, 1),
+    getAll(C.messages, { receiverId: sourceId }, 1),
+    getAll(C.chatMessages, { senderId: sourceId }, 1),
+    getAll(C.memberInteractions, { userId: sourceId }, 1),
+    getAll(C.memberInteractions, { targetUserId: sourceId }, 1),
+    getAll(C.giftRecords, { senderId: sourceId }, 1),
+    getAll(C.giftRecords, { receiverId: sourceId }, 1),
+    getAll(C.giftRecords, { targetUserId: sourceId }, 1),
+    getAll(C.registrations, { userId: sourceId }, 1),
+    getAll(C.paymentOrders, { userId: sourceId }, 1),
+    getAll(C.salonEvents, { organizerId: sourceId }, 1),
+    getAll(C.conversations, null, 2000)
+  ]);
+  const conversationConflict = conversations.some(row => (
+    Array.isArray(row.participantIds) && row.participantIds.some(id => Number(id) === sourceId)
+  ));
+  const groups = [
+    matchmakers,
+    members,
+    memberRequests,
+    matchRecordsA,
+    matchRecordsB,
+    sentMessages,
+    receivedMessages,
+    chatMessages,
+    interactionsFrom,
+    interactionsTo,
+    giftsFrom,
+    giftsReceived,
+    giftsTargeted,
+    registrations,
+    paymentOrders,
+    salonEvents
+  ];
+  return groups.some(rows => rows.length > 0) || conversationConflict
+    ? ['independent_business_data']
+    : [];
+}
+
+async function createMemberIdentityClaimInvite(matchmakerUserId, memberId) {
+  const matchmakerRow = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
+  const memberRow = await getById(C.members, memberId);
+  if (!memberRow || Number(memberRow.status) !== 1 || Number(memberRow.matchmakerId) !== Number(matchmakerRow.id)) {
+    throw createHttpError('member not found', 404, 40400);
+  }
+  const targetUser = await getById(C.users, memberRow.userId);
+  if (!targetUser || Number(targetUser.status) !== 1) throw createHttpError('member not found', 404, 40400);
+  const token = createClaimToken(memberRow.id);
+  const claimInviteVersion = hashClaimToken(token);
+  const timestamp = nowIso();
+  const expiresAt = claimExpiresAt(Date.now());
+  const result = await db.runTransaction(async transaction => {
+    const matchmakerRef = transaction.collection(C.matchmakers).doc(matchmakerRow._id);
+    const memberRef = transaction.collection(C.members).doc(memberRow._id);
+    const targetRef = transaction.collection(C.users).doc(targetUser._id);
+    const claimRef = transaction.collection(C.identityClaims).doc(identityClaimDocumentId(memberRow.id));
+    const claimQuery = transaction.collection(C.identityClaims)
+      .where({ _id: identityClaimDocumentId(memberRow.id) })
+      .limit(1);
+    const snapshots = await Promise.all([
+      matchmakerRef.get(),
+      memberRef.get(),
+      targetRef.get(),
+      claimQuery.get()
+    ]);
+    const currentMatchmaker = snapshots[0] && snapshots[0].data;
+    const currentMember = snapshots[1] && snapshots[1].data;
+    const currentTarget = snapshots[2] && snapshots[2].data;
+    const currentClaim = snapshots[3] && Array.isArray(snapshots[3].data)
+      ? snapshots[3].data[0]
+      : null;
+
+    if (
+      !currentMatchmaker
+      || Number(currentMatchmaker.id) !== Number(matchmakerRow.id)
+      || Number(currentMatchmaker.userId) !== Number(matchmakerUserId)
+      || Number(currentMatchmaker.status) !== 1
+      || Number(currentMatchmaker.certificationStatus) !== 2
+      || !currentMember
+      || Number(currentMember.id) !== Number(memberRow.id)
+      || Number(currentMember.status) !== 1
+      || Number(currentMember.matchmakerId) !== Number(currentMatchmaker.id)
+      || Number(currentMember.userId) !== Number(targetUser.id)
+      || !currentTarget
+      || Number(currentTarget.id) !== Number(targetUser.id)
+      || Number(currentTarget.status) !== 1
+    ) {
+      throw createHttpError('会员或主理人状态已变化，请重新生成邀请', 409, 40922);
+    }
+    if (!isManualIdentity(currentTarget.openid)) {
+      return { status: 'claimed', identityStatusText: '已绑定微信' };
+    }
+    if (currentClaim && String(currentClaim.status) === 'claimed') {
+      return { status: 'claimed', identityStatusText: '已绑定微信' };
+    }
+
+    const targetPhone = String(currentTarget.phone || '').trim();
+    if (!targetPhone) {
+      throw createHttpError('该会员尚未留存手机号，请补录后再生成认领邀请', 422, 42220);
+    }
+    const phoneSnapshot = await transaction.collection(C.users)
+      .where({ phone: targetPhone })
+      .limit(3)
+      .get();
+    const phoneOwners = (phoneSnapshot.data || []).filter(row => Number(row.status) !== 0);
+    if (phoneOwners.length !== 1 || Number(phoneOwners[0].id) !== Number(currentTarget.id)) {
+      throw createHttpError('会员手机号归属异常，请联系平台人工核验', 409, 40920);
+    }
+
+    const memberNo = currentMember.memberNo
+      || defaultMemberNo(currentMember.id, currentMember.createdAt || new Date());
+    if (!currentMember.memberNo) {
+      await memberRef.update({ data: { memberNo, updatedAt: timestamp } });
+    }
+    await targetRef.update({ data: { claimInviteVersion, updatedAt: timestamp } });
+    const claim = {
+      memberId: Number(currentMember.id),
+      memberNo,
+      matchmakerId: Number(currentMatchmaker.id),
+      createdByUserId: Number(matchmakerUserId),
+      targetUserId: Number(currentTarget.id),
+      tokenHash: hashClaimToken(token),
+      claimInviteVersion,
+      status: 'pending',
+      expiresAt,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    await claimRef.set({ data: claim });
+    return {
+      status: 'pending',
+      memberNo,
+      targetName: currentTarget.nickname,
+      targetPhone
+    };
+  });
+  if (result.status === 'claimed') return result;
+  return {
+    status: 'pending',
+    sharePath: `/pages/user/member-claim?token=${encodeURIComponent(token)}`,
+    expiresAt,
+    member: {
+      nameMasked: maskName(result.targetName),
+      memberNoMasked: maskMemberNo(result.memberNo),
+      phoneMasked: maskPhone(result.targetPhone)
+    }
+  };
+}
+
+const CLAIM_PROFILE_FIELDS = [
+  'realName', 'age', 'height', 'education', 'occupation', 'incomeRange', 'province', 'city',
+  'nativePlace', 'maritalStatus', 'houseStatus', 'carStatus', 'selfIntro', 'partnerRequirement', 'photos'
+];
+
+async function confirmMemberIdentityClaim(sourceUserId, token, phoneCode) {
+  const sourceUser = await getUserOrThrow(sourceUserId);
+  const trustedOpenid = assertWechatCallerOwnsUser(sourceUser);
+  if (isManualIdentity(sourceUser.openid)) {
+    throw createHttpError('当前账号无需认领手工档案', 409, 40923);
+  }
+  const context = await identityClaimContext(token);
+  if (context.claimed) {
+    if (Number(context.claim.canonicalUserId) === Number(sourceUser.id)) {
+      return {
+        ...issueUserSession(sourceUser),
+        claimStatus: 'claimed',
+        idempotent: true
+      };
+    }
+    if (Number(context.claim.claimedBySourceUserId) === Number(sourceUser.id)) {
+      const canonicalUser = await getById(C.users, context.claim.canonicalUserId);
+      if (
+        canonicalUser
+        && Number(canonicalUser.status) === 1
+        && String(canonicalUser.openid || '') === trustedOpenid
+      ) {
+        return {
+          ...issueUserSession(canonicalUser),
+          claimStatus: 'claimed',
+          idempotent: true
+        };
+      }
+    }
+    throw createHttpError('该档案已由其他微信账号认领', 409, 40921);
+  }
+  if (Number(context.targetUser.id) === Number(sourceUser.id)) return issueUserSession(sourceUser);
+  const phone = await exchangeWechatPhone(phoneCode);
+  if (String(context.targetUser.phone || '') !== phone) {
+    throw createHttpError('微信手机号与主理人留存手机号不一致，请联系主理人核对', 409, 40924);
+  }
+  if (sourceUser.phone && String(sourceUser.phone) !== phone) {
+    throw createHttpError('当前微信账号已绑定其他手机号，请联系主理人进行人工合并', 409, 40925);
+  }
+  const phoneOwner = await uniqueActiveUser(
+    { phone },
+    '该手机号对应多条档案，请联系平台人工核验'
+  );
+  if (!phoneOwner || Number(phoneOwner.id) !== Number(context.targetUser.id)) {
+    throw createHttpError('手机号归属异常，请联系平台人工核验', 409, 40920);
+  }
+  const conflictReasons = await sourceAccountConflictReasons(sourceUser.id);
+  if (conflictReasons.length) {
+    throw createHttpError('当前微信账号已有独立业务记录，请联系主理人进行人工合并', 409, 40925);
+  }
+
+  const [sourceProfile, targetProfile] = await Promise.all([
+    getOne(C.profiles, { userId: Number(sourceUser.id) }),
+    getOne(C.profiles, { userId: Number(context.targetUser.id) })
+  ]);
+  if (!targetProfile || !targetProfile._id) {
+    throw createHttpError('手工会员档案不完整，请联系主理人核验', 409, 40926);
+  }
+  const timestamp = nowIso();
+  const result = await db.runTransaction(async transaction => {
+    const claimRef = transaction.collection(C.identityClaims).doc(identityClaimDocumentId(context.memberRow.id));
+    const memberRef = transaction.collection(C.members).doc(context.memberRow._id);
+    const matchmakerRef = transaction.collection(C.matchmakers).doc(context.matchmakerRow._id);
+    const sourceRef = transaction.collection(C.users).doc(sourceUser._id);
+    const targetRef = transaction.collection(C.users).doc(context.targetUser._id);
+    const targetProfileRef = transaction.collection(C.profiles).doc(targetProfile._id);
+    const sourceProfileRef = sourceProfile && sourceProfile._id
+      ? transaction.collection(C.profiles).doc(sourceProfile._id)
+      : null;
+    const snapshots = await Promise.all([
+      claimRef.get(),
+      memberRef.get(),
+      matchmakerRef.get(),
+      sourceRef.get(),
+      targetRef.get(),
+      targetProfileRef.get(),
+      sourceProfileRef ? sourceProfileRef.get() : Promise.resolve(null),
+      transaction.collection(C.users).where({ phone }).limit(3).get(),
+      transaction.collection(C.users).where({ openid: trustedOpenid }).limit(3).get()
+    ]);
+    const currentClaim = snapshots[0] && snapshots[0].data;
+    const currentMember = snapshots[1] && snapshots[1].data;
+    const currentMatchmaker = snapshots[2] && snapshots[2].data;
+    const currentSource = snapshots[3] && snapshots[3].data;
+    const currentTarget = snapshots[4] && snapshots[4].data;
+    const currentTargetProfile = snapshots[5] && snapshots[5].data;
+    const currentSourceProfile = snapshots[6] && snapshots[6].data;
+    const currentPhoneOwners = ((snapshots[7] && snapshots[7].data) || [])
+      .filter(row => Number(row.status) !== 0);
+    const currentOpenidOwners = ((snapshots[8] && snapshots[8].data) || [])
+      .filter(row => Number(row.status) !== 0);
+
+    if (currentClaim && String(currentClaim.status) === 'claimed') {
+      if (Number(currentClaim.claimedBySourceUserId) !== Number(sourceUser.id)) {
+        throw createHttpError('该档案已由其他微信账号认领', 409, 40921);
+      }
+      return { canonicalUser: currentTarget, idempotent: true };
+    }
+    assertUsableIdentityClaim(token, currentClaim);
+    if (
+      !currentSource
+      || !currentTarget
+      || !currentTargetProfile
+      || !currentMember
+      || !currentMatchmaker
+      || Number(currentSource.id) !== Number(sourceUser.id)
+      || Number(currentTarget.id) !== Number(context.targetUser.id)
+      || Number(currentMember.id) !== Number(context.memberRow.id)
+      || Number(currentMember.status) !== 1
+      || Number(currentMember.userId) !== Number(currentTarget.id)
+      || Number(currentMember.matchmakerId) !== Number(currentMatchmaker.id)
+      || Number(currentMatchmaker.id) !== Number(context.matchmakerRow.id)
+      || Number(currentMatchmaker.status) !== 1
+      || Number(currentMatchmaker.certificationStatus) !== 2
+      || Number(currentClaim.matchmakerId) !== Number(currentMatchmaker.id)
+      || Number(currentClaim.targetUserId) !== Number(currentTarget.id)
+      || Number(currentClaim.memberId) !== Number(context.memberRow.id)
+      || !currentClaim.claimInviteVersion
+      || String(currentTarget.claimInviteVersion || '') !== String(currentClaim.claimInviteVersion)
+      || Number(currentSource.status) !== 1
+      || Number(currentTarget.status) !== 1
+      || String(currentSource.openid || '') !== trustedOpenid
+      || (currentSource.phone && String(currentSource.phone) !== phone)
+      || !isManualIdentity(currentTarget.openid)
+      || String(currentTarget.phone || '') !== phone
+      || currentPhoneOwners.length !== 1
+      || Number(currentPhoneOwners[0].id) !== Number(currentTarget.id)
+      || currentOpenidOwners.length !== 1
+      || Number(currentOpenidOwners[0].id) !== Number(currentSource.id)
+    ) {
+      throw createHttpError('账号状态已变化，请重新发起认领', 409, 40927);
+    }
+    const targetAuthVersion = Number(currentTarget.authVersion || 1) + 1;
+    const sourceAuthVersion = Number(currentSource.authVersion || 1) + 1;
+    const targetPatch = {
+      openid: trustedOpenid,
+      phone,
+      nickname: currentTarget.nickname || currentSource.nickname || `会员${currentTarget.id}`,
+      avatarUrl: currentTarget.avatarUrl || currentSource.avatarUrl || '',
+      gender: Number(currentTarget.gender || currentSource.gender || 0),
+      currentRole: 'user',
+      isVerified: 1,
+      identitySource: 'manual_claimed',
+      identityStatus: 'claimed',
+      claimInviteVersion: '',
+      claimedFromUserId: Number(currentSource.id),
+      claimedAt: timestamp,
+      authVersion: targetAuthVersion,
+      updatedAt: timestamp
+    };
+    const sourcePatch = {
+      openid: archivedMergedOpenid(currentSource.id, trustedOpenid),
+      phone: '',
+      status: 0,
+      identityStatus: 'merged',
+      mergedIntoUserId: Number(currentTarget.id),
+      mergedAt: timestamp,
+      authVersion: sourceAuthVersion,
+      updatedAt: timestamp
+    };
+    const profilePatch = {
+      ...fillTargetProfileBlanks(currentTargetProfile, currentSourceProfile || {}, CLAIM_PROFILE_FIELDS),
+      updatedAt: timestamp
+    };
+    const claimedPatch = {
+      status: 'claimed',
+      claimedBySourceUserId: Number(currentSource.id),
+      canonicalUserId: Number(currentTarget.id),
+      claimedAt: timestamp,
+      updatedAt: timestamp
+    };
+    await targetRef.update({ data: targetPatch });
+    await sourceRef.update({ data: sourcePatch });
+    await targetProfileRef.update({ data: profilePatch });
+    if (sourceProfileRef) {
+      await sourceProfileRef.update({
+        data: {
+          displayEnabled: false,
+          mergedIntoUserId: Number(currentTarget.id),
+          mergedAt: timestamp,
+          updatedAt: timestamp
+        }
+      });
+    }
+    await claimRef.update({ data: claimedPatch });
+    return { canonicalUser: { ...currentTarget, ...targetPatch }, idempotent: false };
+  });
+  return {
+    ...issueUserSession(result.canonicalUser),
+    claimStatus: 'claimed',
+    idempotent: result.idempotent
+  };
 }
 
 const auth = {
@@ -1937,7 +2482,7 @@ const auth = {
     } catch (err) {
       throw createHttpError('微信登录上下文缺失，请通过小程序云环境重试', 401, 40103);
     }
-    let user = await getOne(C.users, { openid });
+    let user = await uniqueActiveUser({ openid }, '同一微信身份存在重复账号，请联系平台处理');
 
     if (!user) {
       const id = await nextId('user');
@@ -1950,6 +2495,9 @@ const auth = {
         gender: 0,
         currentRole: role === 'matchmaker' ? 'matchmaker' : 'user',
         isVerified: 0,
+        authVersion: 1,
+        identitySource: 'wechat',
+        identityStatus: 'active',
         status: 1
       });
     } else {
@@ -1969,38 +2517,30 @@ const auth = {
       }
     }
 
-    return {
-      token: tokenService.sign({ userId: user.id, currentRole: user.currentRole }),
-      refreshToken: tokenService.sign({ userId: user.id, type: 'refresh' }),
-      user: publicUser(user)
-    };
+    return issueUserSession(user);
   },
 
   async bindWechatPhone(userId, code) {
     const user = await getUserOrThrow(userId);
-    if (!String(code || '').trim()) throw createHttpError('手机号授权 code 不能为空');
-    if (!cloud.openapi || !cloud.openapi.phonenumber || !cloud.openapi.phonenumber.getPhoneNumber) {
-      throw createHttpError('当前云环境暂不支持微信手机号授权', 503, 50302);
-    }
-    let phoneResult;
-    try {
-      phoneResult = await cloud.openapi.phonenumber.getPhoneNumber({ code: String(code).trim() });
-    } catch (err) {
-      console.warn('wechat phone authorization failed', err);
-      throw createHttpError('手机号授权已失效，请重新授权', 400, 40003);
-    }
-    let phone;
-    try {
-      phone = normalizeWechatPhoneResult(phoneResult);
-    } catch (err) {
-      throw createHttpError(err.message || '未获取到有效手机号', 400, 40003);
-    }
-    const existing = await getOne(C.users, { phone });
+    assertWechatCallerOwnsUser(user);
+    const phone = await exchangeWechatPhone(code);
+    const existing = await uniqueActiveUser({ phone }, '该手机号对应多条账号，请联系平台人工核验');
     if (existing && Number(existing.id) !== Number(user.id)) {
+      if (isManualIdentity(existing.openid)) {
+        throw createHttpError('该手机号已有主理人建档，请从主理人发送的认领邀请进入', 409, 40929);
+      }
       throw createHttpError('该手机号已绑定其他账号', 400, 40002);
     }
     const updated = await updateRow(C.users, user, { phone });
     return publicUser(updated);
+  },
+
+  async previewMemberIdentityClaim(token) {
+    return identityClaimPreview(token);
+  },
+
+  async confirmMemberIdentityClaim(userId, token, code) {
+    return confirmMemberIdentityClaim(userId, token, code);
   }
 };
 
@@ -2221,8 +2761,8 @@ const membership = {
         callbackReceivedAt: timestamp,
         updatedAt: timestamp
       };
-      await memberRef.update(memberPatch);
-      await orderRef.update(orderPatch);
+      await memberRef.update({ data: memberPatch });
+      await orderRef.update({ data: orderPatch });
       return {
         order: { ...currentOrder, ...orderPatch },
         member: { ...currentMember, ...memberPatch },
@@ -2432,6 +2972,159 @@ const matchmaker = {
   }
 };
 
+const PROFILE_MUTABLE_FIELDS = [
+  'realName',
+  'age',
+  'height',
+  'education',
+  'occupation',
+  'incomeRange',
+  'province',
+  'city',
+  'nativePlace',
+  'maritalStatus',
+  'houseStatus',
+  'carStatus',
+  'selfIntro',
+  'partnerRequirement'
+];
+
+function editableProfilePatch(data = {}) {
+  const patch = {};
+  PROFILE_MUTABLE_FIELDS.forEach(field => {
+    if (Object.prototype.hasOwnProperty.call(data, field)) patch[field] = data[field];
+  });
+  if (Object.prototype.hasOwnProperty.call(data, 'photos')) {
+    patch.photos = normalizeMemberPhotos(data.photos);
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'displayEnabled')) {
+    patch.displayEnabled = isTrue(data.displayEnabled);
+    patch.displayUpdatedAt = nowIso();
+  }
+  return patch;
+}
+
+function intakeProfilePatch(intake) {
+  const personal = intake.personalProfile;
+  const partner = intake.partnerPreferences;
+  const introParts = [
+    personal.personalitySummary,
+    personal.hobbies ? `爱好：${personal.hobbies}` : '',
+    personal.dailyRoutine ? `作息：${personal.dailyRoutine}` : ''
+  ].filter(Boolean);
+  const partnerParts = [
+    `${partner.ageMin}-${partner.ageMax}岁`,
+    partner.heightRequirement,
+    `${partner.educationMinimum}学历`,
+    partner.regionRequirement,
+    partner.incomeAssetExpectation,
+    partner.relationshipMode
+  ].filter(Boolean);
+  return {
+    realName: intake.realName,
+    age: intake.age,
+    height: intake.height,
+    education: intake.education,
+    occupation: intake.occupation,
+    city: intake.city,
+    maritalStatus: intake.maritalStatus,
+    selfIntro: introParts.join('；'),
+    partnerRequirement: partnerParts.join('；')
+  };
+}
+
+function memberTypeForIntake(intake) {
+  return intake.businessRegistration.packageType === 'unpaid' ? 'no_consumption' : 'paid';
+}
+
+function privateArchivePayload(memberRow, intake, recordedByUserId) {
+  return {
+    memberId: Number(memberRow.id),
+    matchmakerId: Number(memberRow.matchmakerId),
+    userId: Number(memberRow.userId),
+    intakeVersion: intake.intakeVersion,
+    basic: {
+      realName: intake.realName,
+      gender: intake.gender,
+      age: intake.age,
+      birthDate: intake.birthDate,
+      phone: intake.phone,
+      city: intake.city,
+      height: intake.height,
+      weightKg: intake.weightKg,
+      education: intake.education,
+      graduateSchool: intake.graduateSchool,
+      maritalStatus: intake.maritalStatus,
+      hasChildren: intake.hasChildren,
+      childrenCount: intake.childrenCount
+    },
+    career: {
+      occupation: intake.occupation,
+      companyName: intake.companyName,
+      jobTitle: intake.jobTitle,
+      annualIncomePreTax: intake.annualIncomePreTax,
+      incomeSources: intake.incomeSources,
+      otherIncomeSource: intake.otherIncomeSource,
+      verificationEvidenceTypes: intake.verificationEvidenceTypes,
+      verificationCredentialLocation: intake.verificationCredentialLocation
+    },
+    assetVerification: intake.assetVerification,
+    personalProfile: intake.personalProfile,
+    partnerPreferences: intake.partnerPreferences,
+    businessRegistration: intake.businessRegistration,
+    compliance: {
+      partialVerificationConfirmed: intake.compliance.partialVerificationConfirmed,
+      voluntarySubmissionConfirmed: intake.compliance.voluntarySubmissionConfirmed,
+      confirmedAt: nowIso(),
+      recordedByUserId: Number(recordedByUserId)
+    }
+  };
+}
+
+async function upsertMemberPrivateArchive(memberRow, intake, recordedByUserId) {
+  const existing = await getOne(C.memberPrivateArchives, { memberId: Number(memberRow.id) });
+  const payload = privateArchivePayload(memberRow, intake, recordedByUserId);
+  if (existing) return updateRow(C.memberPrivateArchives, existing, payload);
+  const archive = {
+    id: await nextId('memberPrivateArchive'),
+    ...payload,
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+  await db.collection(C.memberPrivateArchives).doc(`member_${Number(memberRow.id)}`).set({ data: archive });
+  return archive;
+}
+
+function privateArchiveView(row) {
+  if (!row) return null;
+  const compliance = row.compliance || {};
+  return {
+    intakeVersion: Number(row.intakeVersion || 1),
+    basic: clone(row.basic || {}),
+    career: clone(row.career || {}),
+    assetVerification: clone(row.assetVerification || {}),
+    personalProfile: clone(row.personalProfile || {}),
+    partnerPreferences: clone(row.partnerPreferences || {}),
+    businessRegistration: clone(row.businessRegistration || {}),
+    compliance: {
+      partialVerificationConfirmed: compliance.partialVerificationConfirmed === true,
+      voluntarySubmissionConfirmed: compliance.voluntarySubmissionConfirmed === true,
+      confirmedAt: compliance.confirmedAt || ''
+    }
+  };
+}
+
+async function privateArchiveViewWithMedia(row) {
+  const view = privateArchiveView(row);
+  if (!view) return null;
+  const photos = Array.isArray(view.personalProfile.lifePhotos)
+    ? view.personalProfile.lifePhotos.filter(isCloudFileID)
+    : [];
+  const urlMap = await memberMediaURLMap(photos);
+  view.personalProfile.lifePhotos = photos.map(fileID => urlMap[fileID]).filter(Boolean);
+  return view;
+}
+
 const member = {
   async resolveMatchmakerInvite(userId, data = {}) {
     await getUserOrThrow(userId);
@@ -2484,10 +3177,39 @@ const member = {
     };
   },
 
-  async addManual(matchmakerUserId, data = {}) {
+  async createIdentityClaimInvite(matchmakerUserId, memberId) {
+    return createMemberIdentityClaimInvite(matchmakerUserId, memberId);
+  },
+
+  async addManual(matchmakerUserId, data = {}, options = {}) {
     const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
-    const media = withMemberMedia(data);
-    let user = data.phone ? await getOne(C.users, { phone: data.phone }) : null;
+    const requireCompleteIntake = options.requireCompleteIntake === true;
+    let intake = null;
+    if (requireCompleteIntake) {
+      const result = validateMemberIntake(data, new Date(), {
+        privatePhotoOwnerKey: String(matchmakerUserId)
+      });
+      if (!result.valid) {
+        const validationError = createHttpError(result.firstError.message, 422, 42201);
+        validationError.details = result.errors;
+        throw validationError;
+      }
+      intake = result.data;
+      data = intake;
+    }
+
+    const media = withMemberMedia(requireCompleteIntake
+      ? { realName: data.realName, gender: data.gender, photos: [] }
+      : data);
+    let user = data.phone
+      ? await uniqueActiveUser({ phone: data.phone }, '该手机号对应多条账号，请联系平台人工核验')
+      : null;
+    if (user) {
+      const assignment = await activeMemberAssignment(user.id);
+      if (assignment && Number(assignment.matchmakerId) !== Number(mm.id)) {
+        throw createHttpError('member already has another matchmaker', 409, 40901);
+      }
+    }
     if (!user) {
       const userId = await nextId('user');
       user = await addRow(C.users, {
@@ -2499,58 +3221,69 @@ const member = {
         gender: Number(data.gender || 0),
         currentRole: 'user',
         isVerified: 1,
+        authVersion: 1,
+        identitySource: 'matchmaker_manual',
+        identityStatus: 'pending',
         status: 1
       });
     } else {
       user = await updateRow(C.users, user, {
         nickname: data.realName || data.nickname || user.nickname,
         gender: Number(data.gender || user.gender || 0),
-        avatarUrl: media.avatarUrl || user.avatarUrl
+        avatarUrl: requireCompleteIntake ? (user.avatarUrl || media.avatarUrl) : (media.avatarUrl || user.avatarUrl)
       });
     }
 
-    const profilePatch = {
-      userId: user.id,
-      realName: data.realName || data.nickname || user.nickname,
-      age: data.age ? Number(data.age) : null,
-      height: data.height ? Number(data.height) : null,
-      education: data.education || '',
-      occupation: data.occupation || '',
-      incomeRange: data.incomeRange || '',
-      province: data.province || '',
-      city: data.city || '',
-      nativePlace: data.nativePlace || '',
-      maritalStatus: data.maritalStatus || '',
-      houseStatus: data.houseStatus || '',
-      carStatus: data.carStatus || '',
-      selfIntro: data.selfIntro || '',
-      partnerRequirement: data.partnerRequirement || '',
-      photos: media.photos
-    };
+    const profilePatch = requireCompleteIntake
+      ? { userId: user.id, ...intakeProfilePatch(intake) }
+      : {
+        userId: user.id,
+        realName: data.realName || data.nickname || user.nickname,
+        age: data.age ? Number(data.age) : null,
+        height: data.height ? Number(data.height) : null,
+        education: data.education || '',
+        occupation: data.occupation || '',
+        incomeRange: data.incomeRange || '',
+        province: data.province || '',
+        city: data.city || '',
+        nativePlace: data.nativePlace || '',
+        maritalStatus: data.maritalStatus || '',
+        houseStatus: data.houseStatus || '',
+        carStatus: data.carStatus || '',
+        selfIntro: data.selfIntro || '',
+        partnerRequirement: data.partnerRequirement || '',
+        photos: media.photos
+      };
     const profile = await getOne(C.profiles, { userId: user.id });
-    if (data.displayEnabled !== undefined) {
+    if (!requireCompleteIntake && data.displayEnabled !== undefined) {
       profilePatch.displayEnabled = isTrue(data.displayEnabled);
       profilePatch.displayUpdatedAt = nowIso();
     } else if (!profile) {
       profilePatch.displayEnabled = false;
+      profilePatch.displayUpdatedAt = nowIso();
+      profilePatch.photos = [];
     }
     if (profile) await updateRow(C.profiles, profile, profilePatch);
     else await addRow(C.profiles, { id: await nextId('profile'), ...profilePatch });
 
     let row = await getOne(C.members, { matchmakerId: mm.id, userId: user.id });
     if (!row) {
+      const memberId = await nextId('member');
       row = await addRow(C.members, {
-        id: await nextId('member'),
+        id: memberId,
+        memberNo: defaultMemberNo(memberId),
         matchmakerId: mm.id,
         userId: user.id,
-        memberType: data.memberType || 'no_consumption',
-        serviceLevel: data.serviceLevel || '',
-        expireAt: data.expireAt || null,
-        remark: data.remark || '',
-        status: 1
+        memberType: requireCompleteIntake ? memberTypeForIntake(intake) : (data.memberType || 'no_consumption'),
+        serviceLevel: requireCompleteIntake ? '' : (data.serviceLevel || ''),
+        expireAt: requireCompleteIntake ? (intake.businessRegistration.expiryDate || null) : (data.expireAt || null),
+        remark: requireCompleteIntake ? '' : (data.remark || ''),
+        ...(requireCompleteIntake ? { intakeStatus: 'pending' } : {}),
+        status: requireCompleteIntake ? 0 : 1
       });
-    } else {
+    } else if (!requireCompleteIntake) {
       row = await updateRow(C.members, row, {
+        memberNo: row.memberNo || defaultMemberNo(row.id, row.createdAt || new Date()),
         memberType: data.memberType || row.memberType,
         serviceLevel: data.serviceLevel !== undefined ? data.serviceLevel : row.serviceLevel,
         expireAt: data.expireAt !== undefined ? data.expireAt : row.expireAt,
@@ -2558,8 +3291,39 @@ const member = {
         status: 1
       });
     }
+    if (requireCompleteIntake) {
+      await upsertMemberPrivateArchive(row, intake, matchmakerUserId);
+      row = await updateRow(C.members, row, {
+        memberNo: row.memberNo || defaultMemberNo(row.id, row.createdAt || new Date()),
+        memberType: memberTypeForIntake(intake),
+        serviceLevel: row.serviceLevel || '',
+        expireAt: intake.businessRegistration.expiryDate || null,
+        remark: row.remark || '',
+        intakeStatus: 'complete',
+        status: 1
+      });
+    }
     await ensureMemberMatchmakerConversation(row, mm);
     return memberView(row);
+  },
+
+  async detailOwn(matchmakerUserId, memberId) {
+    const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
+    const row = await getById(C.members, memberId);
+    if (!row || Number(row.status) !== 1 || Number(row.matchmakerId) !== Number(mm.id)) {
+      throw createHttpError('member not found', 404, 40400);
+    }
+    const activeAssignments = await getAll(C.members, { userId: Number(row.userId), status: 1 });
+    if (activeAssignments.length !== 1 || Number(activeAssignments[0].id) !== Number(row.id)) {
+      throw createHttpError('member not found', 404, 40400);
+    }
+    const archive = await getOne(C.memberPrivateArchives, { memberId: Number(row.id) });
+    const view = {
+      ...await memberView(row),
+      privateArchive: await privateArchiveViewWithMedia(archive)
+    };
+    const page = await resolveMemberMediaPage({ total: 1, page: 1, pageSize: 1, list: [view] });
+    return page.list[0];
   },
 
   async listOwn(matchmakerUserId, filters = {}) {
@@ -2584,12 +3348,21 @@ const member = {
       .filter(row => isTrue(row.displayEnabled))
       .filter(row => !memberUserIds.has(Number(row.userId)))
       .filter(row => Number(row.userId) !== Number(matchmakerUserId));
-    const memberViews = await Promise.all(rows.filter(row => row.matchmakerId !== mm.id).map(row => memberView(row, { matchRecords })));
-    const profileViews = await Promise.all(profileRows.map(row => profileMemberView(row, { matchRecords })));
-    const views = [...memberViews, ...profileViews];
+    const memberViews = await Promise.all(
+      rows
+        .filter(row => row.matchmakerId !== mm.id)
+        .map(row => publicMemberView(row, { matchRecords }, { keepUserId: true }))
+    );
+    const profileViews = await Promise.all(
+      profileRows.map(async row => sanitizePublicMemberRow(
+        await profileMemberView(row, { matchRecords }),
+        { keepUserId: true }
+      ))
+    );
+    const views = [...memberViews.filter(Boolean), ...profileViews];
     return resolveMemberMediaPage(paginate(
       views
-        .filter(row => Number(row.status) === 1 && row.displayEnabled && matchesMemberFilters(row, filters))
+      .filter(row => Number(row.status) === 1 && matchesMemberFilters(row, filters))
         .sort(sortMemberRowsDesc),
       filters.page,
       filters.pageSize
@@ -2840,28 +3613,47 @@ const member = {
     if (!row || row.matchmakerId !== mm.id) {
       throw createHttpError('member not found', 404, 40400);
     }
+    let user = await getById(C.users, row.userId);
+    let normalizedPhone = null;
+    if (Object.prototype.hasOwnProperty.call(data, 'phone')) {
+      if (!user || !isManualIdentity(user.openid)) {
+        throw createHttpError('已绑定微信的会员手机号需由本人授权更新', 409, 40930);
+      }
+      normalizedPhone = normalizeMainlandPhone(data.phone);
+      if (!normalizedPhone) throw createHttpError('请输入有效的中国大陆手机号', 422, 42220);
+      const phoneOwner = await uniqueActiveUser(
+        { phone: normalizedPhone },
+        '该手机号对应多条账号，请联系平台人工核验'
+      );
+      if (phoneOwner && Number(phoneOwner.id) !== Number(user.id)) {
+        throw createHttpError('该手机号已被其他账号使用，请联系平台人工核验', 409, 40920);
+      }
+    }
     const updated = await updateRow(C.members, row, {
       memberType: data.memberType || row.memberType,
       serviceLevel: data.serviceLevel !== undefined ? data.serviceLevel : row.serviceLevel,
       expireAt: data.expireAt !== undefined ? data.expireAt : row.expireAt,
       remark: data.remark !== undefined ? data.remark : row.remark
     });
-    const user = await getById(C.users, row.userId);
     if (user) {
       const userPatch = {};
       if (data.realName || data.nickname) userPatch.nickname = data.realName || data.nickname;
       if (data.gender !== undefined) userPatch.gender = Number(data.gender);
-      if (Object.keys(userPatch).length) await updateRow(C.users, user, userPatch);
+      if (normalizedPhone) userPatch.phone = normalizedPhone;
+      if (Object.keys(userPatch).length) user = await updateRow(C.users, user, userPatch);
+    }
+    if (normalizedPhone) {
+      const archive = await getOne(C.memberPrivateArchives, { memberId: Number(row.id) });
+      if (archive) {
+        await updateRow(C.memberPrivateArchives, archive, {
+          basic: { ...(archive.basic || {}), phone: normalizedPhone }
+        });
+      }
     }
     const profile = await getOne(C.profiles, { userId: row.userId });
-    const profilePatch = { ...data };
-    if (data.photos !== undefined) profilePatch.photos = normalizeMemberPhotos(data.photos);
-    if (data.displayEnabled !== undefined) {
-      profilePatch.displayEnabled = isTrue(data.displayEnabled);
-      profilePatch.displayUpdatedAt = nowIso();
-    }
-    if (profile) await updateRow(C.profiles, profile, profilePatch);
-    else await addRow(C.profiles, { id: await nextId('profile'), userId: row.userId, displayEnabled: false, ...profilePatch });
+    const profilePatch = editableProfilePatch(data);
+    if (profile && Object.keys(profilePatch).length) await updateRow(C.profiles, profile, profilePatch);
+    else if (!profile) await addRow(C.profiles, { id: await nextId('profile'), userId: row.userId, displayEnabled: false, ...profilePatch });
     return memberView(updated);
   },
 
@@ -3149,7 +3941,7 @@ const admin = {
       throw createHttpError('管理员码不正确', 401, 40102);
     }
     return {
-      token: tokenService.sign({ role: 'admin', type: 'admin', issuedAt: nowIso() }),
+      token: tokenService.sign({ role: 'admin' }, { type: TOKEN_TYPES.ADMIN }),
       admin: { role: 'admin', name: 'HL 管理员' }
     };
   },
@@ -3291,6 +4083,9 @@ exports.main = async (event = {}) => {
     await ensureCollectionsForPath(path);
     await ensureSeed();
     if (method === 'POST' && path === '/auth/wx-login') return ok(await auth.wxLogin(data));
+    if (method === 'POST' && path === '/auth/member-claim/preview') {
+      return ok(await auth.previewMemberIdentityClaim(data.token));
+    }
     if (method === 'POST' && path === '/admin/login') return ok(await admin.login(data.code));
     if (method === 'POST' && path === '/internal/payment-orders/checkout') {
       return ok(await membership.internalCheckout(data));
@@ -3321,10 +4116,13 @@ exports.main = async (event = {}) => {
       throw createHttpError('not found', 404, 40400);
     }
 
-    const session = requireUser(apiToken);
+    const session = await requireUser(apiToken);
 
     if (method === 'POST' && path === '/auth/wechat-phone') {
       return ok(await auth.bindWechatPhone(session.userId, data.code));
+    }
+    if (method === 'POST' && path === '/auth/member-claim/confirm') {
+      return ok(await auth.confirmMemberIdentityClaim(session.userId, data.token, data.code));
     }
     if (method === 'GET' && path === '/user/profile') {
       const user = await getUserOrThrow(session.userId);
@@ -3338,16 +4136,12 @@ exports.main = async (event = {}) => {
       if (data.gender !== undefined) userPatch.gender = Number(data.gender);
       const updatedUser = Object.keys(userPatch).length ? await updateRow(C.users, user, userPatch) : user;
       let profile = await getOne(C.profiles, { userId: Number(session.userId) });
-      const profilePatch = { ...data, userId: Number(session.userId) };
-      if (data.photos !== undefined) profilePatch.photos = normalizeMemberPhotos(data.photos);
-      if (data.displayEnabled !== undefined) {
-        profilePatch.displayEnabled = isTrue(data.displayEnabled);
-        profilePatch.displayUpdatedAt = nowIso();
-      } else if (!profile) {
+      const profilePatch = editableProfilePatch(data);
+      if (!profile && data.displayEnabled === undefined) {
         profilePatch.displayEnabled = false;
       }
       if (profile) profile = await updateRow(C.profiles, profile, profilePatch);
-      else profile = await addRow(C.profiles, { id: await nextId('profile'), ...profilePatch });
+      else profile = await addRow(C.profiles, { id: await nextId('profile'), userId: Number(session.userId), ...profilePatch });
       return ok({ ...publicUser(updatedUser), profile: stripInternal(profile) });
     }
 
@@ -3391,9 +4185,16 @@ exports.main = async (event = {}) => {
     if (method === 'POST' && path === '/member/matchmaker-requests') return ok(await member.requestMatchmaker(session.userId, data));
     if (method === 'POST' && path === '/member/matchmaker-invite/accept') return ok(await member.acceptMatchmakerInvite(session.userId, data));
     if (method === 'GET' && path === '/member/referral-card') return ok(await member.referralCard(session.userId));
-    if (method === 'POST' && path === '/member/manual') return ok(await member.addManual(session.userId, data));
+    const identityClaimInviteMatch = path.match(/^\/member\/(\d+)\/identity-claim-invite$/);
+    if (identityClaimInviteMatch && method === 'POST') {
+      return ok(await member.createIdentityClaimInvite(session.userId, identityClaimInviteMatch[1]));
+    }
+    if (method === 'POST' && path === '/member/manual') {
+      return ok(await member.addManual(session.userId, data, { requireCompleteIntake: true }));
+    }
     if (method === 'POST' && path === '/member/recommend') return ok(await member.recommend(session.userId, data));
     const memberMatch = path.match(/^\/member\/(\d+)$/);
+    if (memberMatch && method === 'GET') return ok(await member.detailOwn(session.userId, memberMatch[1]));
     if (memberMatch && method === 'PUT') return ok(await member.update(session.userId, memberMatch[1], data));
     if (memberMatch && method === 'DELETE') return ok(await member.remove(session.userId, memberMatch[1]));
 

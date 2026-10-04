@@ -46,6 +46,8 @@
 
 ### 会员资料管理 `hl_profiles` + `hl_members`
 
+高敏会员档案存放在 `hl_member_private_archives`，包括验资索引、资产情况、内部生活照、风险备注和合规确认。该集合不得加入普通运营 CMS 视图，也不得从会员资源池或普通会员接口返回；主理人只能通过小程序内所属会员详情接口查看。
+
 - `hl_profiles` 可编辑：`realName`、`gender`、`age`、`height`、`city`、`nativePlace`、`education`、`occupation`、`incomeRange`、`maritalStatus`、`houseStatus`、`carStatus`、`selfIntro`、`partnerRequirement`、`photos`、`displayEnabled`。
 - `hl_members` 可编辑：`memberType`、`serviceLevel`、`remark`、`status`。
 - 只读：`id`、`userId`、`matchmakerId`、`displayUpdatedAt`、`createdAt`、`updatedAt`。
@@ -76,11 +78,12 @@
 
 ## 隐藏字段和保护集合
 
-运营视图应隐藏 `openid`、`_id`、`_openid`、`token`、`refreshToken`。`hl_counters` 和 `hl_payment_orders` 是受保护集合，不允许运营人员手工新增、修改或删除。支付订单只通过 `/admin/payment-orders` 查询，状态只允许经已验签的支付回调更新。
+运营视图应隐藏 `openid`、`_id`、`_openid`、`token`、`refreshToken`。`hl_counters`、`hl_payment_orders`、`hl_member_private_archives` 和 `hl_member_identity_claims` 是受保护集合，不允许运营人员手工新增、修改或删除。支付订单只通过 `/admin/payment-orders` 查询，状态只允许经已验签的支付回调更新；认领邀请和身份合并只允许通过小程序与 `hlApi` 完成。
 
 ## 必须通过云函数或小程序处理的动作
 
 - 用户登录、登录态刷新、微信手机号动态 code 换号。
+- 主理人生成手工会员认领邀请、会员核验手机号及微信身份合并。
 - 会员支付下单、支付结果确认和会员有效期顺延。
 - 主理人申请提交、重新提交和管理员认证审核。
 - 会员添加主理人申请、主理人通过/拒绝申请。

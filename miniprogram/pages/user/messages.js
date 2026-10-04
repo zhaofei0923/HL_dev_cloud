@@ -96,6 +96,7 @@ Page({
         relationshipTotal: 0,
         relationshipPage: 1,
         relationshipPageSize: 2,
+        relationshipOpen: false,
         relationshipExpanded: false,
         relationshipHasMore: false,
         relationshipLoading: false,
@@ -233,16 +234,22 @@ Page({
         if (value !== 'incoming' && value !== 'mutual')
             return;
         const type = value;
-        if (type === this.data.relationshipType && !this.data.relationshipError)
+        if (type === this.data.relationshipType && !this.data.relationshipError) {
+            this.setData({ relationshipOpen: true });
             return;
+        }
         this.setData({
             relationshipType: type,
+            relationshipOpen: true,
             relationshipItems: [],
             relationshipTotal: Number(this.data.relationshipCounts[type] || 0),
             relationshipExpanded: false,
             relationshipHasMore: false
         });
         this.loadRelationships(type);
+    },
+    toggleRelationshipOpen() {
+        this.setData({ relationshipOpen: !this.data.relationshipOpen });
     },
     retryRelationships() {
         this.loadRelationships(this.data.relationshipType, {

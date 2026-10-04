@@ -1,80 +1,106 @@
-.resources-hero {
-  min-height: 310rpx;
+.resources-page { padding-top: 24rpx; }
+.resources-header { padding: 10rpx 4rpx 24rpx; }
+.resources-header .eyebrow, .resources-header .title, .resources-header .subtitle { display: block; }
+.resources-header .eyebrow { color: #a17750; }
+.resources-header .title { margin-top: 6rpx; font-size: 40rpx; }
+.resources-header .subtitle { margin-top: 7rpx; color: #81776f; font-size: 24rpx; }
+
+.service-context {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  margin-bottom: 18rpx;
+  padding: 20rpx 22rpx;
+  border: 1rpx solid rgba(151, 119, 82, 0.14);
+  border-radius: 14rpx;
+  background: #faf7f2;
 }
 
-.access-card .row,
-.resource-head {
-  align-items: flex-start;
+.context-main { flex: 1; min-width: 0; }
+.context-label, .context-name, .context-note { display: block; }
+.context-label { color: #8b8179; font-size: 21rpx; }
+.context-name { margin-top: 5rpx; color: #352d27; font-size: 28rpx; font-weight: 800; }
+.context-note {
+  display: -webkit-box;
+  margin-top: 5rpx;
+  overflow: hidden;
+  color: #8a8179;
+  font-size: 20rpx;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
-.selected-member {
-  display: block;
-  margin-top: 18rpx;
-  padding: 16rpx 18rpx;
-  border-radius: 12rpx;
-  background: rgba(177, 134, 83, 0.12);
-  color: #6e4d35;
-  font-size: 23rpx;
-  line-height: 1.45;
-}
-
-.selected-member.muted {
-  background: rgba(115, 98, 86, 0.08);
-  color: #736256;
-}
-
-.member-picker {
-  margin-top: 14rpx;
-  padding: 18rpx 20rpx;
-  border: 1rpx solid rgba(151, 119, 82, 0.16);
+.change-member {
+  flex: none;
+  box-sizing: border-box;
+  width: 112rpx;
+  min-width: 112rpx;
+  max-width: 112rpx;
+  height: 72rpx;
+  margin: 0;
+  padding: 0;
+  border: 1rpx solid rgba(151, 119, 82, 0.18);
   border-radius: 12rpx;
   background: #fffdf8;
+  color: #8b633f;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 72rpx;
 }
 
-.member-picker .picker-value {
-  display: block;
-  color: #241f1b;
-  font-size: 26rpx;
-  font-weight: 800;
-  line-height: 1.4;
-}
+.change-member::after { border: 0; }
 
-.resource-copy {
-  flex: 1;
-  min-width: 0;
-  margin-right: 14rpx;
-}
+.member-selector-card { padding: 22rpx; }
+.member-picker { margin-top: 16rpx; padding: 16rpx 18rpx; border: 1rpx solid rgba(151, 119, 82, 0.14); border-radius: 12rpx; background: #f8f5f0; }
+.member-picker .picker-value { display: block; margin-top: 5rpx; color: #302923; font-size: 26rpx; font-weight: 800; }
+.resources-list-shell { max-width: 100%; overflow: hidden; padding: 20rpx 22rpx; }
+.list-header { align-items: flex-start; }
+.permission-hint { color: #6f765f; font-size: 21rpx; font-weight: 700; }
 
-.resource-media {
-  position: relative;
-  height: 226rpx;
-  margin: -6rpx -6rpx 24rpx;
-  overflow: hidden;
-  border-radius: 14rpx;
-  background: rgba(177, 134, 83, 0.12);
-}
-
-.resource-cover {
+.resource-item {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 96rpx minmax(0, 1fr) 104rpx;
+  gap: 16rpx;
+  align-items: center;
   width: 100%;
-  height: 100%;
-  display: block;
+  min-width: 0;
+  max-width: 100%;
+  padding: 22rpx 0;
+  border-top: 1rpx solid rgba(151, 119, 82, 0.12);
 }
 
-.resource-avatar {
-  position: absolute;
-  right: 20rpx;
-  bottom: 16rpx;
-  width: 100rpx;
-  height: 100rpx;
-  border: 5rpx solid #fffdf8;
-  border-radius: 50%;
-  box-shadow: 0 10rpx 24rpx rgba(36, 31, 27, 0.18);
+.resource-item:first-of-type { margin-top: 12rpx; }
+.resource-avatar { width: 96rpx; height: 96rpx; border-radius: 16rpx; background: #eee6dc; }
+.resource-copy { min-width: 0; }
+.resource-name-row { display: flex; align-items: center; gap: 10rpx; }
+.resource-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.income-text { flex: none; max-width: 128rpx; overflow: hidden; color: #9c6648; font-size: 20rpx; text-overflow: ellipsis; white-space: nowrap; }
+.resource-work { margin-top: 4rpx; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-link { display: block; margin-top: 8rpx; color: #9a7252; font-size: 21rpx; font-weight: 700; }
+
+.recommend-action {
+  box-sizing: border-box;
+  justify-self: stretch;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: 72rpx;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 11rpx;
+  background: #8a6243;
+  color: #fffdf8;
+  font-size: 22rpx;
+  font-weight: 800;
+  line-height: 72rpx;
+  text-align: center;
 }
 
-.detail-btn {
-  margin-top: 18rpx;
-}
-
-.recommend-btn {
-  margin-top: 14rpx;
-}
+.recommend-action::after { border: 0; }
+.recommend-action[disabled] { background: #d4cbc3; color: #fff; }
