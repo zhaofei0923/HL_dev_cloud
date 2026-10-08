@@ -31,7 +31,7 @@
       <view class="field-row">
         <view class="field half">
           <text class="field-label">日期</text>
-          <picker mode="date" value="{{dateValue}}" bindchange="onDateChange">
+          <picker mode="date" value="{{dateValue}}" start="{{minDate}}" bindchange="onDateChange">
             <view class="field-input picker-value">{{dateValue}}</view>
           </picker>
         </view>

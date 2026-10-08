@@ -7,6 +7,8 @@ import type {
   RelationshipResult
 } from '../../services/member'
 import { defaultAvatar, normalizeMemberProfile } from '../../utils/member-format'
+import { pageSessionScope } from '../../utils/page-session'
+import { syncUserTabBar } from '../../utils/user-navigation'
 
 type ConversationItem = ChatConversation & {
   peerName: string
@@ -33,6 +35,7 @@ type RelationshipCard = {
   canChat: boolean
   coverToneClass: string
   raw: RelationshipItem | null
+  checking?: boolean
 }
 
 type NormalizedRelationshipMember = {
@@ -59,8 +62,7 @@ type ConversationLoadOptions = {
 }
 
 const EMPTY_COUNTS: RelationshipCounts = { incoming: 0, mutual: 0 }
-let conversationRequestSerial = 0
-let relationshipRequestSerial = 0
+const MESSAGES_REFRESH_TTL_MS = 10 * 1000
 
 function pad(value: number) {
   return value < 10 ? `0${value}` : String(value)
@@ -152,11 +154,60 @@ function normalizeRelationshipItem(
   }
 }
 
+function protectedRelationshipItems(items: RelationshipCard[]): RelationshipCard[] {
+  return items.map((item, index) => item.locked && !item.checking ? item : {
+    id: `checking_${item.kind}_${index + 1}`,
+    userId: 0,
+    displayName: item.kind === 'mutual' ? '与你互相喜欢的人' : '喜欢你的人',
+    avatarUrl: '',
+    coverUrl: '',
+    metaText: '更新后查看最新资料',
+    hint: item.kind === 'mutual' ? '互相喜欢' : '等待回应',
+    tags: [],
+    kind: item.kind,
+    locked: true,
+    canViewDetail: false,
+    canRespond: false,
+    canChat: false,
+    coverToneClass: `tone-${index % 4}`,
+    raw: null,
+    checking: true
+  })
+}
+
+function publicRelationshipProfile(row: RelationshipItem) {
+  const source = row as unknown as Record<string, unknown>
+  const profile: Record<string, unknown> = {}
+  const fields = [
+    'id', 'userId', 'realName', 'nickname', 'gender', 'age', 'height', 'education',
+    'occupation', 'incomeRange', 'city', 'province', 'nativePlace', 'maritalStatus',
+    'houseStatus', 'carStatus', 'selfIntro', 'partnerRequirement', 'photos', 'avatarUrl',
+    'coverUrl', 'memberType', 'displayName', 'metaText', 'highlightTags'
+  ]
+  fields.forEach(field => { if (source[field] !== undefined) profile[field] = source[field] })
+  return profile
+}
+
 Page({
+  _messagesScope: '',
+  _messagesVisible: true,
+  _messagesUnloaded: false,
+  _conversationRequestSerial: 0,
+  _relationshipRequestSerial: 0,
+  _conversationsLoadedAt: 0,
+  _conversationsInitialized: false,
+  _relationshipsLoadedAt: 0,
+  _relationshipLoadedKey: '',
+  _conversationPromise: null as Promise<void> | null,
+  _relationshipPromise: null as Promise<void> | null,
+  _relationshipPendingKey: '',
+
   data: {
     list: [] as ConversationItem[],
     total: 0,
     conversationLoading: false,
+    conversationInitialized: false,
+    conversationError: '',
     relationshipType: 'incoming' as RelationshipKind,
     relationshipItems: [] as RelationshipCard[],
     relationshipCounts: { ...EMPTY_COUNTS } as RelationshipCounts,
@@ -169,6 +220,7 @@ Page({
     relationshipLoading: false,
     relationshipError: '',
     relationshipInitialized: false,
+    relationshipPermissionVerified: false,
     isPremiumMember: false,
     respondingId: '',
     chatStartingId: '',
@@ -176,24 +228,82 @@ Page({
     emptyNote: '和主理人建立服务关系，或由主理人发起配对后，这里会出现会话。'
   },
 
-  onShow() {
-    const token = wx.getStorageSync('token')
-    if (!token) {
+  async onShow() {
+    this._messagesVisible = true
+    this._messagesUnloaded = false
+    if (!this.ensureMessageSession()) {
       wx.redirectTo({ url: '/pages/index/index' })
       return
     }
+    syncUserTabBar(this, 'messages')
     const initial = !this.data.relationshipInitialized
     const type: RelationshipKind = initial ? 'incoming' : this.data.relationshipType
-    this.loadConversations({ force: true })
-    this.loadRelationships(type, {
-      expanded: this.data.relationshipExpanded,
-      allowAutoSelect: initial,
-      force: true
+    await Promise.allSettled([
+      this.loadConversations(),
+      this.loadRelationships(type, {
+        expanded: this.data.relationshipExpanded,
+        allowAutoSelect: initial,
+        force: this.data.relationshipOpen
+      })
+    ])
+  },
+
+  onHide() {
+    this._messagesVisible = false
+    this._relationshipRequestSerial += 1
+    this._relationshipPromise = null
+    this._relationshipPendingKey = ''
+    this.protectRelationshipContent()
+    this.setData({ relationshipLoading: false })
+  },
+
+  onUnload() {
+    this.onHide()
+    this._messagesUnloaded = true
+    this._conversationRequestSerial += 1
+    this._conversationPromise = null
+  },
+
+  ensureMessageSession() {
+    const scope = pageSessionScope()
+    if (scope === this._messagesScope) return scope
+    this._messagesScope = scope
+    this._conversationRequestSerial += 1
+    this._relationshipRequestSerial += 1
+    this._conversationPromise = null
+    this._relationshipPromise = null
+    this._relationshipPendingKey = ''
+    this._conversationsLoadedAt = 0
+    this._conversationsInitialized = false
+    this._relationshipsLoadedAt = 0
+    this._relationshipLoadedKey = ''
+    this.setData({
+      list: [], total: 0, conversationLoading: false, conversationInitialized: false, conversationError: '',
+      relationshipItems: [], relationshipCounts: { ...EMPTY_COUNTS }, relationshipTotal: 0,
+      relationshipPage: 1, relationshipPageSize: 2, relationshipOpen: false,
+      relationshipExpanded: false, relationshipHasMore: false, relationshipLoading: false,
+      relationshipError: '', relationshipInitialized: false, relationshipPermissionVerified: false,
+      isPremiumMember: false, respondingId: '', chatStartingId: '',
+      emptyTitle: '暂无消息',
+      emptyNote: '和主理人建立服务关系，或由主理人发起配对后，这里会出现会话。'
+    })
+    return scope
+  },
+
+  isMessageSessionCurrent(scope: string) {
+    return !this._messagesUnloaded && this.ensureMessageSession() === scope
+  },
+
+  protectRelationshipContent() {
+    this.setData({
+      relationshipItems: protectedRelationshipItems(this.data.relationshipItems),
+      relationshipPermissionVerified: false,
+      isPremiumMember: false
     })
   },
 
-  onPullDownRefresh() {
-    Promise.allSettled([
+  async onPullDownRefresh() {
+    await Promise.allSettled([
       this.loadConversations({ force: true }),
       this.loadRelationships(this.data.relationshipType, {
         expanded: this.data.relationshipExpanded,
@@ -202,92 +312,129 @@ Page({
     ]).finally(() => wx.stopPullDownRefresh())
   },
 
-  async loadConversations(options: ConversationLoadOptions = {}) {
-    if (this.data.conversationLoading && !options.force) return
-    const requestId = ++conversationRequestSerial
-    this.setData({ conversationLoading: true })
-    try {
-      const result = await chatApi.listConversations({ page: 1, pageSize: 50 })
-      if (requestId !== conversationRequestSerial) return
-      const list = (result.list || []).map(normalizeConversation)
-      this.setData({
-        list,
-        total: Number(result.total || list.length || 0),
-        emptyTitle: '暂无消息',
-        emptyNote: '和主理人建立服务关系、开通互选聊天，或由主理人发起配对后，这里会出现会话。'
-      })
-    } catch (err) {
-      if (requestId !== conversationRequestSerial) return
-      console.warn('load user conversations failed', err)
-      this.setData({
-        emptyTitle: '消息暂不可用',
-        emptyNote: '请稍后下拉刷新重试。'
-      })
-    } finally {
-      if (requestId === conversationRequestSerial) this.setData({ conversationLoading: false })
-    }
+  loadConversations(options: ConversationLoadOptions = {}): Promise<void> {
+    const scope = this.ensureMessageSession()
+    if (!scope || this._messagesUnloaded) return Promise.resolve()
+    if (this._conversationPromise) return this._conversationPromise
+    if (!options.force && this._conversationsInitialized
+      && Date.now() - this._conversationsLoadedAt < MESSAGES_REFRESH_TTL_MS) return Promise.resolve()
+    const requestId = ++this._conversationRequestSerial
+    this.setData({ conversationLoading: true, conversationError: '' })
+    const promise = (async () => {
+      await Promise.resolve()
+      try {
+        const result = await chatApi.listConversations({ page: 1, pageSize: 50 })
+        if (!this.isMessageSessionCurrent(scope) || requestId !== this._conversationRequestSerial) return
+        const list = (result.list || []).map(normalizeConversation)
+        this._conversationsLoadedAt = Date.now()
+        this._conversationsInitialized = true
+        this.setData({
+          list,
+          conversationInitialized: true,
+          total: Number(result.total || list.length || 0),
+          emptyTitle: '暂无消息',
+          emptyNote: '和主理人建立服务关系、开通互选聊天，或由主理人发起配对后，这里会出现会话。'
+        })
+      } catch (err) {
+        if (!this.isMessageSessionCurrent(scope) || requestId !== this._conversationRequestSerial) return
+        console.warn('load user conversations failed', err)
+        this._conversationsInitialized = false
+        this.setData({
+          conversationError: '消息暂时无法更新，请稍后重试。',
+          emptyTitle: '消息暂不可用',
+          emptyNote: '请稍后下拉刷新重试。'
+        })
+      } finally {
+        if (requestId === this._conversationRequestSerial && !this._messagesUnloaded) {
+          this.setData({ conversationLoading: false })
+          this._conversationPromise = null
+        }
+      }
+    })()
+    this._conversationPromise = promise
+    return promise
   },
 
-  async loadRelationships(type: RelationshipKind, options: RelationshipLoadOptions = {}) {
-    if (this.data.relationshipLoading && !options.force) return
-    const requestId = ++relationshipRequestSerial
+  loadRelationships(type: RelationshipKind, options: RelationshipLoadOptions = {}): Promise<void> {
+    const scope = this.ensureMessageSession()
+    if (!scope || this._messagesUnloaded || !this._messagesVisible) return Promise.resolve()
     const expanded = options.expanded === true
     const append = options.append === true
     const page = append ? this.data.relationshipPage + 1 : 1
     const pageSize = expanded ? 12 : 2
+    const key = `${type}:${page}:${pageSize}`
+    if (this._relationshipPromise && this._relationshipPendingKey === key) return this._relationshipPromise
+    if (!options.force && !append && !this.data.relationshipOpen
+      && this.data.relationshipInitialized && this._relationshipLoadedKey === key
+      && Date.now() - this._relationshipsLoadedAt < MESSAGES_REFRESH_TTL_MS) return Promise.resolve()
+    const requestId = ++this._relationshipRequestSerial
+    const previousItems = append ? this.data.relationshipItems : []
+    this.protectRelationshipContent()
     this.setData({
       relationshipLoading: true,
       relationshipError: '',
       relationshipType: type,
       relationshipExpanded: expanded
     })
-    try {
-      const result: RelationshipResult = await memberApi.relationships({
-        type,
-        page,
-        pageSize
-      })
-      if (requestId !== relationshipRequestSerial) return
-      const counts = result.counts || { ...EMPTY_COUNTS }
-      if (options.allowAutoSelect && type === 'incoming' && counts.incoming === 0 && counts.mutual > 0) {
-        this.setData({
-          relationshipCounts: counts,
-          isPremiumMember: result.isPremiumMember === true,
-          relationshipInitialized: true,
-          relationshipLoading: false
-        })
-        await this.loadRelationships('mutual', { expanded: false, force: true })
-        return
-      }
+    const promise = (async () => {
+      await Promise.resolve()
+      try {
+        const result: RelationshipResult = await memberApi.relationships({ type, page, pageSize })
+        if (!this.isMessageSessionCurrent(scope) || !this._messagesVisible
+          || requestId !== this._relationshipRequestSerial) return
+        const counts = result.counts || { ...EMPTY_COUNTS }
+        if (options.allowAutoSelect && type === 'incoming' && counts.incoming === 0 && counts.mutual > 0) {
+          this.setData({ relationshipCounts: counts, relationshipInitialized: true, relationshipLoading: false })
+          this._relationshipPromise = null
+          this._relationshipPendingKey = ''
+          await this.loadRelationships('mutual', { expanded: false, force: true })
+          return
+        }
 
-      const startIndex = append ? this.data.relationshipItems.length : 0
-      const rows = (result.list || []).map((row, index) =>
-        normalizeRelationshipItem(row, startIndex + index, type)
-      )
-      const items = append ? [...this.data.relationshipItems, ...rows] : rows
-      const total = Number(result.total || 0)
-      const isPremiumMember = result.isPremiumMember === true
-      this.setData({
-        relationshipItems: items,
-        relationshipCounts: counts,
-        relationshipTotal: total,
-        relationshipPage: Number(result.page || page),
-        relationshipPageSize: Number(result.pageSize || pageSize),
-        relationshipHasMore: items.length < total,
-        relationshipInitialized: true,
-        relationshipExpanded: isPremiumMember && expanded,
-        isPremiumMember
-      })
-    } catch (err) {
-      if (requestId !== relationshipRequestSerial) return
-      console.warn('load member relationships failed', err)
-      this.setData({
-        relationshipError: '心动关系暂时无法加载，请稍后重试。',
-        relationshipInitialized: true
-      })
-    } finally {
-      if (requestId === relationshipRequestSerial) this.setData({ relationshipLoading: false })
-    }
+        const isPremiumMember = result.isPremiumMember === true
+        const startIndex = append && isPremiumMember ? previousItems.length : 0
+        // A downgrade must replace the previous premium page rather than append locked previews to it.
+        const rows = (result.list || []).map((row, index) =>
+          normalizeRelationshipItem(isPremiumMember ? row : { ...row, locked: true, blurred: true }, startIndex + index, type)
+        )
+        const items = append && isPremiumMember ? [...previousItems, ...rows] : rows
+        const total = Number(result.total || 0)
+        this._relationshipsLoadedAt = Date.now()
+        this._relationshipLoadedKey = `${type}:1:${isPremiumMember && expanded ? 12 : 2}`
+        this.setData({
+          relationshipItems: items,
+          relationshipCounts: counts,
+          relationshipTotal: total,
+          relationshipPage: Number(result.page || page),
+          relationshipPageSize: Number(result.pageSize || pageSize),
+          relationshipHasMore: isPremiumMember && items.length < total,
+          relationshipInitialized: true,
+          relationshipPermissionVerified: true,
+          relationshipExpanded: isPremiumMember && expanded,
+          isPremiumMember
+        })
+      } catch (err) {
+        if (!this.isMessageSessionCurrent(scope) || !this._messagesVisible
+          || requestId !== this._relationshipRequestSerial) return
+        console.warn('load member relationships failed', err)
+        this._relationshipsLoadedAt = 0
+        this._relationshipLoadedKey = ''
+        this.protectRelationshipContent()
+        this.setData({
+          relationshipError: '心动关系暂时无法加载，请稍后重试。',
+          relationshipInitialized: true
+        })
+      } finally {
+        if (requestId === this._relationshipRequestSerial && !this._messagesUnloaded) {
+          this.setData({ relationshipLoading: false })
+          this._relationshipPromise = null
+          this._relationshipPendingKey = ''
+        }
+      }
+    })()
+    this._relationshipPromise = promise
+    this._relationshipPendingKey = key
+    return promise
   },
 
   switchRelationship(e: WechatMiniprogram.TouchEvent) {
@@ -297,7 +444,7 @@ Page({
     const type = value as RelationshipKind
     if (type === this.data.relationshipType && !this.data.relationshipError) {
       this.setData({ relationshipOpen: true })
-      return
+      return this.loadRelationships(type, { expanded: this.data.relationshipExpanded, force: true })
     }
     this.setData({
       relationshipType: type,
@@ -307,35 +454,50 @@ Page({
       relationshipExpanded: false,
       relationshipHasMore: false
     })
-    this.loadRelationships(type)
+    return this.loadRelationships(type, { force: true })
   },
 
   toggleRelationshipOpen() {
-    this.setData({ relationshipOpen: !this.data.relationshipOpen })
-  },
-
-  retryRelationships() {
-    this.loadRelationships(this.data.relationshipType, {
-      expanded: this.data.relationshipExpanded
+    const relationshipOpen = !this.data.relationshipOpen
+    this.setData({ relationshipOpen })
+    if (!relationshipOpen) {
+      this.protectRelationshipContent()
+      return
+    }
+    return this.loadRelationships(this.data.relationshipType, {
+      expanded: this.data.relationshipExpanded,
+      force: true
     })
   },
 
+  retryRelationships() {
+    return this.loadRelationships(this.data.relationshipType, {
+      expanded: this.data.relationshipExpanded,
+      force: true
+    })
+  },
+
+  retryConversations() {
+    return this.loadConversations({ force: true })
+  },
+
   toggleRelationshipExpanded() {
-    if (this.data.relationshipLoading) return
+    if (this.data.relationshipLoading || !this.data.relationshipPermissionVerified) return
     if (!this.data.isPremiumMember) {
       this.promptOpenMembership()
       return
     }
     const expanded = !this.data.relationshipExpanded
     this.setData({ relationshipItems: [], relationshipHasMore: false })
-    this.loadRelationships(this.data.relationshipType, { expanded })
+    return this.loadRelationships(this.data.relationshipType, { expanded, force: true })
   },
 
   loadMoreRelationships() {
     if (!this.data.relationshipExpanded || !this.data.relationshipHasMore) return
-    this.loadRelationships(this.data.relationshipType, {
+    return this.loadRelationships(this.data.relationshipType, {
       expanded: true,
-      append: true
+      append: true,
+      force: true
     })
   },
 
@@ -343,21 +505,45 @@ Page({
     return this.data.relationshipItems.find(row => row.id === id)
   },
 
-  openRelationshipMember(e: WechatMiniprogram.TouchEvent) {
-    const id = String(e.currentTarget.dataset.id || '')
+  async verifyRelationshipMember(id: string): Promise<RelationshipCard | null> {
+    const scope = this.ensureMessageSession()
+    if (!scope || this.data.relationshipLoading || !this._messagesVisible || !this.findRelationship(id)) return null
+    await this.loadRelationships(this.data.relationshipType, {
+      expanded: this.data.relationshipExpanded,
+      force: true
+    })
+    if (!this.isMessageSessionCurrent(scope) || !this._messagesVisible
+      || !this.data.relationshipPermissionVerified || this.data.relationshipError) return null
     const item = this.findRelationship(id)
-    if (!item) return
-    if (item.locked || !this.data.isPremiumMember || !item.canViewDetail) {
+    if (!this.data.isPremiumMember) {
       this.promptOpenMembership()
-      return
+      return null
     }
-    if (item.raw) wx.setStorageSync('selectedUserMember', item.raw)
+    if (!item) {
+      wx.showToast({ title: '心动关系已更新，请重新选择', icon: 'none' })
+      return null
+    }
+    if (item.locked) {
+      this.promptOpenMembership()
+      return null
+    }
+    return item
+  },
+
+  async openRelationshipMember(e: WechatMiniprogram.TouchEvent) {
+    const id = String(e.currentTarget.dataset.id || '')
+    const item = await this.verifyRelationshipMember(id)
+    if (!item || !item.canViewDetail) return
+    if (item.raw) wx.setStorageSync('selectedUserMember', publicRelationshipProfile(item.raw))
     wx.navigateTo({ url: `/pages/user/member-detail?id=${encodeURIComponent(item.id)}` })
   },
 
   async respondFavorite(e: WechatMiniprogram.TouchEvent) {
+    const scope = this.ensureMessageSession()
+    if (!scope) return
+    if (this.data.relationshipLoading || !this.data.relationshipPermissionVerified || !this._messagesVisible) return
     const id = String(e.currentTarget.dataset.id || '')
-    const item = this.findRelationship(id)
+    let item = this.findRelationship(id)
     if (!item || !item.userId || this.data.respondingId) return
     if (!this.data.isPremiumMember || !item.canRespond) {
       this.promptOpenMembership()
@@ -365,11 +551,14 @@ Page({
     }
     this.setData({ respondingId: id })
     try {
+      item = await this.verifyRelationshipMember(id) || undefined
+      if (!item || !item.userId || !item.canRespond || !this.isMessageSessionCurrent(scope)) return
       const result: any = await memberApi.interact({
         targetUserId: item.userId,
         actionType: 'favorite',
         active: true
       })
+      if (!this.isMessageSessionCurrent(scope) || !this._messagesVisible) return
       wx.showToast({
         title: result && result.canChat
           ? '已互相喜欢，可以聊天'
@@ -385,13 +574,19 @@ Page({
       await this.loadRelationships('mutual', { force: true })
       await this.loadConversations({ force: true })
     } catch (err) {
+      if (!this.isMessageSessionCurrent(scope)) return
       console.warn('respond relationship favorite failed', err)
+      this.protectRelationshipContent()
+      await this.loadRelationships(this.data.relationshipType, { force: true })
     } finally {
-      this.setData({ respondingId: '' })
+      if (this.isMessageSessionCurrent(scope)) this.setData({ respondingId: '' })
     }
   },
 
   async openRelationshipChat(e: WechatMiniprogram.TouchEvent) {
+    const scope = this.ensureMessageSession()
+    if (!scope) return
+    if (this.data.relationshipLoading || !this.data.relationshipPermissionVerified || !this._messagesVisible) return
     const id = String(e.currentTarget.dataset.id || '')
     const item = this.findRelationship(id)
     if (!item || !item.userId || this.data.chatStartingId) return
@@ -404,17 +599,22 @@ Page({
       const conversation = await chatApi.getOrCreateConversation({
         targetUserId: item.userId
       })
+      if (!this.isMessageSessionCurrent(scope) || !this._messagesVisible) return
       wx.navigateTo({ url: `/pages/user/chat?id=${conversation.id}` })
     } catch (err) {
+      if (!this.isMessageSessionCurrent(scope)) return
       console.warn('open mutual relationship chat failed', err)
+      this.protectRelationshipContent()
+      await this.loadRelationships(this.data.relationshipType, { force: true })
     } finally {
-      this.setData({ chatStartingId: '' })
+      if (this.isMessageSessionCurrent(scope)) this.setData({ chatStartingId: '' })
     }
   },
 
   openChat(e: WechatMiniprogram.TouchEvent) {
+    if (!this.ensureMessageSession() || !this._messagesVisible) return
     const id = String(e.currentTarget.dataset.id || '')
-    if (!id) return
+    if (!id || !this.data.list.some(item => String(item.id) === id)) return
     wx.navigateTo({ url: `/pages/user/chat?id=${id}` })
   },
 
@@ -423,6 +623,6 @@ Page({
   },
 
   goMembers() {
-    wx.redirectTo({ url: '/pages/user/members' })
+    wx.switchTab({ url: '/pages/user/members' })
   }
 })

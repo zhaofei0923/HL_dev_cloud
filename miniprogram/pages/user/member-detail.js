@@ -40,7 +40,7 @@ Page({
         wx.navigateBack();
     },
     goProfile() {
-        wx.navigateTo({ url: '/pages/user/profile' });
+        wx.switchTab({ url: '/pages/user/profile' });
     },
     async startChat() {
         const member = this.data.member;

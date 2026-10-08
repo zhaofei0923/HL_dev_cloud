@@ -6,6 +6,7 @@
     "pages/user/member-detail",
     "pages/user/salon",
     "pages/user/salon-detail",
+    "pages/user/salon-participant",
     "pages/user/profile",
     "pages/user/membership",
     "pages/user/messages",
@@ -13,6 +14,7 @@
     "pages/common/image-cropper",
     "pages/user/matchmaker-invite",
     "pages/matchmaker/dashboard",
+    "pages/matchmaker/workspace",
     "pages/matchmaker/members",
     "pages/matchmaker/member-detail",
     "pages/matchmaker/member-form",
@@ -28,6 +30,18 @@
     "navigationBarTitleText": "HL 婚恋服务",
     "navigationBarBackgroundColor": "#f4efe7",
     "backgroundColor": "#f4efe7"
+  },
+  "tabBar": {
+    "custom": true,
+    "color": "#2b2420",
+    "selectedColor": "#a35d45",
+    "backgroundColor": "#fffdf9",
+    "list": [
+      { "pagePath": "pages/user/members", "text": "推荐" },
+      { "pagePath": "pages/user/salon", "text": "活动" },
+      { "pagePath": "pages/user/messages", "text": "消息" },
+      { "pagePath": "pages/user/profile", "text": "我的" }
+    ]
   },
   "permission": {
     "scope.record": {

@@ -1,6 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const salon_1 = require("../../services/salon");
+const page_session_1 = require("../../utils/page-session");
+const user_navigation_1 = require("../../utils/user-navigation");
+const salon_availability_1 = require("../../utils/salon-availability");
+const SALON_TTL_MS = 30 * 1000;
 function pad(value) {
     return value < 10 ? `0${value}` : String(value);
 }
@@ -17,8 +21,9 @@ function normalizeSalonRow(row) {
     const maxParticipants = Number(event.maxParticipants || 0);
     const currentParticipants = Number(event.currentParticipants || 0);
     const price = Number(event.price || 0);
-    const registered = row.status === 'registered';
-    const status = registered ? '已报名' : (event.status === 'upcoming' ? '报名中' : (event.status || '待定'));
+    const registered = row.status === 'registered' || row.registered === true;
+    const availability = (0, salon_availability_1.salonAvailability)(event);
+    const status = registered ? `${availability.statusText} · 已报名` : availability.statusText;
     return {
         id: event.id || row.eventId || row.id,
         title: event.title || '精选沙龙',
@@ -27,12 +32,20 @@ function normalizeSalonRow(row) {
         eventDate: formatDate(event.eventDate || ''),
         statusText: status,
         participantText: maxParticipants > 0 ? `${currentParticipants}/${maxParticipants} 人` : `${currentParticipants} 人报名`,
-        seatText: maxParticipants > 0 ? `剩余 ${Math.max(maxParticipants - currentParticipants, 0)} 席` : '席位不限',
+        seatText: availability.canRegister
+            ? (maxParticipants > 0 ? `剩余 ${Math.max(maxParticipants - currentParticipants, 0)} 席` : '席位不限')
+            : availability.statusText,
         priceText: price > 0 ? `¥${price}` : '免费',
-        raw: event
+        raw: event,
+        registered
     };
 }
 Page({
+    _sessionScope: '',
+    _salonGeneration: 0,
+    _salonSnapshots: {},
+    _salonPending: null,
+    _refreshOnShow: false,
     data: {
         active: 'all',
         list: [],
@@ -41,49 +54,95 @@ Page({
         listNote: '点击活动卡片查看详情和报名。'
     },
     onShow() {
-        this.loadAll();
+        if (!this.synchronizeSession())
+            return;
+        (0, user_navigation_1.syncUserTabBar)(this, 'salon');
+        const force = this._refreshOnShow;
+        this._refreshOnShow = false;
+        return this.loadSalons(this.data.active, force);
     },
-    async loadAll() {
-        this.setData({ active: 'all', loading: true });
-        try {
-            const result = await salon_1.salonApi.list({ page: 1, pageSize: 30 });
-            const list = (result.list || []).map((row) => normalizeSalonRow(row));
-            this.setData({ list, listTitle: '近期精选', listNote: '点击活动卡片查看详情和报名。' });
+    synchronizeSession() {
+        const scope = (0, page_session_1.pageSessionScope)();
+        if (scope !== this._sessionScope) {
+            this._sessionScope = scope;
+            this._salonGeneration += 1;
+            this._salonSnapshots = {};
+            this._salonPending = null;
+            this.setData({ active: 'all', list: [], loading: false, listTitle: '近期精选', listNote: '点击活动卡片查看详情和报名。' });
         }
-        catch (err) {
-            console.warn('load salon list failed', err);
-            this.setData({
-                list: [],
-                listTitle: '云服务暂不可用',
-                listNote: '请确认 hlApi 云函数已部署后重试。'
-            });
-        }
-        finally {
-            this.setData({ loading: false });
-        }
+        if (scope)
+            return scope;
+        wx.redirectTo({ url: '/pages/index/index' });
+        return '';
     },
-    async loadMine() {
-        this.setData({ active: 'mine', loading: true });
-        try {
-            const result = await salon_1.salonApi.myRegistrations({ page: 1, pageSize: 30 });
-            const list = (result.list || []).map((row) => normalizeSalonRow(row));
-            this.setData({ list, listTitle: '我的报名', listNote: '已报名活动会显示在这里。' });
+    loadAll() {
+        return this.loadSalons('all', true);
+    },
+    loadMine() {
+        return this.loadSalons('mine', true);
+    },
+    loadSalons(active, force = false) {
+        const scope = this.synchronizeSession();
+        if (!scope)
+            return Promise.resolve();
+        if (!force && this._salonPending && this._salonPending.key === active && this.data.active === active) {
+            return this._salonPending.promise;
         }
-        catch (err) {
-            console.warn('load my salon registrations failed', err);
-            this.setData({
-                list: [],
-                listTitle: '云服务暂不可用',
-                listNote: '请确认 hlApi 云函数已部署后重试。'
-            });
-        }
-        finally {
-            this.setData({ loading: false });
-        }
+        this._salonPending = null;
+        const generation = ++this._salonGeneration;
+        const cached = this._salonSnapshots[active];
+        const listTitle = active === 'mine' ? '我的报名' : '近期精选';
+        const listNote = active === 'mine' ? '已报名活动会显示在这里。' : '点击活动卡片查看详情和报名。';
+        const cachedList = cached ? cached.list.map((row) => normalizeSalonRow({ event: row.raw, registered: row.registered })) : [];
+        this.setData({ active, list: cachedList, listTitle, listNote, loading: !cached });
+        const isCurrent = () => this._salonGeneration === generation && (0, page_session_1.pageSessionScope)() === scope;
+        if (cached && !force && Date.now() - cached.loadedAt < SALON_TTL_MS)
+            return Promise.resolve();
+        const promise = Promise.resolve().then(async () => {
+            try {
+                const result = active === 'mine'
+                    ? await salon_1.salonApi.myRegistrations({ page: 1, pageSize: 30 })
+                    : await salon_1.salonApi.list({ page: 1, pageSize: 30 });
+                if (!isCurrent())
+                    return;
+                const list = (result.list || []).map((row) => normalizeSalonRow(row));
+                this._salonSnapshots[active] = { list, loadedAt: Date.now() };
+                this.setData({ list, listTitle, listNote });
+            }
+            catch (err) {
+                if (!isCurrent())
+                    return;
+                console.warn('load salons failed', err);
+                if (cached) {
+                    cached.loadedAt = 0;
+                    this.setData({ listNote: '暂未更新成功，下拉可重试。' });
+                }
+                else {
+                    this.setData({ list: [], listTitle: '云服务暂不可用', listNote: '请稍后下拉刷新重试。' });
+                }
+            }
+            finally {
+                if (isCurrent()) {
+                    this._salonPending = null;
+                    this.setData({ loading: false });
+                }
+            }
+        });
+        this._salonPending = { key: active, promise };
+        return promise;
+    },
+    onPullDownRefresh() {
+        return this.loadSalons(this.data.active, true).finally(() => wx.stopPullDownRefresh());
+    },
+    onUnload() {
+        this._salonGeneration += 1;
+        this._salonPending = null;
     },
     openDetail(e) {
         const id = e.currentTarget.dataset.id;
-        if (id)
+        if (id) {
+            this._refreshOnShow = true;
             wx.navigateTo({ url: `/pages/user/salon-detail?id=${id}` });
+        }
     }
 });

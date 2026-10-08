@@ -6,6 +6,9 @@ exports.memberApi = {
     list(data) {
         return (0, api_1.request)('/member/list', { data });
     },
+    inviteOptions(data) {
+        return (0, api_1.request)('/member/invite-options', { data });
+    },
     resources(data) {
         return (0, api_1.request)('/member/resources', { data });
     },
@@ -32,14 +35,14 @@ exports.memberApi = {
             showError: false
         });
     },
-    gifts() {
-        return (0, api_1.request)('/member/gifts');
+    gifts(showError = true) {
+        return (0, api_1.request)('/member/gifts', { showError });
     },
-    interact(data) {
-        return (0, api_1.request)('/member/interactions', { method: 'POST', data });
+    interact(data, showError = true) {
+        return (0, api_1.request)('/member/interactions', { method: 'POST', data, showError });
     },
-    sendGift(data) {
-        return (0, api_1.request)('/member/gifts/send', { method: 'POST', data });
+    sendGift(data, showError = true) {
+        return (0, api_1.request)('/member/gifts/send', { method: 'POST', data, showError });
     },
     resolveMatchmakerInvite(data) {
         return (0, api_1.request)('/member/matchmaker-invite/resolve', { data });

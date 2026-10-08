@@ -27,10 +27,15 @@ Component({
         active: {
             type: String,
             value: ''
+        },
+        embedded: {
+            type: Boolean,
+            value: false
         }
     },
     data: {
-        tabs: USER_TABS
+        tabs: USER_TABS,
+        navigating: false
     },
     lifetimes: {
         attached() {
@@ -46,9 +51,26 @@ Component({
         switchTab(e) {
             const key = String(e.currentTarget.dataset.key || '');
             const path = String(e.currentTarget.dataset.path || '');
-            if (!key || !path || key === this.data.active)
+            if (!key || !path || key === this.data.active || this.data.navigating)
                 return;
-            wx.redirectTo({ url: path });
+            if (!this.data.tabs.some(tab => tab.key === key && tab.path === path))
+                return;
+            if (this.data.role === 'matchmaker' && this.data.embedded) {
+                this.triggerEvent('change', { key });
+                return;
+            }
+            this.setData({ navigating: true });
+            const options = {
+                url: path,
+                fail: () => wx.showToast({ title: '页面暂未打开，请重试', icon: 'none' }),
+                complete: () => this.setData({ navigating: false })
+            };
+            if (this.data.role === 'matchmaker') {
+                wx.redirectTo(options);
+            }
+            else {
+                wx.switchTab(options);
+            }
         }
     }
 });

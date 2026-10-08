@@ -1,0 +1,29 @@
+<view class="page safe-bottom participant-profile-page">
+  <block wx:if="{{member}}">
+    <view class="card participant-profile-hero">
+      <swiper wx:if="{{member.photos.length}}" class="participant-gallery" indicator-dots circular>
+        <swiper-item wx:for="{{member.photos}}" wx:key="*this"><image class="participant-photo" src="{{item}}" mode="aspectFill"></image></swiper-item>
+      </swiper>
+      <text class="title">{{member.displayName}}</text>
+      <text class="subtitle">{{member.metaText}}</text>
+      <text class="section-note">{{member.workText}}</text>
+    </view>
+    <view class="card">
+      <text class="section-title">基本资料</text>
+      <view class="profile-facts">
+        <view wx:for="{{member.baseRows}}" wx:key="label" class="profile-fact"><text class="metric-label">{{item.label}}</text><text class="profile-value">{{item.value}}</text></view>
+        <view wx:for="{{member.careerRows}}" wx:key="label" class="profile-fact"><text class="metric-label">{{item.label}}</text><text class="profile-value">{{item.value}}</text></view>
+        <view wx:for="{{member.lifeRows}}" wx:key="label" class="profile-fact"><text class="metric-label">{{item.label}}</text><text class="profile-value">{{item.value}}</text></view>
+      </view>
+    </view>
+    <view class="card"><text class="section-title">关于我</text><text class="item-desc">{{member.introText}}</text></view>
+    <view class="card"><text class="section-title">期待的关系</text><text class="item-desc">{{member.partnerText}}</text></view>
+    <text class="section-note">仅本场已报名者和活动组织者可查看，不展示手机号与内部档案。</text>
+  </block>
+  <view wx:else class="card empty">
+    <text class="empty-title">{{loading ? '正在读取资料' : '资料暂不可查看'}}</text>
+    <text class="empty-note">{{error}}</text>
+    <button wx:if="{{!loading}}" class="btn ghost" bindtap="load">重试</button>
+  </view>
+  <button class="btn secondary" bindtap="goBack">返回活动</button>
+</view>

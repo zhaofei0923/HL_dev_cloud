@@ -1,0 +1,1 @@
+<bottom-nav id="user-nav" role="user" active="{{active}}"></bottom-nav>

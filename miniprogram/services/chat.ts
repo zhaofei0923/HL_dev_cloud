@@ -50,11 +50,19 @@ export type ChatMessagePage = {
   total: number
   page: number
   pageSize: number
+  hasMore: boolean
+  beforeId: number
+  latestId: number
 }
 
 type ConversationQuery = {
   page?: number
   pageSize?: number
+}
+
+type MessageQuery = ConversationQuery & {
+  beforeId?: number
+  afterId?: number
 }
 
 type ConversationTarget = {
@@ -79,8 +87,8 @@ export const chatApi = {
     return request<ChatConversation>('/chat/conversations', { method: 'POST', data })
   },
 
-  listMessages(id: number | string, data: ConversationQuery = {}) {
-    return request<ChatMessagePage>(`/chat/conversations/${id}/messages`, { data })
+  listMessages(id: number | string, data: MessageQuery = {}) {
+    return request<ChatMessagePage>(`/chat/conversations/${id}/messages`, { data, showError: false })
   },
 
   sendMessage(id: number | string, content: string) {

@@ -1,8 +1,8 @@
 <view class="page safe-bottom">
   <view class="card hero invite-hero">
-    <text class="eyebrow">{{autoMode ? '会员注册' : '主理人邀请'}}</text>
-    <text class="title">{{autoRegister ? '确认沙龙邀请' : (autoMode ? '注册成为会员' : '确认添加主理人')}}</text>
-    <text class="subtitle">{{autoMode ? '通过微信分享链接进入后，系统会自动注册为该主理人名下免费会员。' : '通过扫码或手动邀请码进入，提交后仍需主理人审批，通过后才会成为该主理人名下会员。'}}</text>
+    <text class="eyebrow">{{activityInvite ? '活动邀请' : (autoMode ? '会员注册' : '主理人邀请')}}</text>
+    <text class="title">{{activityInvite ? '确认沙龙邀请' : (autoMode ? '注册成为会员' : '确认添加主理人')}}</text>
+    <text class="subtitle">{{activityInvite ? '补齐报名资料后，回到活动页确认报名。参加活动不会变更你的主理人归属。' : (autoMode ? '通过微信分享链接进入后，系统会自动注册为该主理人名下免费会员。' : '通过扫码或手动邀请码进入，提交后仍需主理人审批，通过后才会成为该主理人名下会员。')}}</text>
     <view class="summary-strip">
       <view class="summary-item">
         <text class="summary-value">{{code || '待识别'}}</text>
@@ -13,8 +13,8 @@
         <text class="summary-label">添加方式</text>
       </view>
       <view class="summary-item">
-        <text class="summary-value">{{autoMode ? '自动归属' : '审批'}}</text>
-        <text class="summary-label">归属确认</text>
+        <text class="summary-value">{{activityInvite ? '活动页' : (autoMode ? '自动归属' : '审批')}}</text>
+        <text class="summary-label">{{activityInvite ? '确认报名' : '归属确认'}}</text>
       </view>
     </view>
   </view>
@@ -22,7 +22,9 @@
   <view wx:if="{{errorText}}" class="card notice-card">
     <text class="section-title">邀请不可用</text>
     <text class="section-note">{{errorText}}</text>
-    <button class="btn ghost invite-action" bindtap="goProfile">返回我的资料</button>
+    <button wx:if="{{activityInvite}}" class="btn gold invite-action" bindtap="loadInvite" loading="{{loading}}" disabled="{{loading}}">重新确认报名资料</button>
+    <button wx:if="{{activityInvite}}" class="btn secondary invite-action" bindtap="goSalonDetail">查看活动详情</button>
+    <button wx:else class="btn ghost invite-action" bindtap="goProfile">返回我的资料</button>
   </view>
 
   <view wx:elif="{{invite}}" class="card invite-card">
@@ -71,7 +73,7 @@
   </view>
 
   <view wx:else class="card invite-card">
-    <text class="section-title">正在确认邀请</text>
-    <text class="section-note">{{loading ? '正在读取主理人信息，请稍候。' : '请确认邀请码后重试。'}}</text>
+    <text class="section-title">{{activityInvite ? '正在确认报名资料' : '正在确认邀请'}}</text>
+    <text class="section-note">{{loading ? (activityInvite ? '稍后将回到活动页确认报名。' : '正在读取主理人信息，请稍候。') : '请确认邀请链接后重试。'}}</text>
   </view>
 </view>

@@ -39,12 +39,12 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5rpx;
+  gap: 6rpx;
   width: 0;
   min-width: 0;
   height: 92rpx;
   margin: 0;
-  padding: 8rpx 4rpx;
+  padding: 5rpx 4rpx;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -68,126 +68,29 @@
 
 .bottom-nav-label {
   display: block;
+  flex: 0 0 28rpx;
+  width: 100%;
+  height: 28rpx;
   max-width: 100%;
   color: currentColor;
-  font-size: 21rpx;
-  font-weight: 800;
-  line-height: 1.22;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 28rpx;
+  text-align: center;
   white-space: nowrap;
 }
 
 .nav-icon {
-  position: relative;
-  width: 42rpx;
-  height: 38rpx;
-  color: currentColor;
+  display: flex;
+  flex: 0 0 48rpx;
+  align-items: center;
+  justify-content: center;
+  width: 48rpx;
+  height: 48rpx;
 }
 
-.nav-icon-mark,
-.nav-icon-mark::before,
-.nav-icon-mark::after {
-  position: absolute;
-  box-sizing: border-box;
-  content: "";
-}
-
-.nav-icon-members .nav-icon-mark {
-  top: 5rpx;
-  left: 8rpx;
-  width: 15rpx;
-  height: 15rpx;
-  border: 4rpx solid currentColor;
-  border-radius: 50%;
-}
-
-.nav-icon-members .nav-icon-mark::before {
-  top: 4rpx;
-  left: 18rpx;
-  width: 13rpx;
-  height: 13rpx;
-  border: 4rpx solid currentColor;
-  border-radius: 50%;
-}
-
-.nav-icon-members .nav-icon-mark::after {
-  top: 21rpx;
-  left: -5rpx;
-  width: 40rpx;
-  height: 15rpx;
-  border: 4rpx solid currentColor;
-  border-radius: 18rpx 18rpx 8rpx 8rpx;
-}
-
-.nav-icon-salon .nav-icon-mark {
-  top: 7rpx;
-  left: 6rpx;
-  width: 32rpx;
-  height: 28rpx;
-  border: 4rpx solid currentColor;
-  border-radius: 6rpx;
-}
-
-.nav-icon-salon .nav-icon-mark::before {
-  top: 8rpx;
-  left: -4rpx;
-  width: 32rpx;
-  height: 4rpx;
-  background: currentColor;
-}
-
-.nav-icon-salon .nav-icon-mark::after {
-  top: -8rpx;
-  left: 6rpx;
-  width: 4rpx;
-  height: 12rpx;
-  border-radius: 999rpx;
-  background: currentColor;
-  box-shadow: 13rpx 0 0 currentColor;
-}
-
-.nav-icon-mine .nav-icon-mark {
-  top: 4rpx;
-  left: 14rpx;
-  width: 17rpx;
-  height: 17rpx;
-  border: 4rpx solid currentColor;
-  border-radius: 50%;
-}
-
-.nav-icon-mine .nav-icon-mark::after {
-  top: 23rpx;
-  left: -10rpx;
-  width: 38rpx;
-  height: 15rpx;
-  border: 4rpx solid currentColor;
-  border-radius: 20rpx 20rpx 8rpx 8rpx;
-}
-
-.nav-icon-dashboard .nav-icon-mark {
-  top: 7rpx;
-  left: 7rpx;
-  width: 13rpx;
-  height: 13rpx;
-  border-radius: 4rpx;
-  background: currentColor;
-  box-shadow: 17rpx 0 0 currentColor, 0 17rpx 0 currentColor, 17rpx 17rpx 0 currentColor;
-}
-
-.nav-icon-messages .nav-icon-mark {
-  top: 8rpx;
-  left: 5rpx;
-  width: 34rpx;
-  height: 24rpx;
-  border: 4rpx solid currentColor;
-  border-radius: 6rpx;
-}
-
-.nav-icon-messages .nav-icon-mark::before {
-  top: 4rpx;
-  left: 2rpx;
-  width: 22rpx;
-  height: 16rpx;
-  border-right: 4rpx solid currentColor;
-  border-bottom: 4rpx solid currentColor;
-  transform: rotate(45deg);
+.nav-icon-image {
+  display: block;
+  width: 48rpx;
+  height: 48rpx;
 }

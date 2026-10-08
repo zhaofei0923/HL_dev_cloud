@@ -1,11 +1,24 @@
 import { request } from './api'
 
+export type MatchmakerStatusResult = {
+  matchmaker: null | {
+    id: number | string
+    userId?: number
+    certificationStatus: number
+    certificationRemark?: string
+    status?: number
+  }
+}
+
 export const matchmakerApi = {
   apply() {
     return request('/matchmaker/apply', { method: 'POST' })
   },
   dashboard(showError = true) {
     return request('/matchmaker/dashboard', { showError })
+  },
+  status(showError = true) {
+    return request<MatchmakerStatusResult>('/matchmaker/status', { showError })
   },
   inviteCard(showError = true) {
     return request('/matchmaker/invite-card', { showError })

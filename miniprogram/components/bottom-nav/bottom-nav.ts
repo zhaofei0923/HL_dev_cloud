@@ -38,11 +38,16 @@ Component({
     active: {
       type: String,
       value: ''
+    },
+    embedded: {
+      type: Boolean,
+      value: false
     }
   },
 
   data: {
-    tabs: USER_TABS
+    tabs: USER_TABS,
+    navigating: false
   },
 
   lifetimes: {
@@ -61,9 +66,25 @@ Component({
     switchTab(e: WechatMiniprogram.TouchEvent) {
       const key = String(e.currentTarget.dataset.key || '')
       const path = String(e.currentTarget.dataset.path || '')
-      if (!key || !path || key === this.data.active) return
+      if (!key || !path || key === this.data.active || this.data.navigating) return
+      if (!this.data.tabs.some(tab => tab.key === key && tab.path === path)) return
 
-      wx.redirectTo({ url: path })
+      if (this.data.role === 'matchmaker' && this.data.embedded) {
+        this.triggerEvent('change', { key })
+        return
+      }
+
+      this.setData({ navigating: true })
+      const options = {
+        url: path,
+        fail: () => wx.showToast({ title: '页面暂未打开，请重试', icon: 'none' as const }),
+        complete: () => this.setData({ navigating: false })
+      }
+      if (this.data.role === 'matchmaker') {
+        wx.redirectTo(options)
+      } else {
+        wx.switchTab(options)
+      }
     }
   }
 })

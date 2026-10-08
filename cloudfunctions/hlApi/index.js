@@ -1,6 +1,15 @@
 const cloud = require('wx-server-sdk');
 const crypto = require('node:crypto');
 const {
+  activeAttendance,
+  latestAttendanceRows,
+  isPublicRegistrationPhoto,
+  minimumRegistrationStatus,
+  registrationName,
+  registrationPhotos,
+  salonAvailability
+} = require('./salon-policy');
+const {
   TOKEN_TYPES,
   createTokenService,
   normalizeWechatPhoneResult,
@@ -374,6 +383,16 @@ async function ensureCollections() {
 
 function collectionsForPath(path) {
   const common = [C.users, C.profiles, C.counters];
+  if (path === '/matchmaker/status') return [C.users, C.matchmakers];
+  if (path === '/member/invite-options') return [C.users, C.matchmakers, C.members, C.profiles];
+  if (path === '/member/gifts') return [C.users];
+  if (path === '/member/showcase') {
+    return [C.users, C.profiles, C.members, C.matchRecords, C.memberInteractions];
+  }
+  if (path === '/member/interactions' || path === '/member/gifts/send') {
+    const names = [C.users, C.profiles, C.members, C.memberInteractions, C.counters, C.messages, C.conversations];
+    return path === '/member/gifts/send' ? [...names, C.giftRecords] : names;
+  }
   if (path.startsWith('/admin/')) return Object.values(C);
   if (path.startsWith('/auth/member-claim')) {
     return [...common, C.identityClaims, C.members, C.matchmakers, C.memberPrivateArchives];
@@ -405,11 +424,12 @@ async function ensureCollectionsForPath(path) {
   return Promise.all(names.map(name => ensureCollection(name)));
 }
 
-async function getAll(collectionName, query = null, maxRows = 1000) {
+async function getAll(collectionName, query = null, maxRows = 1000, options = {}) {
   const rows = [];
   const pageSize = 100;
   for (let offset = 0; offset < maxRows; offset += pageSize) {
-    const ref = query ? db.collection(collectionName).where(query) : db.collection(collectionName);
+    let ref = query ? db.collection(collectionName).where(query) : db.collection(collectionName);
+    if (options.fields) ref = ref.field(options.fields);
     let res;
     try {
       res = await ref.skip(offset).limit(Math.min(pageSize, maxRows - offset)).get();
@@ -429,15 +449,20 @@ async function getAll(collectionName, query = null, maxRows = 1000) {
   return rows;
 }
 
-async function getOne(collectionName, query) {
+async function getOne(collectionName, query, options = {}) {
+  const read = () => {
+    let ref = db.collection(collectionName).where(query);
+    if (options.fields) ref = ref.field(options.fields);
+    return ref.limit(1).get();
+  };
   let res;
   try {
-    res = await db.collection(collectionName).where(query).limit(1).get();
+    res = await read();
   } catch (err) {
     if (!isMissingCollectionError(err)) throw err;
     await ensureCollection(collectionName);
     try {
-      res = await db.collection(collectionName).where(query).limit(1).get();
+      res = await read();
     } catch (retryErr) {
       if (isMissingCollectionError(retryErr)) return null;
       throw retryErr;
@@ -448,6 +473,76 @@ async function getOne(collectionName, query) {
 
 async function getById(collectionName, id) {
   return getOne(collectionName, { id: toNumber(id) });
+}
+
+async function queryRead(collectionName, query, options = {}, count = false) {
+  const read = async () => {
+    let ref = db.collection(collectionName).where(query);
+    if (count) return ref.count();
+    if (options.fields) ref = ref.field(options.fields);
+    (options.order || []).forEach(([field, direction]) => { ref = ref.orderBy(field, direction); });
+    const limit = options.limit || 100;
+    const result = await ref.skip(options.offset || 0).limit(Math.min(limit, 100)).get();
+    if (limit > 100 && (result.data || []).length === 100) {
+      const rest = await queryRead(collectionName, query, { ...options, offset: (options.offset || 0) + 100, limit: limit - 100 });
+      return { ...result, data: [...result.data, ...(rest.data || [])] };
+    }
+    return result;
+  };
+  try {
+    return await read();
+  } catch (err) {
+    if (!isMissingCollectionError(err)) throw err;
+    await ensureCollection(collectionName);
+    try { return await read(); } catch (retryErr) {
+      if (isMissingCollectionError(retryErr)) return count ? { total: 0 } : { data: [] };
+      throw retryErr;
+    }
+  }
+}
+
+async function getFirstRowsByNumericField(collectionName, field, values, knownRows = [], options = {}) {
+  const keys = Array.from(new Set(values.map(Number).filter(value => Number.isFinite(value) && value > 0)));
+  const requested = new Set(keys);
+  const rowsByValue = new Map();
+  knownRows.forEach(row => {
+    const value = row[field];
+    if (typeof value === 'number' && requested.has(value) && !rowsByValue.has(value)) {
+      rowsByValue.set(value, row);
+    }
+  });
+  const missing = keys.filter(value => !rowsByValue.has(value));
+  const batches = [];
+  for (let index = 0; index < missing.length; index += 50) batches.push(missing.slice(index, index + 50));
+  await Promise.all(batches.map(async batch => {
+    const rows = await getAll(collectionName, { [field]: _.in(batch) }, options.complete ? Infinity : 1000, options);
+    rows.forEach(row => {
+      const value = row[field];
+      if (requested.has(value) && !rowsByValue.has(value)) rowsByValue.set(value, row);
+    });
+    // A truncated batch must not turn an existing identity/profile into a missing row.
+    await Promise.all(batch.filter(value => !rowsByValue.has(value)).map(async value => {
+      rowsByValue.set(value, rows.length >= 1000 ? await getOne(collectionName, { [field]: value }, options) : null);
+    }));
+  }));
+  return rowsByValue;
+}
+
+async function memberReadContext(rows, matchRecords = [], profiles = null) {
+  const userIds = rows.map(row => Number(row.userId));
+  const [usersById, profilesByUserId] = await Promise.all([
+    getFirstRowsByNumericField(C.users, 'id', userIds, [], { complete: true }),
+    getFirstRowsByNumericField(C.profiles, 'userId', userIds, profiles || [], { complete: true })
+  ]);
+  return { usersById, profilesByUserId, matchRecords, recommendationStatusByUserId: recommendationStatusIndex(matchRecords) };
+}
+
+async function rowsByFieldBatches(collectionName, field, values, options = {}) {
+  const keys = Array.from(new Set(values));
+  const batches = [];
+  for (let index = 0; index < keys.length; index += 50) batches.push(keys.slice(index, index + 50));
+  const rows = await Promise.all(batches.map(batch => getAll(collectionName, { [field]: _.in(batch) }, Infinity, options)));
+  return rows.flat();
 }
 
 async function addRow(collectionName, row) {
@@ -661,13 +756,38 @@ function lastRecommendationStatusForUser(userId, records = []) {
   return status;
 }
 
+function recommendationStatusIndex(records = []) {
+  const relatedByUserId = new Map();
+  records.forEach(record => {
+    const userIds = new Set([Number(record.userAId), Number(record.userBId)]);
+    userIds.forEach(userId => {
+      if (!Number.isFinite(userId)) return;
+      if (!relatedByUserId.has(userId)) relatedByUserId.set(userId, []);
+      relatedByUserId.get(userId).push(record);
+    });
+  });
+  // Keep each user's original row order and comparator, including invalid dates and tied IDs.
+  return new Map(Array.from(relatedByUserId, ([userId, related]) => [userId, lastRecommendationStatusForUser(userId, related)]));
+}
+
+function recommendationStatusForView(userId, context) {
+  return context.recommendationStatusByUserId
+    ? context.recommendationStatusByUserId.get(Number(userId)) || '暂无推荐'
+    : lastRecommendationStatusForUser(userId, context.matchRecords || []);
+}
+
 function sortMemberRowsDesc(a, b) {
   return Number(b.sortId || b.id || 0) - Number(a.sortId || a.id || 0);
 }
 
 async function memberView(member, context = {}) {
-  const user = await getById(C.users, member.userId) || {};
-  const profile = await getOne(C.profiles, { userId: Number(member.userId) }) || {};
+  const userId = Number(member.userId);
+  const user = (context.usersById && context.usersById.has(userId)
+    ? context.usersById.get(userId)
+    : await getById(C.users, member.userId)) || {};
+  const profile = (context.profilesByUserId && context.profilesByUserId.has(userId)
+    ? context.profilesByUserId.get(userId)
+    : await getOne(C.profiles, { userId })) || {};
   const identityStatus = isManualIdentity(user.openid) ? 'pending' : 'claimed';
   const photos = normalizeMemberPhotos(profile.photos);
   const media = withMemberMedia({ ...profile, gender: profile.gender || user.gender, photos });
@@ -715,12 +835,15 @@ async function memberView(member, context = {}) {
     ...row,
     profileCompletion: completion,
     displayStatus: displayStatusForMember(row, completion),
-    lastRecommendStatus: lastRecommendationStatusForUser(row.userId, context.matchRecords || [])
+    lastRecommendStatus: recommendationStatusForView(row.userId, context)
   };
 }
 
 async function profileMemberView(profile, context = {}) {
-  const user = await getById(C.users, profile.userId) || {};
+  const userId = Number(profile.userId);
+  const user = (context.usersById && context.usersById.has(userId)
+    ? context.usersById.get(userId)
+    : await getById(C.users, profile.userId)) || {};
   const profileId = Number(profile.id || profile.userId || 0);
   const photos = normalizeMemberPhotos(profile.photos);
   const media = withMemberMedia({ ...profile, gender: profile.gender || user.gender, photos });
@@ -763,7 +886,7 @@ async function profileMemberView(profile, context = {}) {
     ...row,
     profileCompletion: completion,
     displayStatus: displayStatusForMember(row, completion),
-    lastRecommendStatus: lastRecommendationStatusForUser(row.userId, context.matchRecords || [])
+    lastRecommendStatus: recommendationStatusForView(row.userId, context)
   };
 }
 
@@ -798,20 +921,143 @@ function giftById(giftId) {
 }
 
 async function publicShowcaseRows(options = {}) {
-  const rows = await getAll(C.members, { status: 1 });
-  const matchRecords = await getAll(C.matchRecords);
+  const [rows, profiles, matchRecords] = await Promise.all([
+    getAll(C.members, { status: 1 }, Infinity),
+    getAll(C.profiles, null, Infinity),
+    getAll(C.matchRecords, null, Infinity)
+  ]);
   const memberUserIds = new Set(rows.map(row => Number(row.userId)));
-  const profileRows = (await getAll(C.profiles))
+  const profileRows = profiles
     .filter(row => isTrue(row.displayEnabled))
     .filter(row => !memberUserIds.has(Number(row.userId)));
-  const memberViews = await Promise.all(rows.map(row => publicMemberView(row, { matchRecords }, options)));
-  const profileViews = await Promise.all(profileRows.map(async row => {
-    const view = await profileMemberView(row, { matchRecords });
-    if (!view.displayEnabled) return null;
-    return sanitizePublicMemberRow(view, options);
-  }));
+  const [usersById, profilesByUserId] = await Promise.all([
+    getFirstRowsByNumericField(C.users, 'id', [...memberUserIds, ...profileRows.map(row => row.userId)]),
+    getFirstRowsByNumericField(C.profiles, 'userId', Array.from(memberUserIds), profiles)
+  ]);
+  const context = { matchRecords, usersById, profilesByUserId, recommendationStatusByUserId: recommendationStatusIndex(matchRecords) };
+  const [memberViews, profileViews] = await Promise.all([
+    Promise.all(rows.map(row => publicMemberView(row, context, options))),
+    Promise.all(profileRows.map(async row => {
+      const view = await profileMemberView(row, context);
+      if (!view.displayEnabled) return null;
+      return sanitizePublicMemberRow(view, options);
+    }))
+  ]);
   return [...memberViews, ...profileViews]
     .filter(row => row && Number(row.status) === 1);
+}
+
+const SHOWCASE_MEMBER_INDEX_FIELDS = Object.fromEntries([
+  'id', 'userId', 'status', 'memberType', 'createdAt', 'updatedAt'
+].map(field => [field, true]));
+const SHOWCASE_PROFILE_INDEX_FIELDS = Object.fromEntries([
+  '_id', 'id', 'userId', 'displayEnabled', 'realName', 'gender', 'age', 'city',
+  'occupation', 'education', 'maritalStatus', 'incomeRange'
+].map(field => [field, true]));
+const SHOWCASE_USER_INDEX_FIELDS = { id: true, nickname: true, gender: true, status: true };
+const SHOWCASE_PROFILE_FIELDS = Object.fromEntries([
+  ...Object.keys(SHOWCASE_PROFILE_INDEX_FIELDS), 'displayUpdatedAt', 'height', 'province',
+  'nativePlace', 'houseStatus', 'carStatus', 'selfIntro', 'partnerRequirement',
+  'photos', 'avatarUrl', 'coverUrl'
+].map(field => [field, true]));
+
+function showcaseProfileKey(profile) {
+  return JSON.stringify([profile._id || null, profile.id === undefined ? null : profile.id, profile.userId]);
+}
+
+async function pageRecommendationRecords(userIds) {
+  const targets = new Set(userIds.map(Number).filter(Number.isFinite));
+  if (!targets.size) return [];
+  const references = Array.from(targets);
+  if (targets.has(1)) references.push(true); // Preserve Number(true) === 1 in imported references.
+  const fields = { id: true, userAId: true, userBId: true, status: true, createdAt: true };
+  // Current writers can still emit string user references. Read that legacy subset once,
+  // then compare Number(...) exactly as before (including '003', whitespace and exponents).
+  // Unusually large API pages retain the complete metadata fallback instead of oversized in queries.
+  const query = references.length <= 50 ? _.or([
+    { userAId: _.in(references) }, { userBId: _.in(references) },
+    { userAId: db.RegExp({ regexp: '^' }) }, { userBId: db.RegExp({ regexp: '^' }) }
+  ]) : null;
+  const rows = await getAll(C.matchRecords, query, Infinity, { fields });
+  return rows.filter(row => targets.has(Number(row.userAId)) || targets.has(Number(row.userBId)));
+}
+
+async function publicShowcasePage(userId, filters = {}) {
+  // Source indexes stay fresh per request. Exact mixed-source totals and legacy visibility
+  // require these lightweight scans; full profiles, users and recommendation history are page-scoped.
+  const [members, profiles] = await Promise.all([
+    getAll(C.members, { status: 1 }, Infinity, { fields: SHOWCASE_MEMBER_INDEX_FIELDS }),
+    getAll(C.profiles, null, Infinity, { fields: SHOWCASE_PROFILE_INDEX_FIELDS })
+  ]);
+  // Imported non-positive/missing references use the original lookups and defaults.
+  // Keeping this rare compatibility path also avoids changing visibility of malformed legacy rows.
+  if ([...members, ...profiles].some(row => !Number.isFinite(Number(row.userId)) || Number(row.userId) <= 0)) {
+    const rows = await withMemberViewerState(await publicShowcaseRows({ keepUserId: true }), userId);
+    return paginate(rows.filter(row => Number(row.userId) !== Number(userId))
+      .filter(row => !row.viewerState.isHidden && matchesMemberFilters(row, filters))
+      .sort(sortMemberRowsDesc), filters.page, filters.pageSize);
+  }
+  const memberUserIds = new Set(members.map(row => Number(row.userId)));
+  const firstNumericProfiles = new Map();
+  profiles.forEach(profile => {
+    if (typeof profile.userId === 'number' && !firstNumericProfiles.has(profile.userId)) firstNumericProfiles.set(profile.userId, profile);
+  });
+  const standalone = profiles.filter(profile => isTrue(profile.displayEnabled) && !memberUserIds.has(Number(profile.userId)));
+  const indexedUserIds = standalone.map(profile => Number(profile.userId));
+  if (filters.keyword || filters.gender) indexedUserIds.push(...memberUserIds);
+  const usersById = await getFirstRowsByNumericField(C.users, 'id', indexedUserIds, [], { fields: SHOWCASE_USER_INDEX_FIELDS });
+  const candidates = [];
+  function appendCandidate(member, profile) {
+    if (!profile || !isTrue(profile.displayEnabled)) return;
+    const targetUserId = Number(member ? member.userId : profile.userId);
+    const user = usersById.get(targetUserId) || {};
+    const profileId = Number(profile.id || profile.userId || 0);
+    const row = {
+      id: member ? Number(member.id) : `profile_${profileId || Number(profile.userId)}`,
+      sortId: member ? Number(member.id) : profileId || Number(profile.userId) || 0,
+      source: member ? 'member' : 'profile', userId: targetUserId,
+      status: member ? Number(member.status) : user.status === undefined ? 1 : Number(user.status),
+      memberType: member ? member.memberType || 'no_consumption' : 'self_profile',
+      nickname: user.nickname || profile.realName || '', realName: profile.realName || user.nickname || '',
+      gender: member ? user.gender || 0 : user.gender || profile.gender || 0,
+      age: profile.age || null, city: profile.city || '', occupation: profile.occupation || '',
+      education: profile.education || '', maritalStatus: profile.maritalStatus || '', incomeRange: profile.incomeRange || '',
+      member, profile
+    };
+    if (row.status === 1 && targetUserId !== Number(userId) && matchesMemberFilters(row, filters)) candidates.push(row);
+  }
+  members.forEach(member => appendCandidate(member, firstNumericProfiles.get(Number(member.userId))));
+  standalone.forEach(profile => appendCandidate(null, profile));
+  const viewerStates = await memberInteractionStateMap(userId, candidates.map(row => row.userId));
+  const visible = candidates.filter(row => !(viewerStates[String(row.userId)] || {}).hide).sort(sortMemberRowsDesc);
+  const page = paginate(visible, filters.page, filters.pageSize);
+  if (!page.list.length) return page;
+  const pageUserIds = page.list.map(row => row.userId);
+  const profileReferences = page.list.map(row => row.member ? Number(row.member.userId) : row.profile.userId);
+  const [pageUsers, pageProfiles, records] = await Promise.all([
+    getFirstRowsByNumericField(C.users, 'id', pageUserIds, [], { fields: { ...SHOWCASE_USER_INDEX_FIELDS, openid: true, isVerified: true } }),
+    rowsByFieldBatches(C.profiles, 'userId', profileReferences, { fields: SHOWCASE_PROFILE_FIELDS }),
+    pageRecommendationRecords(pageUserIds)
+  ]);
+  const pageProfilesByKey = new Map(pageProfiles.map(profile => [showcaseProfileKey(profile), profile]));
+  const pageProfilesByUserId = new Map();
+  pageProfiles.forEach(profile => {
+    if (typeof profile.userId === 'number' && !pageProfilesByUserId.has(profile.userId)) pageProfilesByUserId.set(profile.userId, profile);
+  });
+  // Explicit nulls avoid per-card fallback reads for known missing users and profiles.
+  pageUserIds.forEach(id => { if (!pageUsers.has(id)) pageUsers.set(id, null); if (!pageProfilesByUserId.has(id)) pageProfilesByUserId.set(id, null); });
+  const context = { usersById: pageUsers, profilesByUserId: pageProfilesByUserId, recommendationStatusByUserId: recommendationStatusIndex(records) };
+  const list = await Promise.all(page.list.map(async candidate => {
+    const profile = pageProfilesByKey.get(showcaseProfileKey(candidate.profile));
+    if (!profile) return null;
+    const view = candidate.member
+      ? await publicMemberView(candidate.member, context, { keepUserId: true })
+      : sanitizePublicMemberRow(await profileMemberView(profile, context), { keepUserId: true });
+    if (!view || !isTrue(profile.displayEnabled) || Number(view.status) !== 1 || !matchesMemberFilters(view, filters)) return null;
+    const state = viewerStates[String(candidate.userId)] || {};
+    return { ...view, viewerState: { isFavorite: !!state.favorite, isHidden: !!state.hide } };
+  }));
+  return { ...page, list: list.filter(Boolean) };
 }
 
 async function memberInteractionStateMap(userId, targetUserIds = []) {
@@ -822,10 +1068,10 @@ async function memberInteractionStateMap(userId, targetUserIds = []) {
   );
   if (!Number(userId) || !targets.size) return {};
 
-  const rows = await getAll(C.memberInteractions, { userId: Number(userId) }, 2000);
-  return rows.reduce((map, row) => {
+  const rows = await getAll(C.memberInteractions, { userId: Number(userId) }, Infinity);
+  return latestMemberInteractionRows(rows).reduce((map, row) => {
     const targetUserId = Number(row.targetUserId);
-    if (!targets.has(targetUserId) || row.active === false) return map;
+    if (!targets.has(targetUserId) || !isActiveInteraction(row)) return map;
     const key = String(targetUserId);
     map[key] = map[key] || {};
     map[key][row.actionType] = true;
@@ -902,8 +1148,30 @@ function quotaAfterFreeFavoriteUse(stats) {
 
 async function publicShowcaseTarget(data = {}) {
   const targetUserId = interactionTargetUserId(data);
-  const rows = await publicShowcaseRows({ keepUserId: true });
-  const target = rows.find(row => Number(row.userId) === targetUserId);
+  const userIds = _.in([targetUserId, String(targetUserId)]);
+  const [members, profiles, user] = await Promise.all([
+    getAll(C.members, { userId: userIds, status: 1 }, Infinity),
+    getAll(C.profiles, { userId: userIds }, Infinity),
+    getById(C.users, targetUserId)
+  ]);
+  const memberProfile = profiles.find(row => row.userId === targetUserId)
+    || (members.length && profiles.length >= 1000 ? await getOne(C.profiles, { userId: targetUserId }) : null);
+  const context = {
+    usersById: new Map([[targetUserId, user]]),
+    profilesByUserId: new Map([[targetUserId, memberProfile]])
+  };
+  // An active assignment takes precedence even when its public profile is disabled.
+  // No other person's rows, private archive, or recommendation history are needed here.
+  let target = null;
+  if (members.length) {
+    target = await publicMemberView(members[0], context, { keepUserId: true });
+  } else {
+    const profile = profiles.find(row => isTrue(row.displayEnabled));
+    if (profile) {
+      const row = await profileMemberView(profile, context);
+      if (Number(row.status) === 1) target = sanitizePublicMemberRow(row, { keepUserId: true });
+    }
+  }
   if (!target) throw createHttpError('target member not found', 404, 40400);
   return target;
 }
@@ -917,11 +1185,7 @@ async function upsertMemberInteraction(userId, targetUserId, actionType, active,
     status: active ? 'active' : 'inactive',
     ...extra
   };
-  const existing = await getOne(C.memberInteractions, {
-    userId: payload.userId,
-    targetUserId: payload.targetUserId,
-    actionType
-  });
+  const existing = await latestMemberInteraction(payload.userId, payload.targetUserId, actionType);
   if (existing) return updateRow(C.memberInteractions, existing, payload);
   return addRow(C.memberInteractions, {
     id: await nextId('memberInteraction'),
@@ -933,12 +1197,29 @@ function isActiveInteraction(row) {
   return !!row && row.active !== false && String(row.status || 'active') !== 'inactive';
 }
 
-async function activeInteraction(userId, targetUserId, actionType) {
-  const row = await getOne(C.memberInteractions, {
+function latestMemberInteractionRows(rows = []) {
+  const latest = new Map();
+  const timestamp = row => new Date(row.updatedAt || row.createdAt || 0).getTime() || 0;
+  [...rows]
+    .sort((a, b) => timestamp(b) - timestamp(a) || Number(b.id || 0) - Number(a.id || 0))
+    .forEach(row => {
+      const key = `${Number(row.userId)}:${Number(row.targetUserId)}:${row.actionType}`;
+      if (!latest.has(key)) latest.set(key, row);
+    });
+  return Array.from(latest.values());
+}
+
+async function latestMemberInteraction(userId, targetUserId, actionType) {
+  const rows = await getAll(C.memberInteractions, {
     userId: Number(userId),
     targetUserId: Number(targetUserId),
     actionType
-  });
+  }, Infinity);
+  return latestMemberInteractionRows(rows)[0] || null;
+}
+
+async function activeInteraction(userId, targetUserId, actionType) {
+  const row = await latestMemberInteraction(userId, targetUserId, actionType);
   return isActiveInteraction(row) ? row : null;
 }
 
@@ -953,6 +1234,19 @@ async function areMutualFavorites(userAId, userBId) {
     hasActiveFavorite(userBId, userAId)
   ]);
   return aToB && bToA;
+}
+
+async function mutualFavoritePeerIds(userId) {
+  const viewerId = Number(userId);
+  const rows = latestMemberInteractionRows(await getAll(C.memberInteractions, _.and([
+    { actionType: 'favorite' },
+    _.or([{ userId: viewerId }, { targetUserId: viewerId }])
+  ]), Infinity)).filter(isActiveInteraction);
+  const outgoing = new Set(rows.filter(row => Number(row.userId) === viewerId)
+    .map(row => Number(row.targetUserId)));
+  return new Set(rows.filter(row => Number(row.targetUserId) === viewerId
+    && Number(row.userId) !== viewerId && outgoing.has(Number(row.userId)))
+    .map(row => Number(row.userId)));
 }
 
 async function createFavoriteNotification(senderId, target, conversation = null) {
@@ -1017,12 +1311,15 @@ async function findActiveConversation(participantIds, conversationType = 'member
   return rows.find(row => Number(row.status || 1) !== 0) || null;
 }
 
-async function ensureMutualFavoriteConversation(userAId, userBId) {
-  if (!(await areMutualFavorites(userAId, userBId))) return null;
+async function ensureMutualFavoriteConversation(userAId, userBId, context = {}) {
+  const isMutual = context.mutualFavoritePeerIds
+    ? context.mutualFavoritePeerIds.has(Number(userBId))
+    : await areMutualFavorites(userAId, userBId);
+  if (!isMutual) return null;
   return ensureChatConversation(
     [Number(userAId), Number(userBId)],
     'member_pair',
-    { chatOpenReason: 'mutual_favorite' }
+    { chatOpenReason: 'mutual_favorite' }, context
   );
 }
 
@@ -1086,9 +1383,22 @@ function isCertifiedActiveMatchmaker(row) {
   return row && Number(row.status) === 1 && Number(row.certificationStatus) === 2;
 }
 
-async function chatParticipantView(userId) {
-  const user = await getById(C.users, userId);
-  const profile = await getOne(C.profiles, { userId: Number(userId) }) || {};
+async function chatParticipantContext(userIds) {
+  const [usersById, profilesByUserId] = await Promise.all([
+    getFirstRowsByNumericField(C.users, 'id', userIds, [], { complete: true, fields: {
+      id: true, nickname: true, avatarUrl: true, gender: true
+    } }),
+    getFirstRowsByNumericField(C.profiles, 'userId', userIds, [], { complete: true, fields: {
+      userId: true, realName: true, photos: true, gender: true
+    } })
+  ]);
+  return { usersById, profilesByUserId };
+}
+
+async function chatParticipantView(userId, context = {}) {
+  const id = Number(userId);
+  const user = context.usersById?.has(id) ? context.usersById.get(id) : await getById(C.users, id);
+  const profile = (context.profilesByUserId?.has(id) ? context.profilesByUserId.get(id) : await getOne(C.profiles, { userId: id })) || {};
   const photos = normalizeMemberPhotos(profile.photos);
   const media = withMemberMedia({ ...profile, gender: profile.gender || (user && user.gender), photos });
   return {
@@ -1098,10 +1408,10 @@ async function chatParticipantView(userId) {
   };
 }
 
-async function chatConversationView(conversation, currentUserId) {
+async function chatConversationView(conversation, currentUserId, context = {}) {
   const ids = chatParticipantIds(conversation);
   const peerId = ids.find(id => Number(id) !== Number(currentUserId));
-  const peer = peerId ? await chatParticipantView(peerId) : null;
+  const peer = peerId ? await chatParticipantView(peerId, context) : null;
   const unreadCount = chatUnreadCount(conversation, currentUserId);
   return {
     ...stripInternal(conversation),
@@ -1115,11 +1425,11 @@ async function chatConversationView(conversation, currentUserId) {
   };
 }
 
-async function chatMessageView(message, currentUserId) {
+async function chatMessageView(message, currentUserId, context = {}) {
   return {
     ...stripInternal(message),
     isMine: Number(message.senderId) === Number(currentUserId),
-    sender: await chatParticipantView(message.senderId)
+    sender: await chatParticipantView(message.senderId, context)
   };
 }
 
@@ -1168,7 +1478,10 @@ async function resolveMemberMatchmakerChatAccess(userId, targetUserId) {
 }
 
 async function resolveMemberPairChatAccess(userId, targetUserId) {
-  const records = await getAll(C.matchRecords);
+  const records = await getAll(C.matchRecords, _.or([
+    { userAId: _.in([Number(userId), String(userId)]), userBId: _.in([Number(targetUserId), String(targetUserId)]) },
+    { userBId: _.in([Number(userId), String(userId)]), userAId: _.in([Number(targetUserId), String(targetUserId)]) }
+  ]), Infinity);
   const record = records
     .filter(row => {
       const users = [Number(row.userAId), Number(row.userBId)];
@@ -1219,13 +1532,16 @@ async function resolveChatAccess(userId, targetUserId) {
 async function getChatConversationOrThrow(userId, conversationId) {
   const conversation = await getById(C.conversations, conversationId);
   assertChatParticipant(conversation, userId);
-  if (requiresPremiumForConversation(conversation) && !(await hasPremiumMemberEntitlement(userId))) {
+  if (requiresPremiumForConversation(conversation)) {
     const peerId = chatParticipantIds(conversation).find(id => Number(id) !== Number(userId));
     const formalPairAccess = peerId ? await resolveMemberPairChatAccess(userId, peerId) : null;
-    if (!formalPairAccess) {
+    if (formalPairAccess) return promoteChatConversation(conversation, formalPairAccess);
+    if (!(await hasPremiumMemberEntitlement(userId))) {
       throw createHttpError('开通会员后可使用互选聊天', 403, 40302);
     }
-    return promoteChatConversation(conversation, formalPairAccess);
+    if (!peerId || !(await areMutualFavorites(userId, peerId))) {
+      throw createHttpError('互选已取消，暂不能继续聊天', 403, 40300);
+    }
   }
   return conversation;
 }
@@ -1246,6 +1562,7 @@ function conversationMetadataPatch(existing, metadata = {}) {
 }
 
 async function promoteChatConversation(conversation, metadata = {}) {
+  if (conversation && !Object.keys(conversationMetadataPatch(conversation, metadata)).length) return conversation;
   if (!conversation || !conversation._id) {
     const patch = conversationMetadataPatch(conversation || {}, metadata);
     return Object.keys(patch).length ? updateRow(C.conversations, conversation, patch) : conversation;
@@ -1317,18 +1634,20 @@ async function createChatConversationAtomically(normalizedIds, participantKey, c
   });
 }
 
-async function ensureChatConversation(participantIds, conversationType, metadata = {}) {
+async function ensureChatConversation(participantIds, conversationType, metadata = {}, context = {}) {
   const normalizedIds = participantIds.map(id => Number(id)).filter(id => Number.isFinite(id));
   if (normalizedIds.length !== 2 || normalizedIds[0] === normalizedIds[1]) return null;
   normalizedIds.sort((a, b) => a - b);
   const participantKey = chatParticipantKey(normalizedIds);
-  const existingRows = await getAll(C.conversations, { participantKey, conversationType });
+  const key = `${conversationType}:${participantKey}`;
+  const existingRows = context.rowsByPair?.has(key)
+    ? context.rowsByPair.get(key) : await getAll(C.conversations, { participantKey, conversationType }, Infinity);
   const existing = existingRows.find(row => Number(row.status || 1) !== 0);
   if (existing) return promoteChatConversation(existing, metadata);
   return createChatConversationAtomically(normalizedIds, participantKey, conversationType, metadata);
 }
 
-async function ensureMemberMatchmakerConversation(memberRow, matchmakerRow) {
+async function ensureMemberMatchmakerConversation(memberRow, matchmakerRow, context = {}) {
   if (!memberRow || !matchmakerRow) return null;
   return ensureChatConversation(
     [Number(memberRow.userId), Number(matchmakerRow.userId)],
@@ -1337,11 +1656,11 @@ async function ensureMemberMatchmakerConversation(memberRow, matchmakerRow) {
       memberId: Number(memberRow.id),
       matchmakerId: Number(matchmakerRow.id),
       matchmakerUserId: Number(matchmakerRow.userId)
-    }
+    }, context
   );
 }
 
-async function ensureMemberPairConversation(matchRecord) {
+async function ensureMemberPairConversation(matchRecord, context = {}) {
   if (!matchRecord) return null;
   return ensureChatConversation(
     [Number(matchRecord.userAId), Number(matchRecord.userBId)],
@@ -1349,47 +1668,52 @@ async function ensureMemberPairConversation(matchRecord) {
     {
       matchRecordId: Number(matchRecord.id),
       matchmakerId: matchRecord.matchmakerId ? Number(matchRecord.matchmakerId) : null
-    }
+    }, context
   );
 }
 
-async function ensureDefaultChatConversationsForUser(userId, isPremiumMember = false) {
+async function ensureDefaultChatConversationsForUser(userId, isPremiumMember = false, context = {}) {
   const assignment = await activeMemberAssignment(userId);
   if (assignment) {
     const matchmakerRow = await getById(C.matchmakers, assignment.matchmakerId);
     if (isCertifiedActiveMatchmaker(matchmakerRow)) {
-      await ensureMemberMatchmakerConversation(assignment, matchmakerRow);
+      await ensureMemberMatchmakerConversation(assignment, matchmakerRow, context);
     }
   }
 
   const matchmakerRow = await getOne(C.matchmakers, { userId: Number(userId) });
   if (isCertifiedActiveMatchmaker(matchmakerRow)) {
-    const members = await getAll(C.members, { matchmakerId: Number(matchmakerRow.id), status: 1 });
-    await Promise.all(members.map(memberRow => ensureMemberMatchmakerConversation(memberRow, matchmakerRow)));
+    const members = await getAll(C.members, { matchmakerId: Number(matchmakerRow.id), status: 1 }, Infinity);
+    await Promise.all(members.map(memberRow => ensureMemberMatchmakerConversation(memberRow, matchmakerRow, context)));
   }
 
-  const matchRecords = (await getAll(C.matchRecords))
+  const matchRecords = (await getAll(C.matchRecords, _.or([
+    { userAId: _.in([Number(userId), String(userId)]) }, { userBId: _.in([Number(userId), String(userId)]) }
+  ]), Infinity))
     .filter(record => {
       const users = [Number(record.userAId), Number(record.userBId)];
       return users.includes(Number(userId))
         && !['rejected', 'cancelled'].includes(String(record.status || ''));
     });
-  await Promise.all(matchRecords.map(record => ensureMemberPairConversation(record)));
+  await Promise.all(matchRecords.map(record => ensureMemberPairConversation(record, context)));
 
   if (isPremiumMember) {
-    const favoriteRows = (await getAll(C.memberInteractions, {
-      userId: Number(userId),
-      actionType: 'favorite'
-    }, 2000)).filter(isActiveInteraction);
-    await Promise.all(favoriteRows.map(row => ensureMutualFavoriteConversation(userId, row.targetUserId)));
+    const peerIds = context.mutualFavoritePeerIds || await mutualFavoritePeerIds(userId);
+    await Promise.all(Array.from(peerIds).map(peerId => ensureMutualFavoriteConversation(
+      userId, peerId, { ...context, mutualFavoritePeerIds: peerIds }
+    )));
   }
 }
 
-async function markChatRead(userId, conversationId) {
-  const conversation = await getChatConversationOrThrow(userId, conversationId);
+async function markChatRead(userId, conversationId, context = {}) {
+  const conversation = context.conversation || await getChatConversationOrThrow(userId, conversationId);
   const unreadBy = chatUnreadMap(conversation);
   unreadBy[String(userId)] = 0;
-  const messages = await getAll(C.chatMessages, { conversationId: Number(conversation.id) });
+  const messages = context.messages || await getAll(C.chatMessages, {
+    conversationId: Number(conversation.id),
+    receiverId: _.in([Number(userId), String(Number(userId))]),
+    readBy: _.nin([Number(userId), String(Number(userId))])
+  }, Infinity, { fields: { _id: true, id: true, receiverId: true, readBy: true, readAt: true } });
   await Promise.all(messages
     .filter(message => Number(message.receiverId) === Number(userId)
       && !(Array.isArray(message.readBy) && message.readBy.map(id => Number(id)).includes(Number(userId))))
@@ -1398,23 +1722,44 @@ async function markChatRead(userId, conversationId) {
       readAt: nowIso()
     })));
   const updated = await updateRow(C.conversations, conversation, { unreadBy });
-  return chatConversationView(updated, userId);
+  return chatConversationView(updated, userId, context);
+}
+
+async function participantConversations(userId, activeOnly = false) {
+  const ids = [Number(userId), String(Number(userId))];
+  const query = { participantIds: _.in(ids) };
+  if (activeOnly) query.status = 'active';
+  return getAll(C.conversations, query, Infinity);
 }
 
 const chat = {
   async listConversations(userId, filters = {}) {
     const isPremiumMember = await hasPremiumMemberEntitlement(userId);
-    await ensureDefaultChatConversationsForUser(userId, isPremiumMember);
-    const rows = (await getAll(C.conversations, { status: 'active' }))
+    const initial = await participantConversations(userId);
+    const rowsByPair = new Map();
+    initial.forEach(row => {
+      const key = `${row.conversationType}:${row.participantKey}`;
+      if (!rowsByPair.has(key)) rowsByPair.set(key, []);
+      rowsByPair.get(key).push(row);
+    });
+    const mutualPeerIds = isPremiumMember ? await mutualFavoritePeerIds(userId) : new Set();
+    await ensureDefaultChatConversationsForUser(userId, isPremiumMember, {
+      rowsByPair, mutualFavoritePeerIds: mutualPeerIds
+    });
+    const candidates = (await participantConversations(userId, true))
+      .filter(row => row.status === 'active')
       .filter(row => chatParticipantIds(row).includes(Number(userId)))
-      .filter(row => isPremiumMember || !requiresPremiumForConversation(row))
+      .filter(row => isPremiumMember || !requiresPremiumForConversation(row));
+    const rows = candidates.filter(row => !requiresPremiumForConversation(row)
+      || mutualPeerIds.has(chatParticipantIds(row).find(id => Number(id) !== Number(userId))))
       .sort((a, b) => {
         const aTime = new Date(a.lastMessageAt || a.updatedAt || a.createdAt || 0).getTime();
         const bTime = new Date(b.lastMessageAt || b.updatedAt || b.createdAt || 0).getTime();
         return bTime - aTime || Number(b.id || 0) - Number(a.id || 0);
       });
-    const views = await Promise.all(rows.map(row => chatConversationView(row, userId)));
-    return paginate(views, filters.page, filters.pageSize || 50);
+    const page = paginate(rows, filters.page, Math.min(Number(filters.pageSize) || 50, 100));
+    const context = await chatParticipantContext(page.list.flatMap(chatParticipantIds));
+    return { ...page, list: await Promise.all(page.list.map(row => chatConversationView(row, userId, context))) };
   },
 
   async getOrCreateConversation(userId, data = {}) {
@@ -1427,17 +1772,38 @@ const chat = {
 
   async listMessages(userId, conversationId, filters = {}) {
     const conversation = await getChatConversationOrThrow(userId, conversationId);
-    const rows = (await getAll(C.chatMessages, { conversationId: Number(conversation.id) }))
-      .filter(row => Number(row.status || 1) !== 0)
-      .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0) || Number(a.id || 0) - Number(b.id || 0));
-    const conversationView = await markChatRead(userId, conversation.id);
-    const page = paginate(rows, filters.page, filters.pageSize || 80);
+    const hasBefore = filters.beforeId !== undefined && filters.beforeId !== null && filters.beforeId !== '';
+    const hasAfter = filters.afterId !== undefined && filters.afterId !== null && filters.afterId !== '';
+    const beforeId = Number(filters.beforeId || 0);
+    const afterId = Number(filters.afterId || 0);
+    if ((hasBefore && (!Number.isSafeInteger(beforeId) || beforeId <= 0))
+      || (hasAfter && (!Number.isSafeInteger(afterId) || afterId < 0)) || (hasBefore && hasAfter)) {
+      throw createHttpError('消息游标无效');
+    }
+    const query = { conversationId: Number(conversation.id), status: _.nin([0, '0']) };
+    const cursorQuery = { ...query };
+    if (hasBefore) cursorQuery.id = _.lt(beforeId);
+    if (hasAfter) cursorQuery.id = _.gt(afterId);
+    const pageSize = Math.min(Math.max(Math.floor(Number(filters.pageSize) || 80), 1), 100);
+    const pageNumber = Math.max(Math.floor(Number(filters.page) || 1), 1);
+    const offset = (pageNumber - 1) * pageSize;
+    const [window, count] = await Promise.all([
+      queryRead(C.chatMessages, cursorQuery, { order: [['id', hasAfter ? 'asc' : 'desc']], offset, limit: pageSize + 1 }),
+      queryRead(C.chatMessages, query, {}, true)
+    ]);
+    const selected = (window.data || []).slice(0, pageSize);
+    const messageRows = selected.sort((a, b) => Number(a.id) - Number(b.id));
+    const context = await chatParticipantContext([...chatParticipantIds(conversation), ...messageRows.map(row => row.senderId)]);
+    const conversationView = await markChatRead(userId, conversation.id, { ...context, conversation });
     return {
       conversation: conversationView,
-      messages: await Promise.all(page.list.map(row => chatMessageView(row, userId))),
-      total: page.total,
-      page: page.page,
-      pageSize: page.pageSize
+      messages: await Promise.all(messageRows.map(row => chatMessageView(row, userId, context))),
+      total: Number(count.total || 0),
+      page: pageNumber,
+      pageSize,
+      hasMore: (window.data || []).length > pageSize,
+      beforeId: selected.length ? Math.min(...selected.map(row => Number(row.id))) : 0,
+      latestId: selected.length ? Math.max(...selected.map(row => Number(row.id))) : 0
     };
   },
 
@@ -1538,21 +1904,43 @@ const messages = {
   }
 };
 
-async function eventView(event, currentUserId = null) {
-  const organizer = await getById(C.users, event.organizerId);
-  const allRegistrations = await getAll(C.registrations, { eventId: event.id });
-  const registrations = allRegistrations.filter(reg => reg.status === 'registered');
-  const registrationViews = await Promise.all(registrations.map(async reg => {
-    const user = await getById(C.users, reg.userId);
-    return {
-      ...stripInternal(reg),
-      user: user ? publicUser(user) : null
-    };
-  }));
+async function eventViewContext(events, currentUserId = null) {
+  const registrations = await rowsByFieldBatches(C.registrations, 'eventId', events.flatMap(event => [Number(event.id), String(event.id)]));
+  const usersById = await getFirstRowsByNumericField(C.users, 'id', [
+    ...events.map(event => event.organizerId), ...registrations.filter(row => row.status === 'registered').map(row => row.userId)
+  ], [], { complete: true, fields: { id: true, nickname: true, avatarUrl: true, gender: true, status: true } });
+  const profilesByUserId = await getFirstRowsByNumericField(C.profiles, 'userId', registrations.map(row => row.userId), [], {
+    complete: true, fields: { userId: true, realName: true, photos: true, displayEnabled: true }
+  });
+  const registrationsByEventId = new Map(events.map(event => [Number(event.id), []]));
+  registrations.forEach(row => registrationsByEventId.get(Number(row.eventId))?.push(row));
+  const hiddenUserIds = currentUserId ? await salonHiddenUserIds(currentUserId, registrations.map(row => row.userId)) : new Set();
+  const registrationRequirements = currentUserId ? await getMinimumRegistrationRequirements(currentUserId) : { complete: false, missingFields: ['phone', 'nickname', 'photo'] };
+  return { usersById, profilesByUserId, registrationsByEventId, hiddenUserIds, registrationRequirements };
+}
+
+async function eventView(event, currentUserId = null, context = {}) {
+  const organizerId = Number(event.organizerId);
+  const organizer = context.usersById?.has(organizerId) ? context.usersById.get(organizerId) : await getById(C.users, organizerId);
+  const allRegistrations = context.registrationsByEventId?.has(Number(event.id))
+    ? context.registrationsByEventId.get(Number(event.id)) : await getAll(C.registrations, { eventId: _.in([Number(event.id), String(event.id)]) }, Infinity);
+  const registrations = activeAttendance(allRegistrations);
+  const hiddenUserIds = context.hiddenUserIds || (currentUserId ? await salonHiddenUserIds(currentUserId, registrations.map(reg => reg.userId)) : new Set());
+  const canViewProfiles = Number(event.organizerId) === Number(currentUserId) || registrations.some(reg => Number(reg.userId) === Number(currentUserId));
+  const registrationViews = (await Promise.all(registrations.map(async reg => {
+    const targetUserId = Number(reg.userId);
+    if (hiddenUserIds.has(targetUserId)) return null;
+    const user = context.usersById?.has(targetUserId) ? context.usersById.get(targetUserId) : await getById(C.users, targetUserId);
+    if (!user || Number(user.status) !== 1) return null;
+    const profile = context.profilesByUserId?.has(targetUserId) ? context.profilesByUserId.get(targetUserId) : await getOne(C.profiles, { userId: targetUserId });
+    const identity = salonAttendeeIdentity(user, profile || {});
+    return { id: reg.id, eventId: Number(event.id), userId: targetUserId, status: 'registered',
+      user: { id: targetUserId, nickname: identity.displayName, avatarUrl: identity.avatarUrl },
+      canViewProfile: canViewProfiles && salonProfileConsent(reg, profile || {}) };
+  }))).filter(Boolean);
   const currentRegistration = currentUserId
-    ? allRegistrations.find(reg => Number(reg.userId) === Number(currentUserId))
+    ? latestAttendanceRows(allRegistrations).find(reg => Number(reg.userId) === Number(currentUserId))
     : null;
-  const maxParticipants = Number(event.maxParticipants || 0);
   return {
     ...stripInternal(event),
     organizer: organizer ? {
@@ -1561,10 +1949,111 @@ async function eventView(event, currentUserId = null) {
       avatarUrl: organizer.avatarUrl || ''
     } : null,
     registrations: registrationViews,
+    currentParticipants: registrations.length,
     registrationStatus: currentRegistration ? currentRegistration.status : 'none',
     isRegistered: !!currentRegistration && currentRegistration.status === 'registered',
-    isFull: maxParticipants > 0 && registrations.length >= maxParticipants
+    isOrganizer: Number(event.organizerId) === Number(currentUserId),
+    ...salonAvailability(event, registrations.length),
+    registrationRequirements: context.registrationRequirements || (currentUserId ? await getMinimumRegistrationRequirements(currentUserId) : { complete: false, missingFields: ['phone', 'nickname', 'photo'] })
   };
+}
+
+function salonProfileConsent(registration, profile) {
+  return registration.participantProfileVisible === true || isTrue(profile.displayEnabled);
+}
+
+function salonPublicPhotos(profile) {
+  return normalizeMemberPhotos(profile.photos).filter(value => !/\/hl_uploads\/member-private\//i.test(value));
+}
+
+function salonAttendeeIdentity(user, profile) {
+  const photos = salonPublicPhotos(profile);
+  const avatar = String(user.avatarUrl || '');
+  return { displayName: String(profile.realName || user.nickname || '会员').trim() || '会员',
+    avatarUrl: photos[0] || (!/\/hl_uploads\/member-private\//i.test(avatar) ? avatar : '') || defaultMemberMedia({ ...profile, gender: user.gender }).avatarUrl };
+}
+
+async function salonHiddenUserIds(viewerUserId, userIds) {
+  const targets = Array.from(new Set(userIds.map(Number).filter(id => Number.isSafeInteger(id) && id > 0)));
+  if (!targets.length) return new Set();
+  const [outgoing, incoming] = await Promise.all([
+    memberInteractionStateMap(viewerUserId, targets),
+    getAll(C.memberInteractions, { targetUserId: Number(viewerUserId), actionType: 'hide' }, Infinity, {
+      fields: { userId: true, targetUserId: true, active: true }
+    })
+  ]);
+  const hidden = new Set(targets.filter(id => outgoing[String(id)]?.hide));
+  incoming.forEach(row => { if (row.active !== false && targets.includes(Number(row.userId))) hidden.add(Number(row.userId)); });
+  return hidden;
+}
+
+async function getMinimumRegistrationRequirements(userId) {
+  const [user, profile] = await Promise.all([
+    getById(C.users, userId), getOne(C.profiles, { userId: Number(userId) })
+  ]);
+  return minimumRegistrationStatus(user || {}, profile || {});
+}
+
+async function minimumRegistrationView(userId) {
+  const [user, profile] = await Promise.all([getUserOrThrow(userId), getOne(C.profiles, { userId: Number(userId) })]);
+  const status = minimumRegistrationStatus(user, profile || {});
+  return { completed: status.complete, missingFields: status.missingFields,
+    user: { id: Number(user.id), nickname: registrationName(user, profile || {}) || user.nickname || '',
+      phone: user.phone || '', avatarUrl: user.avatarUrl || '' },
+    profile: { realName: profile?.realName || '', photos: registrationPhotos(user, profile || {}) },
+    phoneStatus: user.phoneSource === 'wechat' ? 'verified' : 'filled' };
+}
+
+async function validateRegistrationPhotos(photos) {
+  if (!photos.length || !photos.every(isPublicRegistrationPhoto)) throw createHttpError('请上传至少一张本人照片', 422, 42231);
+  const envId = process.env.TCB_ENV || process.env.CLOUDBASE_ENV_ID || '';
+  if (envId && photos.some(fileID => !fileID.startsWith(`cloud://${envId}.`))) throw createHttpError('照片不属于当前小程序，请重新上传', 422, 42231);
+  const result = await cloud.getTempFileURL({ fileList: photos });
+  const available = new Set((result.fileList || []).filter(row => Number(row.status) === 0 && row.tempFileURL).map(row => row.fileID));
+  if (photos.some(fileID => !available.has(fileID))) throw createHttpError('照片上传未完成，请重新上传', 422, 42231);
+}
+
+async function saveMinimumRegistration(userId, data = {}) {
+  const user = await getUserOrThrow(userId);
+  const phone = normalizeMainlandPhone(data.phone);
+  const nickname = registrationName({ nickname: data.nickname });
+  const photos = normalizeMemberPhotos(data.photos);
+  const missingFields = [];
+  if (!phone) missingFields.push('phone');
+  if (!nickname) missingFields.push('nickname');
+  if (!photos.length || !photos.every(isPublicRegistrationPhoto)) missingFields.push('photo');
+  if (missingFields.length) {
+    const error = createHttpError('请完善手机号、称呼和本人照片后再报名', 422, 42230);
+    error.details = missingFields.map(field => ({ field, code: 'required' }));
+    throw error;
+  }
+  const owner = await uniqueActiveUser({ phone }, '该手机号对应多个账号，请联系平台核验');
+  if (owner && Number(owner.id) !== Number(user.id)) throw createHttpError('该手机号已被其他账号使用，请联系平台核验', 409, 40920);
+  await validateRegistrationPhotos(photos);
+  const profile = await getOne(C.profiles, { userId: Number(userId) });
+  await Promise.all([ensureCollection(C.profiles), ensureCollection(C.counters)]);
+  await db.runTransaction(async transaction => {
+    const profileId = profile?._id || `profile_user_${Number(userId)}`;
+    const [currentUser, currentProfile] = await Promise.all([
+      salonTransactionDocument(transaction, C.users, user._id),
+      salonTransactionDocument(transaction, C.profiles, profileId)
+    ]);
+    if (!currentUser || Number(currentUser.status) !== 1 || currentUser.mergedIntoUserId) throw createHttpError('登录状态已失效，请重新登录', 401, 40100);
+    const timestamp = nowIso();
+    await transaction.collection(C.users).doc(user._id).update({ data: {
+      phone, nickname, avatarUrl: photos[0], updatedAt: timestamp,
+      phoneSource: phone === currentUser.phone && currentUser.phoneSource === 'wechat' ? 'wechat' : 'manual'
+    } });
+    if (currentProfile) await transaction.collection(C.profiles).doc(profileId).update({ data: { realName: nickname, photos, updatedAt: timestamp } });
+    else {
+      const counter = await salonTransactionDocument(transaction, C.counters, 'profile');
+      const id = (Number(counter?.value) || 0) + 1;
+      await transaction.collection(C.counters).doc('profile').set({ data: { key: 'profile', value: id, updatedAt: timestamp } });
+      await transaction.collection(C.profiles).doc(profileId).set({ data: { id, userId: Number(userId),
+        realName: nickname, photos, displayEnabled: false, createdAt: timestamp, updatedAt: timestamp } });
+    }
+  });
+  return minimumRegistrationView(userId);
 }
 
 async function getUserOrThrow(userId) {
@@ -1817,6 +2306,12 @@ async function validateInviteEventForMatchmaker(eventId, matchmaker) {
 
 async function acceptMemberMatchmakerInvite(userId, data = {}) {
   await getUserOrThrow(userId);
+  if (data.eventId && ['salonShare', 'memberSalonShare'].includes(requestApplySource(data))) {
+    // An activity invitation is registration, never approval of an assignment.
+    const registration = await salon.register(data.eventId, userId, data);
+    return { status: 'registered', registration, assignmentUnchanged: true,
+      event: await salon.getEventDetail(data.eventId, userId) };
+  }
   const matchmaker = await resolveMatchmakerForRequest(data);
   if (!matchmaker || Number(matchmaker.status) !== 1) {
     throw createHttpError('matchmaker not found', 404, 40400);
@@ -1941,6 +2436,18 @@ function matchesMemberFilters(row, filters = {}) {
   if (filters.incomeRange && row.incomeRange !== filters.incomeRange) return false;
   if (filters.city && !String(row.city || '').includes(String(filters.city))) return false;
   return true;
+}
+
+async function filteredOwnMemberViews(matchmaker, filters = {}) {
+  const query = { matchmakerId: matchmaker.id };
+  if (filters.memberType && filters.memberType !== 'no_consumption') query.memberType = filters.memberType;
+  if (filters.serviceLevel) query.serviceLevel = filters.serviceLevel;
+  let rows = await getAll(C.members, query, Infinity);
+  if (filters.status === undefined || filters.status === '') rows = rows.filter(row => Number(row.status) === 1);
+  const matchRecords = await getAll(C.matchRecords, { matchmakerId: matchmaker.id }, Infinity);
+  const context = await memberReadContext(rows, matchRecords);
+  const views = await Promise.all(rows.map(row => memberView(row, context)));
+  return views.filter(row => matchesMemberFilters(row, filters)).sort((a, b) => b.id - a.id);
 }
 
 async function requireUser(token) {
@@ -2504,7 +3011,7 @@ const auth = {
       const patch = {
         currentRole: role === 'matchmaker' ? 'matchmaker' : user.currentRole || 'user'
       };
-      if (nickname) patch.nickname = nickname;
+      if (registrationName({ nickname })) patch.nickname = String(nickname).trim();
       if (avatarUrl) patch.avatarUrl = avatarUrl;
       user = await updateRow(C.users, user, patch);
     }
@@ -2531,7 +3038,7 @@ const auth = {
       }
       throw createHttpError('该手机号已绑定其他账号', 400, 40002);
     }
-    const updated = await updateRow(C.users, user, { phone });
+    const updated = await updateRow(C.users, user, { phone, phoneSource: 'wechat' });
     return publicUser(updated);
   },
 
@@ -2859,30 +3366,62 @@ const matchmaker = {
     return stripInternal(updated);
   },
 
+  async status(userId) {
+    const row = await getOne(C.matchmakers, { userId: Number(userId), status: 1 });
+    if (!row) throw createHttpError('matchmaker not found', 404, 40400);
+    return { matchmaker: {
+      id: Number(row.id), userId: Number(row.userId), status: Number(row.status),
+      matchmakerNo: row.matchmakerNo || '', level: row.level || 1,
+      certificationStatus: Number(row.certificationStatus || 0),
+      certificationRemark: row.certificationRemark || ''
+    } };
+  },
+
   async dashboard(userId) {
     const row = await getMatchmakerByUserIdOrThrow(userId);
     if (process.env.DEMO_MEMBERS !== 'false' && Number(row.certificationStatus) === 2) {
       await ensureDemoMembersForMatchmaker(userId);
     }
-    const members = await getAll(C.members, { matchmakerId: row.id, status: 1 });
-    const salons = await getAll(C.salonEvents, { organizerId: Number(userId) });
-    const allMembers = await getAll(C.members, { status: 1 });
-    const matchRecords = await getAll(C.matchRecords, { matchmakerId: row.id });
+    const profileFields = Object.fromEntries([
+      'id', 'userId', 'displayEnabled', 'realName', 'age', 'height', 'city', 'nativePlace',
+      'education', 'occupation', 'incomeRange', 'maritalStatus', 'houseStatus', 'carStatus',
+      'selfIntro', 'partnerRequirement', 'photos'
+    ].map(field => [field, true]));
+    const [allMembers, salons, matchRecords, profiles] = await Promise.all([
+      getAll(C.members, { status: 1 }, Infinity, { fields: { id: true, userId: true, matchmakerId: true, status: true } }),
+      getAll(C.salonEvents, { organizerId: Number(userId) }, Infinity, { fields: { id: true, status: true } }),
+      getAll(C.matchRecords, { matchmakerId: row.id }, Infinity, { fields: { createdAt: true, status: true } }),
+      getAll(C.profiles, null, Infinity, { fields: profileFields })
+    ]);
+    const members = allMembers.filter(item => item.matchmakerId === row.id);
     const memberUserIds = new Set(allMembers.map(item => Number(item.userId)));
-    const profileResources = (await getAll(C.profiles))
+    const profileResources = profiles
       .filter(item => isTrue(item.displayEnabled))
       .filter(item => !memberUserIds.has(Number(item.userId)))
       .filter(item => Number(item.userId) !== Number(userId));
-    const memberViews = await Promise.all(members.map(memberRow => memberView(memberRow, { matchRecords })));
-    const resourceViews = await Promise.all(
-      allMembers
-        .filter(item => item.matchmakerId !== row.id)
-        .map(memberRow => memberView(memberRow, { matchRecords }))
-    );
-    const profileResourceViews = await Promise.all(profileResources.map(profileRow => profileMemberView(profileRow, { matchRecords })));
+    const users = await rowsByFieldBatches(C.users, 'id', [...members, ...profileResources].map(item => Number(item.userId)), {
+      fields: { id: true, nickname: true, gender: true, status: true }
+    });
+    const usersById = new Map();
+    users.forEach(user => { if (!usersById.has(user.id)) usersById.set(user.id, user); });
+    const profilesByUserId = new Map();
+    profiles.forEach(profile => {
+      if (typeof profile.userId === 'number' && !profilesByUserId.has(profile.userId)) profilesByUserId.set(profile.userId, profile);
+    });
+    const memberViews = members.map(memberRow => {
+      const profile = profilesByUserId.get(Number(memberRow.userId)) || {};
+      const user = usersById.get(Number(memberRow.userId)) || {};
+      const completion = profileCompletionFor({
+        ...profile, realName: profile.realName || user.nickname || '', gender: user.gender || 0,
+        photos: normalizeMemberPhotos(profile.photos)
+      });
+      return { profileCompletion: completion };
+    });
     const eventIds = salons.map(item => Number(item.id));
     const registrations = eventIds.length
-      ? (await getAll(C.registrations)).filter(item => eventIds.includes(Number(item.eventId)) && item.status === 'registered')
+      ? (await rowsByFieldBatches(C.registrations, 'eventId', eventIds.flatMap(id => [id, String(id)]), {
+        fields: { eventId: true, status: true }
+      })).filter(item => eventIds.includes(Number(item.eventId)) && item.status === 'registered')
       : [];
     const recentBoundary = Date.now() - 7 * 86400000;
     const recentRecommendationCount = matchRecords.filter(item => {
@@ -2895,8 +3434,13 @@ const matchmaker = {
       upcomingSalons: salons.filter(item => item.status === 'upcoming').length,
       salonRegistrations: registrations.length
     };
-    const resourceCount = [...resourceViews, ...profileResourceViews].filter(item => Number(item.status) === 1 && item.displayEnabled).length;
-    const pendingMemberRequests = (await getAll(C.memberRequests, { matchmakerId: row.id, status: 'pending' })).length;
+    const resourceCount = allMembers.filter(item => item.matchmakerId !== row.id
+      && isTrue((profilesByUserId.get(Number(item.userId)) || {}).displayEnabled)).length
+      + profileResources.filter(profile => {
+        const user = usersById.get(Number(profile.userId)) || {};
+        return user.status === undefined || Number(user.status) === 1;
+      }).length;
+    const pendingMemberRequests = (await getAll(C.memberRequests, { matchmakerId: row.id, status: 'pending' }, Infinity, { fields: { id: true } })).length;
     return {
       matchmaker: { ...stripInternal(row), memberCount: members.length },
       earnings: { today: 0, month: 0, pendingWithdraw: 0 },
@@ -3328,34 +3872,48 @@ const member = {
 
   async listOwn(matchmakerUserId, filters = {}) {
     const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
-    let rows = await getAll(C.members, { matchmakerId: mm.id });
-    if (filters.status === undefined || filters.status === '') {
-      rows = rows.filter(row => Number(row.status) === 1);
-    }
-    const matchRecords = await getAll(C.matchRecords, { matchmakerId: mm.id });
-    const views = await Promise.all(rows.map(row => memberView(row, { matchRecords })));
-    return resolveMemberMediaPage(
-      paginate(views.filter(row => matchesMemberFilters(row, filters)).sort((a, b) => b.id - a.id), filters.page, filters.pageSize)
-    );
+    const views = await filteredOwnMemberViews(mm, filters);
+    return resolveMemberMediaPage(paginate(views, filters.page, filters.pageSize));
+  },
+
+  async inviteOptions(matchmakerUserId, filters = {}) {
+    const mm = await getOne(C.matchmakers, { userId: Number(matchmakerUserId), status: 1 });
+    if (!mm) throw createHttpError('matchmaker not found', 404, 40400);
+    if (Number(mm.certificationStatus) !== 2) throw createHttpError('主理人认证通过后可使用', 403, 40301);
+    const rows = (await getAll(C.members, { matchmakerId: mm.id }, Infinity, { fields: {
+      id: true, userId: true, status: true, memberType: true, serviceLevel: true
+    } })).filter(row => Number(row.status) === 1);
+    const userIds = rows.map(row => row.userId);
+    const [usersById, profilesByUserId] = await Promise.all([
+      getFirstRowsByNumericField(C.users, 'id', userIds, [], { complete: true, fields: { id: true, nickname: true, phone: true, gender: true } }),
+      getFirstRowsByNumericField(C.profiles, 'userId', userIds, [], { complete: true, fields: {
+        userId: true, realName: true, city: true, occupation: true, age: true, education: true, maritalStatus: true, incomeRange: true
+      } })
+    ]);
+    const views = await Promise.all(rows.map(row => memberView(row, { usersById, profilesByUserId })));
+    const filtered = views.filter(row => matchesMemberFilters(row, { ...filters, status: 1 })).sort((a, b) => b.id - a.id);
+    return paginate(filtered.map(row => ({ id: row.id, userId: row.userId, realName: row.realName, nickname: row.nickname })), filters.page, Math.min(Number(filters.pageSize) || 100, 100));
   },
 
   async resources(matchmakerUserId, filters = {}) {
     const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
-    const rows = await getAll(C.members, { status: 1 });
-    const matchRecords = await getAll(C.matchRecords, { matchmakerId: mm.id });
+    const rows = await getAll(C.members, { status: 1 }, Infinity);
+    const matchRecords = await getAll(C.matchRecords, { matchmakerId: mm.id }, Infinity);
     const memberUserIds = new Set(rows.map(row => Number(row.userId)));
-    const profileRows = (await getAll(C.profiles))
+    const profiles = await getAll(C.profiles, null, Infinity);
+    const profileRows = profiles
       .filter(row => isTrue(row.displayEnabled))
-      .filter(row => !memberUserIds.has(Number(row.userId)))
-      .filter(row => Number(row.userId) !== Number(matchmakerUserId));
+        .filter(row => !memberUserIds.has(Number(row.userId)))
+        .filter(row => Number(row.userId) !== Number(matchmakerUserId));
+    const context = await memberReadContext([...rows, ...profileRows], matchRecords, profiles);
     const memberViews = await Promise.all(
       rows
         .filter(row => row.matchmakerId !== mm.id)
-        .map(row => publicMemberView(row, { matchRecords }, { keepUserId: true }))
+        .map(row => publicMemberView(row, context, { keepUserId: true }))
     );
     const profileViews = await Promise.all(
       profileRows.map(async row => sanitizePublicMemberRow(
-        await profileMemberView(row, { matchRecords }),
+        await profileMemberView(row, context),
         { keepUserId: true }
       ))
     );
@@ -3370,18 +3928,13 @@ const member = {
   },
 
   async showcase(userId, filters = {}) {
-    const rows = await withMemberViewerState(await publicShowcaseRows({ keepUserId: true }), userId);
-    const page = await resolveMemberMediaPage(paginate(
-      rows
-        .filter(row => Number(row.userId) !== Number(userId))
-        .filter(row => !row.viewerState.isHidden && matchesMemberFilters(row, filters))
-        .sort(sortMemberRowsDesc),
-      filters.page,
-      filters.pageSize
-    ));
+    const [page, favoriteQuota] = await Promise.all([
+      publicShowcasePage(userId, filters).then(resolveMemberMediaPage),
+      dailyFreeFavoriteStats(userId)
+    ]);
     return {
       ...page,
-      favoriteQuota: await dailyFreeFavoriteStats(userId)
+      favoriteQuota
     };
   },
 
@@ -3510,20 +4063,20 @@ const member = {
     if (!['favorite', 'hide'].includes(actionType)) {
       throw createHttpError('unsupported interaction action');
     }
-    const target = await publicShowcaseTarget(data);
-    if (Number(target.userId) === Number(userId)) {
-      throw createHttpError('cannot interact with yourself');
-    }
     const active = actionType === 'hide'
       ? true
       : (data.active === undefined ? true : isTrue(data.active));
+    // Withdrawal only changes the caller's own interaction; a target may have
+    // stopped sharing their profile since the original heart was sent.
+    const target = actionType === 'favorite' && !active
+      ? { userId: interactionTargetUserId(data) }
+      : await publicShowcaseTarget(data);
+    if (Number(target.userId) === Number(userId)) {
+      throw createHttpError('cannot interact with yourself');
+    }
 
     if (actionType === 'favorite') {
-      const existingFavorite = await getOne(C.memberInteractions, {
-        userId: Number(userId),
-        targetUserId: Number(target.userId),
-        actionType: 'favorite'
-      });
+      const existingFavorite = await latestMemberInteraction(userId, target.userId, 'favorite');
       const wasFavoriteActive = isActiveInteraction(existingFavorite);
       let favoriteQuota = await dailyFreeFavoriteStats(userId, target.userId);
       const extra = {};
@@ -3536,7 +4089,8 @@ const member = {
           freeFavoriteLimit: DAILY_FREE_FAVORITE_LIMIT
         });
       }
-      const interaction = await upsertMemberInteraction(userId, target.userId, 'favorite', active, extra);
+      const interaction = !active && !existingFavorite
+        ? null : await upsertMemberInteraction(userId, target.userId, 'favorite', active, extra);
       return favoriteActionResponse(userId, target, interaction, active, wasFavoriteActive, favoriteQuota);
     }
 
@@ -3762,41 +4316,210 @@ const member = {
   }
 };
 
+function salonRegistrationView(row, idempotent = false) {
+  return { id: row.id, eventId: Number(row.eventId), userId: Number(row.userId), status: row.status,
+    participantProfileVisible: row.participantProfileVisible === true, checkedInAt: row.checkedInAt || null,
+    createdAt: row.createdAt || '', updatedAt: row.updatedAt || '', idempotent };
+}
+
+function assertSalonOpen(event, participantCount = null, checkSeats = true) {
+  const availability = salonAvailability(event, participantCount);
+  const reason = availability.registrationBlockedReason;
+  if (!reason || (!checkSeats && reason === 'full')) return;
+  const labels = { expired: '活动已过报名时间', cancelled: '活动已取消', ended: '活动已结束',
+    full: '活动名额已满', invalid_date: '活动时间无效，暂不能报名', not_open: '活动尚未开放报名' };
+  const error = createHttpError(labels[reason] || '活动暂不能报名', 409, 40940);
+  error.details = [{ field: 'event', code: reason }];
+  throw error;
+}
+
+async function salonTransactionDocument(transaction, collectionName, documentId) {
+  try {
+    const result = await transaction.collection(collectionName).doc(documentId).get();
+    return result.data ? { ...result.data, _id: documentId } : null;
+  } catch (err) {
+    if (/DOCUMENT_NOT_EXIST|document(?:\s+does)?\s+not\s+(?:exist|found)|document[^\n]*does not exist/i.test(String(err?.errCode || err?.code || '') + ' ' + String(err?.errMsg || err?.message || ''))) return null;
+    throw err;
+  }
+}
+
+function salonCountSignature(event) {
+  return JSON.stringify([event.registrationCountVersion || 0, event.registrationRevision || 0,
+    event.status, event.eventDate, event.maxParticipants, event.currentParticipants, event.updatedAt || '']);
+}
+
+async function salonMutationRows(event, userId) {
+  const eventIds = _.in([Number(event.id), String(event.id)]);
+  if (event.registrationCountVersion !== 1) return getAll(C.registrations, { eventId: eventIds }, Infinity);
+  return getAll(C.registrations, _.and([{ eventId: eventIds }, _.or([
+    { userId: _.in([Number(userId), String(userId)]) }, { userId: db.RegExp({ regexp: '^' }) }
+  ])]), Infinity);
+}
+
+async function getSalonRegistrationContext(eventId, userId) {
+  const event = await getById(C.salonEvents, eventId);
+  if (!event) throw createHttpError('活动不存在', 404, 40400);
+  const registrations = await getAll(C.registrations, { eventId: _.in([Number(event.id), String(event.id)]) }, Infinity);
+  const active = activeAttendance(registrations);
+  const isOrganizer = Number(event.organizerId) === Number(userId);
+  const isAttendee = active.some(row => Number(row.userId) === Number(userId));
+  if (!['upcoming', 'ended'].includes(event.status) && !isOrganizer && !isAttendee) {
+    throw createHttpError('活动不存在或尚未公开', 404, 40400);
+  }
+  return { event, registrations, active, canViewProfiles: isOrganizer || isAttendee };
+}
+
+async function getSalonCreator(userId) {
+  const [user, matchmakerRow] = await Promise.all([getUserOrThrow(userId), getOne(C.matchmakers, { userId: Number(userId), status: 1 })]);
+  if (Number(user.status) !== 1 || !matchmakerRow || Number(matchmakerRow.certificationStatus) !== 2) {
+    throw createHttpError('主理人或合伙人审核通过后可发起活动', 403, 40301);
+  }
+  // A claimed parent/level/currentRole never grants approval. Both certified
+  // principals and their certified partners use the same existing approval gate.
+  const parentId = Number(matchmakerRow.parentId || 0);
+  if (matchmakerRow.parentId && (!Number.isSafeInteger(parentId) || parentId <= 0 || parentId === Number(matchmakerRow.id))) {
+    throw createHttpError('合伙人所属主理人关系无效，请联系平台核验', 403, 40301);
+  }
+  const parent = parentId > 0 ? await getById(C.matchmakers, parentId) : null;
+  if (parentId > 0 && !isCertifiedActiveMatchmaker(parent)) throw createHttpError('所属主理人未通过审核或已停用，暂不能发起活动', 403, 40301);
+  return { matchmaker: matchmakerRow,
+    role: isCertifiedActiveMatchmaker(parent) ? 'partner' : 'matchmaker' };
+}
+
+async function assertSalonOwner(event, userId) {
+  if (Number(event.organizerId) !== Number(userId)) throw createHttpError('仅活动发起人可管理此活动', 403, 40300);
+  return getSalonCreator(userId);
+}
+
+async function mutateSalonRegistration(eventId, userId, options = {}) {
+  // Only doc() is supported inside CloudBase transactions. Legacy discovery is
+  // outside the transaction, with a revision check for its one-time count repair.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const event = await getById(C.salonEvents, eventId);
+    if (!event) throw createHttpError('活动不存在', 404, 40400);
+    const rows = await salonMutationRows(event, userId);
+    const own = rows.filter(row => Number(row.userId) === Number(userId));
+    if (own.length > 40) throw createHttpError('报名记录重复过多，请联系平台核验', 409, 40941);
+    const canonicalId = `salon_${Number(event.id)}_user_${Number(userId)}`;
+    const documentIds = Array.from(new Set([canonicalId, ...own.map(row => row._id).filter(Boolean)]));
+    try {
+      return await db.runTransaction(async transaction => {
+        const [currentEvent, currentRows, currentUser, currentProfile] = await Promise.all([
+          salonTransactionDocument(transaction, C.salonEvents, event._id),
+          Promise.all(documentIds.map(id => salonTransactionDocument(transaction, C.registrations, id))),
+          options.user ? salonTransactionDocument(transaction, C.users, options.user._id) : Promise.resolve(null),
+          options.profile?._id ? salonTransactionDocument(transaction, C.profiles, options.profile._id) : Promise.resolve(null)
+        ]);
+        if (!currentEvent) throw createHttpError('活动不存在', 404, 40400);
+        if (event.registrationCountVersion !== 1 && salonCountSignature(currentEvent) !== salonCountSignature(event)) {
+          const error = new Error('salon registration context changed');
+          error.code = 'SALON_CONTEXT_CHANGED';
+          throw error;
+        }
+        const currentOwn = currentRows.filter(row => row && Number(row.eventId) === Number(event.id) && Number(row.userId) === Number(userId));
+        const active = activeAttendance(currentOwn)[0];
+        const count = currentEvent.registrationCountVersion === 1
+          ? Math.max(Number(currentEvent.currentParticipants) || 0, 0) : activeAttendance(rows).length;
+        const eventRef = transaction.collection(C.salonEvents).doc(event._id);
+        const timestamp = nowIso();
+        const revision = Number(currentEvent.registrationRevision || 0) + 1;
+        if (options.cancel) {
+          const registered = currentOwn.filter(row => row.status === 'registered');
+          if (!registered.length) {
+            if (currentOwn.length) return salonRegistrationView(currentOwn[0], true);
+            throw createHttpError('报名记录不存在', 404, 40400);
+          }
+          const update = { status: 'cancelled', participantProfileVisible: false, registrationRevision: revision, updatedAt: timestamp };
+          await Promise.all(registered.map(row => transaction.collection(C.registrations).doc(row._id).update({ data: update })));
+          await eventRef.update({ data: { currentParticipants: Math.max(0, count - (active ? 1 : 0)),
+            registrationCountVersion: 1, registrationRevision: revision, updatedAt: timestamp } });
+          return salonRegistrationView({ ...registered[0], ...update }, !active);
+        }
+        assertSalonOpen(currentEvent, null, false);
+        if (!currentUser || Number(currentUser.status) !== 1 || currentUser.mergedIntoUserId) throw createHttpError('登录状态已失效，请重新登录', 401, 40100);
+        if (!minimumRegistrationStatus(currentUser, currentProfile || {}).complete
+          || registrationPhotos(currentUser, currentProfile || {}).some(photo => !options.validatedPhotos.includes(photo))) {
+          throw createHttpError('报名资料已变化，请重新确认', 422, 42230);
+        }
+        if (active) {
+          let result = active;
+          if (options.participantProfileVisible === true && active.participantProfileVisible !== true) {
+            const update = { participantProfileVisible: true, registrationRevision: revision, updatedAt: timestamp };
+            await transaction.collection(C.registrations).doc(active._id).update({ data: update });
+            result = { ...active, ...update };
+          }
+          if (currentEvent.registrationCountVersion !== 1) await eventRef.update({ data: {
+            currentParticipants: count, registrationCountVersion: 1, registrationRevision: revision, updatedAt: timestamp
+          } });
+          return salonRegistrationView(result, true);
+        }
+        assertSalonOpen(currentEvent, count);
+        const inactive = currentOwn.find(row => row._id === canonicalId) || currentOwn[0];
+        let id = inactive?.id;
+        if (!inactive) {
+          const counter = await salonTransactionDocument(transaction, C.counters, 'registration');
+          id = (Number(counter?.value) || 0) + 1;
+          await transaction.collection(C.counters).doc('registration').set({ data: { key: 'registration', value: id, updatedAt: timestamp } });
+        }
+        const record = { id, eventId: Number(currentEvent.id), userId: Number(userId), status: 'registered',
+          participantProfileVisible: options.participantProfileVisible === true, registrationRevision: revision,
+          checkedInAt: null, createdAt: inactive?.createdAt || timestamp, updatedAt: timestamp };
+        if (inactive) await transaction.collection(C.registrations).doc(inactive._id).update({ data: record });
+        else await transaction.collection(C.registrations).doc(canonicalId).set({ data: record });
+        assertSalonOpen(currentEvent, count);
+        await eventRef.update({ data: { currentParticipants: count + 1, registrationCountVersion: 1,
+          registrationRevision: revision, updatedAt: timestamp } });
+        return salonRegistrationView(record);
+      });
+    } catch (err) {
+      if (err.code !== 'SALON_CONTEXT_CHANGED') throw err;
+    }
+  }
+  throw createHttpError('报名人数正在更新，请稍后重试', 409, 40942);
+}
+
 const salon = {
   async createEvent(organizerUserId, data = {}) {
-    await getCertifiedMatchmakerByUserIdOrThrow(organizerUserId);
+    const creator = await getSalonCreator(organizerUserId);
     if (!data.title || !data.eventDate) throw createHttpError('title and eventDate are required');
+    const eventDate = new Date(data.eventDate);
+    if (!Number.isFinite(eventDate.getTime()) || eventDate.getTime() <= Date.now()) throw createHttpError('请选择未来的活动时间', 422, 42240);
+    const maxParticipants = Number(data.maxParticipants || 0);
+    const price = Number(data.price || 0);
+    if (!Number.isSafeInteger(maxParticipants) || maxParticipants < 0 || !Number.isFinite(price) || price < 0) throw createHttpError('活动名额和价格无效', 422, 42240);
     return stripInternal(await addRow(C.salonEvents, {
       id: await nextId('salon'),
       title: data.title,
       description: data.description || '',
       coverImage: data.coverImage || '',
       location: data.location || '',
-      eventDate: new Date(data.eventDate).toISOString(),
-      maxParticipants: Number(data.maxParticipants || 0),
+      eventDate: eventDate.toISOString(),
+      maxParticipants,
       currentParticipants: 0,
-      price: Number(data.price || 0),
+      registrationCountVersion: 1,
+      registrationRevision: 0,
+      price,
       organizerId: Number(organizerUserId),
+      organizerMatchmakerId: Number(creator.matchmaker.id),
+      organizerRole: creator.role,
       status: 'pending',
       reviewRemark: ''
     }));
   },
 
-  async listEvents(filters = {}) {
-    let rows = await getAll(C.salonEvents);
-    if (filters.status) rows = rows.filter(row => row.status === filters.status);
-    else rows = rows.filter(row => row.status === 'upcoming');
+  async listEvents(filters = {}, currentUserId = null) {
+    let rows = await getAll(C.salonEvents, { status: filters.status || 'upcoming' }, Infinity);
     rows = rows.sort((a, b) => new Date(a.eventDate) - new Date(b.eventDate));
-    const views = await Promise.all(rows.map(row => eventView(row)));
-    return paginate(views, filters.page, filters.pageSize);
+    const page = paginate(rows, filters.page, filters.pageSize);
+    const context = await eventViewContext(page.list, currentUserId);
+    return { ...page, list: await Promise.all(page.list.map(row => eventView(row, currentUserId, context))) };
   },
 
   async getEventDetail(eventId, currentUserId = null) {
     const event = await getById(C.salonEvents, eventId);
-    if (event && event.status !== 'upcoming' && Number(event.organizerId) !== Number(currentUserId)) {
-      return null;
-    }
-    return event ? eventView(event, currentUserId) : null;
+    if (!event) return null;
+    await getSalonRegistrationContext(event.id, currentUserId);
+    return eventView(event, currentUserId);
   },
 
   async shareCard(eventId, userId) {
@@ -3809,19 +4532,17 @@ const salon = {
       location: event.location || '',
       status: event.status || ''
     };
-    if (event.status !== 'upcoming') {
-      return { canShare: false, reason: 'event_unavailable', event: eventSummary };
+    const initialAvailability = salonAvailability(event, 0);
+    if (!initialAvailability.canRegister) return { canShare: false, reason: initialAvailability.registrationBlockedReason, event: eventSummary };
+    const access = await getSalonRegistrationContext(event.id, userId);
+    const availability = salonAvailability(event, access.active.length);
+    if (!availability.canRegister) {
+      return { canShare: false, reason: availability.registrationBlockedReason, event: eventSummary };
     }
-    const registration = await getOne(C.registrations, { eventId: event.id, userId: Number(userId), status: 'registered' });
-    if (!registration) {
+    if (!access.canViewProfiles) {
       return { canShare: false, reason: 'not_registered', event: eventSummary };
     }
-    const matchmakerRow = await getOne(C.matchmakers, { userId: Number(event.organizerId), status: 1 });
-    if (!matchmakerRow || Number(matchmakerRow.certificationStatus) !== 2) {
-      return { canShare: false, reason: 'matchmaker_unavailable', event: eventSummary };
-    }
-    const matchmakerWithIdentity = await ensureMatchmakerIdentity(matchmakerRow);
-    const sharePath = `/pages/user/matchmaker-invite?code=${encodeURIComponent(matchmakerWithIdentity.inviteCode)}&source=memberSalonShare&eventId=${encodeURIComponent(String(event.id))}&autoRegister=1`;
+    const sharePath = `/pages/user/salon-detail?id=${encodeURIComponent(String(event.id))}&source=memberSalonShare`;
     return {
       canShare: true,
       title: `邀请你报名沙龙《${eventSummary.title}》`,
@@ -3830,66 +4551,136 @@ const salon = {
     };
   },
 
-  async register(eventId, userId) {
-    let event = await getById(C.salonEvents, eventId);
-    if (!event) throw createHttpError('event not found', 404, 40400);
-    if (event.status !== 'upcoming') throw createHttpError('event is not registerable');
-    const existing = await getOne(C.registrations, { eventId: event.id, userId: Number(userId) });
-    if (existing && existing.status === 'registered') throw createHttpError('already registered');
-    if (event.maxParticipants > 0 && event.currentParticipants >= event.maxParticipants) {
-      throw createHttpError('event is full');
+  async register(eventId, userId, options = {}) {
+    const event = await getById(C.salonEvents, eventId);
+    if (!event) throw createHttpError('活动不存在', 404, 40400);
+    assertSalonOpen(event, null, false);
+    const [user, profile] = await Promise.all([getUserOrThrow(userId), getOne(C.profiles, { userId: Number(userId) })]);
+    const requirements = minimumRegistrationStatus(user, profile || {});
+    if (!requirements.complete) {
+      const error = createHttpError('请先完善手机号、称呼和本人照片', 422, 42230);
+      error.details = requirements.missingFields.map(field => ({ field, code: 'required' }));
+      throw error;
     }
-    event = await updateRow(C.salonEvents, event, { currentParticipants: Number(event.currentParticipants || 0) + 1 });
-    if (existing) {
-      return stripInternal(await updateRow(C.registrations, existing, { status: 'registered' }));
-    }
-    return stripInternal(await addRow(C.registrations, {
-      id: await nextId('registration'),
-      eventId: event.id,
-      userId: Number(userId),
-      status: 'registered',
-      checkedInAt: null
-    }));
+    const validatedPhotos = registrationPhotos(user, profile || {});
+    await validateRegistrationPhotos(validatedPhotos);
+    await Promise.all([ensureCollection(C.registrations), ensureCollection(C.counters)]);
+    return mutateSalonRegistration(event.id, userId, { participantProfileVisible: options.participantProfileVisible === true,
+      user, profile, validatedPhotos });
   },
 
   async cancelRegistration(eventId, userId) {
-    const event = await getById(C.salonEvents, eventId);
-    const registration = await getOne(C.registrations, { eventId: Number(eventId), userId: Number(userId), status: 'registered' });
-    if (!event || !registration) throw createHttpError('registration not found', 404, 40400);
-    await updateRow(C.salonEvents, event, { currentParticipants: Math.max(0, Number(event.currentParticipants || 0) - 1) });
-    return stripInternal(await updateRow(C.registrations, registration, { status: 'cancelled' }));
+    return mutateSalonRegistration(eventId, userId, { cancel: true });
+  },
+
+  async participants(eventId, viewerUserId, filters = {}) {
+    const access = await getSalonRegistrationContext(eventId, viewerUserId);
+    const hidden = await salonHiddenUserIds(viewerUserId, access.active.map(row => row.userId));
+    const targetIds = access.active.map(row => Number(row.userId)).filter(id => !hidden.has(id));
+    const [users, profiles] = await Promise.all([
+      getFirstRowsByNumericField(C.users, 'id', targetIds, [], { complete: true, fields: { id: true, nickname: true, avatarUrl: true, status: true, gender: true } }),
+      getFirstRowsByNumericField(C.profiles, 'userId', targetIds, [], { complete: true, fields: { userId: true, realName: true, photos: true, displayEnabled: true } })
+    ]);
+    const list = access.active.filter(row => !hidden.has(Number(row.userId))).map(row => {
+      const targetId = Number(row.userId);
+      const user = users.get(targetId);
+      if (!user || Number(user.status) !== 1) return null;
+      const profile = profiles.get(targetId) || {};
+      return { id: `participant_${targetId}`, userId: targetId, ...salonAttendeeIdentity(user, profile),
+        isSelf: targetId === Number(viewerUserId),
+        canViewProfile: access.canViewProfiles && salonProfileConsent(row, profile) };
+    }).filter(Boolean);
+    const page = paginate(list, filters.page, Math.min(Math.max(Number(filters.pageSize) || 20, 1), 50));
+    const resolved = await resolveMemberMediaPage(page);
+    return { ...resolved, canViewProfiles: access.canViewProfiles,
+      visibilityNote: '名单向已登录用户展示；资料仅本场报名者及组织者可查看，手机号和内部档案不公开。' };
+  },
+
+  async participantProfile(eventId, viewerUserId, targetUserId) {
+    const access = await getSalonRegistrationContext(eventId, viewerUserId);
+    if (!access.canViewProfiles) throw createHttpError('报名本场活动后可查看参与者公开资料', 403, 40340);
+    const targetId = Number(targetUserId);
+    const registration = access.active.find(row => Number(row.userId) === targetId);
+    if (!registration) throw createHttpError('该参与者已取消报名或不存在', 404, 40400);
+    const hidden = await salonHiddenUserIds(viewerUserId, [targetId]);
+    if (hidden.has(targetId)) throw createHttpError('该参与者资料不可查看', 404, 40400);
+    const [user, sourceProfile] = await Promise.all([
+      getOne(C.users, { id: targetId }, { fields: { id: true, nickname: true, gender: true, isVerified: true, status: true } }),
+      getOne(C.profiles, { userId: targetId }, { fields: SHOWCASE_PROFILE_FIELDS })
+    ]);
+    if (!user || Number(user.status) !== 1) throw createHttpError('该参与者资料不可查看', 404, 40400);
+    const profile = sourceProfile || { id: targetId, userId: targetId };
+    if (!salonProfileConsent(registration, profile)) throw createHttpError('该参与者未同意展示活动资料', 403, 40341);
+    const publicProfile = { ...profile, photos: salonPublicPhotos(profile) };
+    const view = sanitizePublicMemberRow(await profileMemberView(publicProfile, { usersById: new Map([[targetId, user]]) }), { keepUserId: true });
+    const resolved = await resolveMemberMediaPage({ total: 1, page: 1, pageSize: 1, list: [view] });
+    // URL resolution is asynchronous. Recheck the activity-scoped grant after it,
+    // so a cancellation or hide during enrichment cannot release a stale DTO.
+    const currentAccess = await getSalonRegistrationContext(eventId, viewerUserId);
+    const currentRegistration = currentAccess.active.find(row => Number(row.userId) === targetId);
+    if (!currentAccess.canViewProfiles) throw createHttpError('报名本场活动后可查看参与者公开资料', 403, 40340);
+    if (!currentRegistration) throw createHttpError('该参与者已取消报名或不存在', 404, 40400);
+    const [currentHidden, currentTarget, currentViewer, currentVisibility] = await Promise.all([
+      salonHiddenUserIds(viewerUserId, [targetId]),
+      getOne(C.users, { id: targetId }, { fields: { status: true } }),
+      getOne(C.users, { id: Number(viewerUserId) }, { fields: { status: true } }),
+      getOne(C.profiles, { userId: targetId }, { fields: { displayEnabled: true } })
+    ]);
+    if (currentHidden.has(targetId) || Number(currentTarget?.status) !== 1 || Number(currentViewer?.status) !== 1) throw createHttpError('该参与者资料不可查看', 404, 40400);
+    if (!salonProfileConsent(currentRegistration, currentVisibility || {})) throw createHttpError('该参与者未同意展示活动资料', 403, 40341);
+    return { ...resolved.list[0], eventId: Number(access.event.id), profileDisclosure: currentRegistration.participantProfileVisible === true ? 'event' : 'public' };
   },
 
   async myRegistrations(userId, filters = {}) {
-    const rows = (await getAll(C.registrations, { userId: Number(userId) }))
+    const rows = (await getAll(C.registrations, { userId: Number(userId) }, Infinity))
       .filter(reg => reg.status !== 'cancelled')
       .sort((a, b) => b.id - a.id);
-    const views = await Promise.all(rows.map(async reg => ({
+    const page = paginate(rows, filters.page, filters.pageSize);
+    const eventIds = page.list.map(reg => Number(reg.eventId));
+    const eventsById = await getFirstRowsByNumericField(C.salonEvents, 'id', eventIds, [], { complete: true });
+    const events = Array.from(eventsById.values()).filter(Boolean);
+    const context = await eventViewContext(events);
+    const views = await Promise.all(page.list.map(async reg => ({
       ...stripInternal(reg),
-      event: await eventView(await getById(C.salonEvents, reg.eventId))
+      event: await eventView(eventsById.get(Number(reg.eventId)) || await getById(C.salonEvents, reg.eventId), null, context)
     })));
-    return paginate(views, filters.page, filters.pageSize);
+    return { ...page, list: views };
   },
 
   async myEvents(organizerUserId, filters = {}) {
-    const rows = (await getAll(C.salonEvents, { organizerId: Number(organizerUserId) }))
+    const rows = (await getAll(C.salonEvents, { organizerId: Number(organizerUserId) }, Infinity))
       .sort((a, b) => b.id - a.id);
-    const views = await Promise.all(rows.map(row => eventView(row)));
-    return paginate(views, filters.page, filters.pageSize);
+    const page = paginate(rows, filters.page, filters.pageSize);
+    const context = await eventViewContext(page.list);
+    return { ...page, list: await Promise.all(page.list.map(row => eventView(row, null, context))) };
   },
 
   async updateEvent(eventId, organizerUserId, data = {}) {
     const event = await getById(C.salonEvents, eventId);
     if (!event) throw createHttpError('event not found', 404, 40400);
-    if (event.organizerId !== Number(organizerUserId)) throw createHttpError('forbidden', 403, 40300);
-    if (['ended', 'cancelled'].includes(event.status)) throw createHttpError('event cannot be updated');
+    await assertSalonOwner(event, organizerUserId);
+    if (['ended', 'cancelled'].includes(event.status) || salonAvailability(event).isExpired) throw createHttpError('已结束或已取消的活动不能修改');
     const patch = {};
     ['title', 'description', 'coverImage', 'location'].forEach(key => {
       if (data[key] !== undefined) patch[key] = data[key];
     });
-    if (data.eventDate !== undefined) patch.eventDate = new Date(data.eventDate).toISOString();
-    if (data.maxParticipants !== undefined) patch.maxParticipants = Number(data.maxParticipants);
-    if (data.price !== undefined) patch.price = Number(data.price);
+    if (data.eventDate !== undefined) {
+      const eventDate = new Date(data.eventDate);
+      if (!Number.isFinite(eventDate.getTime()) || eventDate.getTime() <= Date.now()) throw createHttpError('请选择未来的活动时间', 422, 42240);
+      patch.eventDate = eventDate.toISOString();
+    }
+    if (data.maxParticipants !== undefined) {
+      const maxParticipants = Number(data.maxParticipants);
+      if (!Number.isSafeInteger(maxParticipants) || maxParticipants < 0) throw createHttpError('活动名额无效', 422, 42240);
+      const count = activeAttendance(await getAll(C.registrations, { eventId: _.in([Number(event.id), String(event.id)]) }, Infinity)).length;
+      if (maxParticipants > 0 && maxParticipants < count) throw createHttpError('活动名额不能少于当前已报名人数', 409, 40940);
+      patch.maxParticipants = maxParticipants;
+    }
+    if (data.price !== undefined) {
+      const price = Number(data.price);
+      if (!Number.isFinite(price) || price < 0) throw createHttpError('活动价格无效', 422, 42240);
+      patch.price = price;
+    }
     if (event.status === 'upcoming' && Object.keys(patch).length) {
       patch.status = 'pending';
       patch.reviewRemark = '';
@@ -3900,16 +4691,16 @@ const salon = {
   async cancelEvent(eventId, organizerUserId) {
     const event = await getById(C.salonEvents, eventId);
     if (!event) throw createHttpError('event not found', 404, 40400);
-    if (event.organizerId !== Number(organizerUserId)) throw createHttpError('forbidden', 403, 40300);
+    await assertSalonOwner(event, organizerUserId);
     return stripInternal(await updateRow(C.salonEvents, event, { status: 'cancelled' }));
   },
 
   async inviteMembers(eventId, organizerUserId, userIds = [], options = {}) {
     const event = await getById(C.salonEvents, eventId);
     if (!event) throw createHttpError('event not found', 404, 40400);
-    if (event.organizerId !== Number(organizerUserId)) throw createHttpError('forbidden', 403, 40300);
-    if (event.status !== 'upcoming') throw createHttpError('event is not inviteable');
-    const mm = await getMatchmakerByUserIdOrThrow(organizerUserId);
+    const creator = await assertSalonOwner(event, organizerUserId);
+    assertSalonOpen(event);
+    const mm = creator.matchmaker;
     const targetIds = userIds.map(Number);
     const validMembers = (await getAll(C.members, { matchmakerId: mm.id, status: 1 }))
       .filter(row => options.all === true || targetIds.includes(Number(row.userId)));
@@ -4129,6 +4920,8 @@ exports.main = async (event = {}) => {
       const profile = await getOne(C.profiles, { userId: Number(session.userId) });
       return ok({ ...publicUser(user), profile: profile ? stripInternal(profile) : null });
     }
+    if (method === 'GET' && path === '/user/minimum-registration') return ok(await minimumRegistrationView(session.userId));
+    if (method === 'PUT' && path === '/user/minimum-registration') return ok(await saveMinimumRegistration(session.userId, data));
     if (method === 'PUT' && path === '/user/profile') {
       const user = await getUserOrThrow(session.userId);
       const userPatch = {};
@@ -4145,7 +4938,10 @@ exports.main = async (event = {}) => {
       return ok({ ...publicUser(updatedUser), profile: stripInternal(profile) });
     }
 
-    if (method === 'POST' && path === '/matchmaker/apply') return ok(await matchmaker.apply(session.userId, data));
+    if (method === 'POST' && path === '/matchmaker/apply') return ok(await matchmaker.apply(session.userId, {
+      ...data, certificationStatus: 0, level: 1, parentId: null, status: 1
+    }));
+    if (method === 'GET' && path === '/matchmaker/status') return ok(await matchmaker.status(session.userId));
     if (method === 'GET' && path === '/matchmaker/dashboard') return ok(await matchmaker.dashboard(session.userId));
     if (method === 'GET' && path === '/matchmaker/invite-card') return ok(await matchmaker.inviteCard(session.userId));
     if (method === 'POST' && path === '/matchmaker/invite-code/reset') return ok(await matchmaker.resetInviteCode(session.userId));
@@ -4167,6 +4963,7 @@ exports.main = async (event = {}) => {
     const messageReadMatch = path.match(/^\/messages\/(\d+)\/read$/);
     if (messageReadMatch && method === 'POST') return ok(await messages.markRead(session.userId, messageReadMatch[1]));
 
+    if (method === 'GET' && path === '/member/invite-options') return ok(await member.inviteOptions(session.userId, data));
     if (method === 'GET' && path === '/member/list') return ok(await member.listOwn(session.userId, data));
     if (method === 'GET' && path === '/member/resources') return ok(await member.resources(session.userId, data));
     if (method === 'GET' && path === '/member/showcase') return ok(await member.showcase(session.userId, data));
@@ -4198,12 +4995,16 @@ exports.main = async (event = {}) => {
     if (memberMatch && method === 'PUT') return ok(await member.update(session.userId, memberMatch[1], data));
     if (memberMatch && method === 'DELETE') return ok(await member.remove(session.userId, memberMatch[1]));
 
-    if (method === 'GET' && path === '/salon/events') return ok(await salon.listEvents(data));
+    if (method === 'GET' && path === '/salon/events') return ok(await salon.listEvents(data, session.userId));
     if (method === 'POST' && path === '/salon/events') return ok(await salon.createEvent(session.userId, data));
     if (method === 'GET' && path === '/salon/my-events') return ok(await salon.myEvents(session.userId, data));
     if (method === 'GET' && path === '/salon/my-registrations') return ok(await salon.myRegistrations(session.userId, data));
     const shareCardMatch = path.match(/^\/salon\/events\/(\d+)\/share-card$/);
     if (shareCardMatch && method === 'GET') return ok(await salon.shareCard(shareCardMatch[1], session.userId));
+    const participantsMatch = path.match(/^\/salon\/events\/(\d+)\/participants$/);
+    if (participantsMatch && method === 'GET') return ok(await salon.participants(participantsMatch[1], session.userId, data));
+    const participantProfileMatch = path.match(/^\/salon\/events\/(\d+)\/participants\/(\d+)$/);
+    if (participantProfileMatch && method === 'GET') return ok(await salon.participantProfile(participantProfileMatch[1], session.userId, participantProfileMatch[2]));
     const salonMatch = path.match(/^\/salon\/events\/(\d+)$/);
     if (salonMatch && method === 'GET') {
       const detail = await salon.getEventDetail(salonMatch[1], session.userId);
@@ -4212,7 +5013,7 @@ exports.main = async (event = {}) => {
     }
     if (salonMatch && method === 'PUT') return ok(await salon.updateEvent(salonMatch[1], session.userId, data));
     const registerMatch = path.match(/^\/salon\/events\/(\d+)\/register$/);
-    if (registerMatch && method === 'POST') return ok(await salon.register(registerMatch[1], session.userId), 'registered');
+    if (registerMatch && method === 'POST') return ok(await salon.register(registerMatch[1], session.userId, data), 'registered');
     if (registerMatch && method === 'DELETE') return ok(await salon.cancelRegistration(registerMatch[1], session.userId), 'cancelled');
     const cancelMatch = path.match(/^\/salon\/events\/(\d+)\/cancel$/);
     if (cancelMatch && method === 'PUT') return ok(await salon.cancelEvent(cancelMatch[1], session.userId), 'event cancelled');

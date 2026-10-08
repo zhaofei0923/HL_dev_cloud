@@ -1,0 +1,35 @@
+{
+  "fetchedAt": "2026-10-07T10:45:44.077Z",
+  "icons": [
+    {
+      "key": "members",
+      "name": "users-round",
+      "sha256": "8b41ee3ada1609e25a410d64056aa333952cf27d770f0c379a100065270de7f7",
+      "url": "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/users-round.svg"
+    },
+    {
+      "key": "salon",
+      "name": "calendar-days",
+      "sha256": "9330eb8d7c4989e97b6361314abbf02953243c602874725c9e58ceca00da3bd7",
+      "url": "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/calendar-days.svg"
+    },
+    {
+      "key": "messages",
+      "name": "message-circle",
+      "sha256": "146f39740fe50844394d56ae1f8821937655bcfff3842bf6fe8ffc0bcd324076",
+      "url": "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/message-circle.svg"
+    },
+    {
+      "key": "mine",
+      "name": "user-round",
+      "sha256": "84870f26f3faf8da45da84174517519e81b9e8f00319c78954fcbb74f50038a1",
+      "url": "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/user-round.svg"
+    },
+    {
+      "key": "dashboard",
+      "name": "layout-dashboard",
+      "sha256": "281ab865b4c04dab32a04023473e448f58be6a7ad90769450ac3349d79dc4aed",
+      "url": "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/layout-dashboard.svg"
+    }
+  ]
+}

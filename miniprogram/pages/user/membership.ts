@@ -181,7 +181,7 @@ Page({
       content: '请先在“我的”页面添加主理人，再联系主理人完成会员服务。',
       confirmText: '前往绑定',
       success: res => {
-        if (res.confirm) wx.redirectTo({ url: '/pages/user/profile' })
+        if (res.confirm) wx.switchTab({ url: '/pages/user/profile' })
       }
     })
   },

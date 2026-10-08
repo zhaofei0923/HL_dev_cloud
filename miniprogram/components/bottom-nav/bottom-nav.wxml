@@ -11,8 +11,12 @@
       aria-label="{{item.label}}"
       aria-current="{{active === item.key ? 'page' : 'false'}}"
     >
-      <view class="nav-icon nav-icon-{{item.icon}}">
-        <view class="nav-icon-mark"></view>
+      <view class="nav-icon" aria-hidden="true">
+        <image
+          class="nav-icon-image"
+          src="/assets/navigation/{{item.icon}}-{{active === item.key ? 'active' : 'normal'}}.png"
+          mode="aspectFit"
+        ></image>
       </view>
       <text class="bottom-nav-label">{{item.label}}</text>
     </button>

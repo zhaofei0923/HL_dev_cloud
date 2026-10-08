@@ -1,18 +1,48 @@
 <view class="page login-page safe-bottom">
   <view class="entry-brand">
     <text class="entry-kicker">HL 婚恋服务</text>
-    <text class="entry-title">认真认识一个人</text>
-    <text class="entry-subtitle">浏览真实会员与近期活动，准备好后再逐步完善自己的资料。</text>
+    <text class="entry-title">{{registrationMode ? '准备参加这次活动' : '认真认识一个人'}}</text>
+    <text class="entry-subtitle">{{registrationMode ? '先补齐手机号、称呼和本人照片，保存后回到活动页确认报名。' : '浏览真实会员与近期活动，准备好后再逐步完善自己的资料。'}}</text>
   </view>
 
-  <view class="login-panel">
+  <view wx:if="{{registrationMode && loggedIn}}" class="login-panel registration-panel">
+    <text class="section-title">活动报名资料</text>
+    <text wx:if="{{checking}}" class="section-note">正在确认已有资料，请稍候。</text>
+    <view wx:else>
+      <view class="registration-photo-row">
+        <image wx:if="{{photoDisplayUrl}}" class="registration-photo" src="{{photoDisplayUrl}}" mode="aspectFill"></image>
+        <view wx:else class="registration-photo registration-photo-empty">本人照片</view>
+        <view class="registration-photo-copy">
+          <text class="registration-label">一张本人照片</text>
+          <text class="registration-note">用于活动中认识彼此。</text>
+          <button class="registration-photo-button" bindtap="chooseRegistrationPhoto" loading="{{photoUploading}}" disabled="{{saving || photoUploading || !eventId}}">{{photoDisplayUrl ? '更换照片' : '上传照片'}}</button>
+        </view>
+      </view>
+      <view class="registration-field">
+        <text class="registration-label">称呼</text>
+        <input class="registration-input" value="{{nickname}}" placeholder="活动中怎么称呼你" maxlength="40" disabled="{{saving}}" bindinput="onRegistrationName" />
+      </view>
+      <view class="registration-field">
+        <text class="registration-label">手机号</text>
+        <input class="registration-input" value="{{phone}}" type="number" placeholder="用于活动联系" maxlength="11" disabled="{{saving}}" bindinput="onRegistrationPhone" />
+        <text class="registration-note">{{phoneStatus === 'verified' ? '该号码已通过微信授权获取。' : '手动填写的号码尚未验证，请核对无误。'}}</text>
+      </view>
+      <button class="entry-action" loading="{{saving}}" disabled="{{saving || photoUploading || !eventId}}" bindtap="saveRegistration">保存并返回活动</button>
+      <text class="entry-privacy">保存资料后，还需要在活动页确认报名。</text>
+    </view>
+    <text wx:if="{{errorText}}" class="registration-error">{{errorText}}</text>
+    <button wx:if="{{errorText && !checking}}" class="registration-retry" disabled="{{saving || photoUploading}}" bindtap="retryRegistration">重新读取已有资料</button>
+  </view>
+
+  <view wx:else class="login-panel">
     <text class="section-title">开始使用</text>
     <text class="section-note">微信快捷登录，不需要另外注册账号。</text>
-    <button class="entry-action" loading="{{loading}}" disabled="{{loading}}" bindtap="login">登录并查看推荐</button>
+    <button class="entry-action" loading="{{loading}}" disabled="{{loading || (registrationMode && !eventId)}}" bindtap="login">{{registrationMode ? '微信登录并补齐资料' : '登录并查看推荐'}}</button>
+    <text wx:if="{{errorText}}" class="registration-error">{{errorText}}</text>
     <text class="entry-privacy">联系方式、验资材料和主理人服务记录不会对其他会员公开。</text>
   </view>
 
-  <view class="entry-assurances">
+  <view wx:if="{{!registrationMode}}" class="entry-assurances">
     <view class="assurance-row">
       <text class="assurance-index">01</text>
       <view class="assurance-copy">

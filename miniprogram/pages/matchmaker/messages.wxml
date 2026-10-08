@@ -39,5 +39,10 @@
     </view>
   </view>
 
+  <view wx:if="{{errorNote}}" class="card message-update-error">
+    <text>{{errorNote}}</text>
+    <button class="btn ghost" bindtap="load">重试</button>
+  </view>
+
   <bottom-nav role="matchmaker" active="messages"></bottom-nav>
 </view>

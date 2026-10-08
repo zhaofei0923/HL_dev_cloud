@@ -291,5 +291,4 @@
     </view>
   </view>
 
-  <bottom-nav role="user" active="mine"></bottom-nav>
 </view>

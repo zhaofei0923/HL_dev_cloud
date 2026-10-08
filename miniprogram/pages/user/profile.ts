@@ -4,6 +4,8 @@ import { matchmakerApi } from '../../services/matchmaker'
 import { chooseLocalImages, isImageChooseCancel, resolveImageUrls, type ChosenImage } from '../../utils/local-image'
 import { PHOTO_WALL_LIMIT, defaultPhotos, mergePhotoLists, normalizeMemberProfile, photosFromText } from '../../utils/member-format'
 import { extractInviteCode, invitePath } from '../../utils/invite'
+import { pageSessionScope } from '../../utils/page-session'
+import { syncUserTabBar } from '../../utils/user-navigation'
 import {
   AGE_OPTIONS,
   EDUCATION_OPTIONS,
@@ -18,6 +20,7 @@ import {
 } from '../../utils/profile-options'
 
 type ProfileForm = Record<string, any>
+const PROFILE_TTL_MS = 30 * 1000
 
 const FORM_DEFAULTS: ProfileForm = {
   realName: '',
@@ -250,6 +253,18 @@ function matchmakerEntryView(matchmaker: any) {
 }
 
 Page({
+  _profileScope: '',
+  _profileGeneration: 0,
+  _profileLoadedAt: 0,
+  _profileInitialized: false,
+  _profileLoadPromise: null as Promise<void> | null,
+  _formRevision: 0,
+  _formDirty: false,
+  _refreshOnShow: false,
+  _panelLoadedAt: 0,
+  _panelLoadPromise: null as Promise<void> | null,
+  _panelGeneration: -1,
+
   data: {
     user: null as any,
     loading: false,
@@ -283,65 +298,167 @@ Page({
     photoCount: 0
   },
 
-  async onShow() {
-    this.setData({ loading: true })
-    try {
-      const result: any = await request('/user/profile')
-      const user = currentUser() || result
-      const form = await prepareProfileForm(result.profile || {}, user)
-      const completion = completionFor(form)
-      this.setData({
-        user,
-        form,
-        preview: previewFor(form),
-        photoCount: photoCountFor(form),
-        ...selectorTextFor(form),
-        completionText: completion.text,
-        completionNote: completion.note
-      })
-      void this.refreshMatchmakerEntry()
-      void this.loadReferralCard()
-    } catch (err) {
-      console.warn('load user profile failed', err)
-      const form = await prepareProfileForm({}, currentUser() || {})
-      const completion = completionFor(form)
-      this.setData({
-        user: currentUser() || {},
-        form,
-        preview: previewFor(form),
-        photoCount: photoCountFor(form),
-        ...selectorTextFor(form),
-        completionText: completion.text,
-        completionNote: completion.note
-      })
-    } finally {
-      this.setData({ loading: false })
-    }
+  onShow() {
+    if (!this.synchronizeSession()) return
+    syncUserTabBar(this, 'mine')
+    const force = this._refreshOnShow
+    this._refreshOnShow = false
+    return this.loadProfile(force)
   },
 
-  async refreshMatchmakerEntry() {
+  synchronizeSession() {
+    const scope = pageSessionScope()
+    if (scope !== this._profileScope) {
+      this._profileScope = scope
+      this._profileGeneration += 1
+      this._profileLoadPromise = null
+      this._profileLoadedAt = 0
+      this._profileInitialized = false
+      this._formDirty = false
+      this._formRevision += 1
+      this._panelLoadedAt = 0
+      this._panelLoadPromise = null
+      this._panelGeneration = -1
+      const user = currentUser() || {}
+      const form = hydrateImageDisplay(normalizeForm({}, user))
+      const completion = completionFor(form)
+      this.setData({
+        user, form, preview: previewFor(form), photoCount: 0,
+        ...selectorTextFor(form),
+        ...matchmakerEntryView(null),
+        completionText: completion.text,
+        completionNote: completion.note,
+        loading: false, saving: false, referralLoading: false,
+        referralCard: { canShare: false }, matchmakerCode: '',
+        editingProfile: false, previewOpen: false,
+        matchmakerPanelOpen: false, accountPanelOpen: false
+      })
+    }
+    if (scope) return scope
+    wx.redirectTo({ url: '/pages/index/index' })
+    return ''
+  },
+
+  loadProfile(force = false): Promise<void> {
+    const scope = this.synchronizeSession()
+    if (!scope) return Promise.resolve()
+    if (this.data.saving) return Promise.resolve()
+    if (!force && this._profileLoadPromise) return this._profileLoadPromise
+    this._profileLoadPromise = null
+    if (!force && this._profileInitialized && Date.now() - this._profileLoadedAt < PROFILE_TTL_MS) {
+      return Promise.resolve()
+    }
+    const generation = ++this._profileGeneration
+    const formRevision = this._formRevision
+    const isCurrent = () => generation === this._profileGeneration && pageSessionScope() === scope
+    this.setData({ loading: !this._profileInitialized })
+    if (force) this._panelLoadedAt = 0
+    if (this.data.matchmakerPanelOpen) void this.loadMatchmakerPanel(force)
+    const promise = Promise.resolve().then(async () => {
+      try {
+        const result: any = await request('/user/profile')
+        if (!isCurrent()) return
+        const user = currentUser() || result
+        const form = await prepareProfileForm(result.profile || {}, user)
+        if (!isCurrent()) return
+        // A tab return/background refresh must not overwrite unsaved edits.
+        if (!this._formDirty && this._formRevision === formRevision && !this.data.saving) {
+          const completion = completionFor(form)
+          this.setData({
+            user, form, preview: previewFor(form), photoCount: photoCountFor(form),
+            ...selectorTextFor(form),
+            completionText: completion.text, completionNote: completion.note
+          })
+        } else {
+          this.setData({ user })
+        }
+        this._profileLoadedAt = Date.now()
+        this._profileInitialized = true
+      } catch (err) {
+        if (!isCurrent()) return
+        console.warn('load user profile failed', err)
+        this._profileLoadedAt = 0
+      } finally {
+        if (isCurrent()) {
+          this._profileLoadPromise = null
+          this.setData({ loading: false })
+        }
+      }
+    })
+    this._profileLoadPromise = promise
+    return promise
+  },
+
+  onPullDownRefresh() {
+    return this.loadProfile(true).finally(() => wx.stopPullDownRefresh())
+  },
+
+  onUnload() {
+    this._profileGeneration += 1
+    this._profileLoadPromise = null
+    this._panelLoadPromise = null
+  },
+
+  loadMatchmakerPanel(force = false): Promise<void> {
+    const scope = this.synchronizeSession()
+    if (!scope || !this.data.matchmakerPanelOpen) return Promise.resolve()
+    if (!force && this._panelLoadPromise && this._panelGeneration === this._profileGeneration) return this._panelLoadPromise
+    if (!force && this._panelLoadedAt > 0 && Date.now() - this._panelLoadedAt < PROFILE_TTL_MS) return Promise.resolve()
+    const generation = this._profileGeneration
+    this._panelGeneration = generation
+    const promise = Promise.all([
+      this.refreshMatchmakerEntry(scope, generation),
+      this.loadReferralCard(scope, generation)
+    ]).then(results => {
+      if (generation === this._profileGeneration && pageSessionScope() === scope) {
+        this._panelLoadedAt = results.every(Boolean) ? Date.now() : 0
+      }
+    }).finally(() => {
+      if (this._panelLoadPromise === promise) this._panelLoadPromise = null
+    })
+    this._panelLoadPromise = promise
+    return promise
+  },
+
+  async refreshMatchmakerEntry(scope?: string, generation?: number) {
+    const requestScope = scope === undefined ? this._profileScope : scope
+    const requestGeneration = generation === undefined ? this._profileGeneration : generation
+    const isCurrent = () => requestScope === pageSessionScope() && requestGeneration === this._profileGeneration
     try {
-      const dashboard: any = await matchmakerApi.dashboard(false)
-      this.setData(matchmakerEntryView(dashboard.matchmaker))
+      const result = await matchmakerApi.status(false)
+      if (!isCurrent()) return false
+      this.setData(matchmakerEntryView(result.matchmaker))
+      return true
     } catch (err) {
+      if (!isCurrent()) return false
       this.setData(matchmakerEntryView(null))
+      return false
     }
   },
 
-  async loadReferralCard() {
-    this.setData({ referralLoading: true })
+  async loadReferralCard(scope?: string, generation?: number) {
+    const requestScope = scope === undefined ? this._profileScope : scope
+    const requestGeneration = generation === undefined ? this._profileGeneration : generation
+    const isCurrent = () => requestScope === pageSessionScope() && requestGeneration === this._profileGeneration
+    this.setData({ referralLoading: !this._profileInitialized })
     try {
       const referralCard = await memberApi.referralCard(false)
+      if (!isCurrent()) return false
       this.setData({ referralCard })
+      return true
     } catch (err) {
+      if (!isCurrent()) return false
       console.warn('load member referral card failed', err)
       this.setData({ referralCard: { canShare: false } })
+      return false
     } finally {
-      this.setData({ referralLoading: false })
+      if (isCurrent()) this.setData({ referralLoading: false })
     }
   },
 
   setForm(form: ProfileForm) {
+    this._formRevision += 1
+    this._formDirty = true
     const completion = completionFor(form)
     this.setData({
       form,
@@ -367,6 +484,8 @@ Page({
 
   toggleMatchmakerPanel() {
     this.setData({ matchmakerPanelOpen: !this.data.matchmakerPanelOpen })
+    if (this.data.matchmakerPanelOpen) return this.loadMatchmakerPanel()
+    return Promise.resolve()
   },
 
   toggleAccountPanel() {
@@ -395,6 +514,7 @@ Page({
       wx.showToast({ title: '请输入主理人编号', icon: 'none' })
       return
     }
+    this._refreshOnShow = true
     wx.navigateTo({ url: invitePath(code, 'inviteCode') })
   },
 
@@ -407,6 +527,7 @@ Page({
           wx.showToast({ title: '未识别到主理人邀请码', icon: 'none' })
           return
         }
+        this._refreshOnShow = true
         wx.navigateTo({ url: invitePath(code, 'scan') })
       },
       fail: err => {
@@ -521,10 +642,16 @@ Page({
 
   async saveProfile(form: ProfileForm, toastTitle = '已保存') {
     if (this.data.saving) return false
-    this.setData({ saving: true })
+    const scope = pageSessionScope()
+    if (!scope || scope !== this._profileScope) return false
+    const formRevision = this._formRevision
+    this._profileGeneration += 1
+    this._profileLoadPromise = null
+    this.setData({ saving: true, loading: false, referralLoading: false })
     try {
       const payload = payloadFromForm(form)
       const result: any = await request('/user/profile', { method: 'PUT', data: payload })
+      if (pageSessionScope() !== scope) return false
       const user = {
         ...(currentUser() || {}),
         ...(result.user || {}),
@@ -535,32 +662,40 @@ Page({
       wx.setStorageSync('user', user)
       getApp<IAppOption>().globalData.user = user
       const nextForm = await prepareProfileForm(result.profile || payload, user, form)
+      if (pageSessionScope() !== scope) return false
       const completion = completionFor(nextForm)
-      this.setData({
-        user,
-        form: nextForm,
-        preview: previewFor(nextForm),
-        photoCount: photoCountFor(nextForm),
-        ...selectorTextFor(nextForm),
-        completionText: completion.text,
-        completionNote: completion.note
-      })
+      if (formRevision === this._formRevision) {
+        this.setData({
+          user, form: nextForm, preview: previewFor(nextForm),
+          photoCount: photoCountFor(nextForm), ...selectorTextFor(nextForm),
+          completionText: completion.text, completionNote: completion.note
+        })
+        this._formDirty = false
+      } else this.setData({ user })
+      this._profileLoadedAt = Date.now()
+      this._profileInitialized = true
       wx.showToast({ title: toastTitle })
       return true
     } catch (err) {
       console.warn('save user profile failed', err)
       return false
     } finally {
-      this.setData({ saving: false })
+      if (pageSessionScope() === scope) this.setData({ saving: false })
     }
   },
 
   async save() {
     if (this.data.saving) return
-    this.setData({ saving: true })
+    const scope = pageSessionScope()
+    if (!scope || scope !== this._profileScope) return
+    const formRevision = this._formRevision
+    this._profileGeneration += 1
+    this._profileLoadPromise = null
+    this.setData({ saving: true, loading: false, referralLoading: false })
     try {
       const payload = payloadFromForm(this.data.form)
       const result: any = await request('/user/profile', { method: 'PUT', data: payload })
+      if (pageSessionScope() !== scope) return
       const user = {
         ...(currentUser() || {}),
         ...(result.user || {}),
@@ -571,37 +706,43 @@ Page({
       wx.setStorageSync('user', user)
       getApp<IAppOption>().globalData.user = user
       const form = await prepareProfileForm(result.profile || payload, user, this.data.form)
+      if (pageSessionScope() !== scope) return
       const completion = completionFor(form)
-      this.setData({
-        user,
-        form,
-        preview: previewFor(form),
-        photoCount: photoCountFor(form),
-        ...selectorTextFor(form),
-        completionText: completion.text,
-        completionNote: completion.note,
-        editingProfile: false
-      })
+      if (formRevision === this._formRevision) {
+        this.setData({
+          user, form, preview: previewFor(form), photoCount: photoCountFor(form),
+          ...selectorTextFor(form), completionText: completion.text,
+          completionNote: completion.note, editingProfile: false
+        })
+        this._formDirty = false
+      } else this.setData({ user })
+      this._profileLoadedAt = Date.now()
+      this._profileInitialized = true
       wx.showToast({ title: '已保存' })
     } catch (err) {
       console.warn('save user profile failed', err)
     } finally {
-      this.setData({ saving: false })
+      if (pageSessionScope() === scope) this.setData({ saving: false })
     }
   },
 
   goMatchmaker() {
-    wx.redirectTo({ url: '/pages/matchmaker/dashboard' })
+    this._refreshOnShow = true
+    wx.redirectTo({ url: '/pages/matchmaker/workspace' })
   },
 
   goMembership() {
+    this._refreshOnShow = true
     wx.navigateTo({ url: '/pages/user/membership' })
   },
 
   logout() {
     wx.removeStorageSync('token')
     wx.removeStorageSync('user')
-    wx.redirectTo({ url: '/pages/index/index' })
+    const app = getApp<IAppOption>()
+    app.globalData.token = ''
+    app.globalData.user = null
+    this.synchronizeSession()
   },
 
   onShareAppMessage() {

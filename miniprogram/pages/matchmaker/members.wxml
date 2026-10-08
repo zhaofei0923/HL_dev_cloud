@@ -75,9 +75,9 @@
       <view class="row list-header">
         <view>
           <text class="section-title">会员名单</text>
-          <text class="section-note">{{loading ? '正在更新' : total + ' 位符合条件'}}</text>
+          <text class="section-note">{{loading && !initialized ? '正在更新' : total + ' 位符合条件'}}</text>
         </view>
-        <text class="list-state">{{loading ? '刷新中' : '点击查看档案'}}</text>
+        <text class="list-state">{{loading && !initialized ? '刷新中' : '点击查看档案'}}</text>
       </view>
       <block wx:if="{{list.length}}">
         <view wx:for="{{list}}" wx:key="id" class="member-list-item" data-id="{{item.id}}" bindtap="openDetail">
@@ -109,10 +109,19 @@
         </view>
       </block>
       <view wx:else class="empty">
-        <text class="empty-title">{{loading ? '正在加载会员' : '暂无会员'}}</text>
-        <text class="empty-note">{{loading ? '请稍候，正在整理会员列表。' : '先录入一位会员，建立第一份服务档案。'}}</text>
+        <text class="empty-title">{{loading && !initialized ? '正在加载会员' : '暂无会员'}}</text>
+        <text class="empty-note">{{loading && !initialized ? '请稍候，正在整理会员列表。' : '先录入一位会员，建立第一份服务档案。'}}</text>
         <button wx:if="{{!loading}}" class="btn gold empty-action" bindtap="goAdd">录入第一位会员</button>
       </view>
+      <view wx:if="{{hasMore}}">
+        <text wx:if="{{paginationError}}" class="section-note">{{paginationError}}</text>
+        <button class="btn ghost" loading="{{loadingMore}}" disabled="{{loadingMore || loading}}" bindtap="loadMore">{{loadingMore ? '正在加载更多会员' : '加载更多会员'}}</button>
+      </view>
+    </view>
+
+    <view wx:if="{{refreshError}}" class="card notice-card">
+      <text class="section-note">{{refreshError}}</text>
+      <button class="btn ghost" loading="{{loading}}" disabled="{{loading}}" bindtap="refreshGate">重新加载</button>
     </view>
 
     <view class="card collaboration-card">
@@ -170,6 +179,7 @@
       <text class="tag {{statusTagClass}}">{{statusText}}</text>
     </view>
     <button wx:if="{{statusText === '已拒绝'}}" class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="applyAgain">重新提交申请</button>
+    <button wx:if="{{refreshError || statusText === '待核验'}}" class="btn ghost approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="refreshGate">重新加载</button>
   </view>
   <bottom-nav wx:if="{{canOperate}}" role="matchmaker" active="members"></bottom-nav>
 </view>

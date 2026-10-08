@@ -10,7 +10,7 @@ exports.chatApi = {
         return (0, api_1.request)('/chat/conversations', { method: 'POST', data });
     },
     listMessages(id, data = {}) {
-        return (0, api_1.request)(`/chat/conversations/${id}/messages`, { data });
+        return (0, api_1.request)(`/chat/conversations/${id}/messages`, { data, showError: false });
     },
     sendMessage(id, content) {
         return (0, api_1.request)(`/chat/conversations/${id}/messages`, {

@@ -116,10 +116,10 @@ Page({
   },
 
   goProfile() {
-    wx.redirectTo({ url: '/pages/user/profile' })
+    wx.switchTab({ url: '/pages/user/profile' })
   },
 
   goMembers() {
-    wx.redirectTo({ url: '/pages/user/members' })
+    wx.switchTab({ url: '/pages/user/members' })
   }
 })

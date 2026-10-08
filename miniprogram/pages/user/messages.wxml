@@ -8,9 +8,9 @@
     <view class="row list-header conversation-header">
       <view>
         <text class="section-title">会话</text>
-        <text class="section-note">{{conversationLoading ? '正在加载消息' : '按最新消息排序'}}</text>
+        <text class="section-note">{{conversationLoading && !conversationInitialized ? '正在加载消息' : '按最新消息排序'}}</text>
       </view>
-      <text class="conversation-total">{{conversationLoading ? '刷新中' : total + ' 条'}}</text>
+      <text class="conversation-total">{{conversationLoading && !conversationInitialized ? '刷新中' : total + ' 条'}}</text>
     </view>
 
     <block wx:if="{{list.length}}">
@@ -29,9 +29,14 @@
     </block>
 
     <view wx:else class="empty conversation-empty">
-      <text class="empty-title">{{conversationLoading ? '正在加载消息' : emptyTitle}}</text>
-      <text class="empty-note">{{conversationLoading ? '请稍候，正在整理你的会话。' : emptyNote}}</text>
+      <text class="empty-title">{{conversationLoading && !conversationInitialized ? '正在加载消息' : emptyTitle}}</text>
+      <text class="empty-note">{{conversationLoading && !conversationInitialized ? '请稍候，正在整理你的会话。' : emptyNote}}</text>
+      <button wx:if="{{conversationError}}" class="btn ghost empty-action" bindtap="retryConversations">重新加载</button>
       <button class="btn ghost empty-action" bindtap="goMembers">去看推荐</button>
+    </view>
+    <view wx:if="{{conversationError && list.length}}" class="conversation-update-error">
+      <text>{{conversationError}}</text>
+      <text class="conversation-retry" bindtap="retryConversations">重试</text>
     </view>
   </view>
 
@@ -41,7 +46,7 @@
         <text class="section-title">心动关系</text>
         <text class="section-note">喜欢我的与互相喜欢</text>
       </view>
-      <text class="relationship-status {{isPremiumMember ? 'open' : 'locked'}}">{{isPremiumMember ? '已开通' : '会员可见'}}</text>
+      <text class="relationship-status {{isPremiumMember ? 'open' : 'locked'}}">{{relationshipInitialized && !relationshipPermissionVerified ? '待更新' : (isPremiumMember ? '已开通' : '会员可见')}}</text>
     </view>
 
     <view class="relationship-switch compact-switch">
@@ -80,7 +85,7 @@
         <text class="relationship-panel-count">{{relationshipTotal}} 人</text>
       </view>
 
-      <view wx:if="{{relationshipError && !relationshipItems.length}}" class="relationship-state error">
+      <view wx:if="{{relationshipError}}" class="relationship-state error">
         <text class="relationship-state-title">心动关系暂不可用</text>
         <text class="relationship-state-note">{{relationshipError}}</text>
         <button class="btn ghost relationship-retry" bindtap="retryRelationships">重新加载</button>
@@ -106,7 +111,7 @@
           <image wx:if="{{item.coverUrl}}" class="relationship-cover" src="{{item.coverUrl}}" mode="aspectFill"></image>
           <view wx:else class="relationship-cover relationship-cover-placeholder"></view>
           <view class="relationship-cover-shade"></view>
-          <text wx:if="{{item.locked}}" class="relationship-lock">会员可见</text>
+          <text wx:if="{{item.locked}}" class="relationship-lock">{{item.checking ? '待更新' : '会员可见'}}</text>
 
           <view class="relationship-card-copy">
             <text class="relationship-hint">{{item.hint}}</text>
@@ -149,7 +154,7 @@
       </view>
 
       <button
-        wx:if="{{!isPremiumMember && (relationshipCounts.incoming || relationshipCounts.mutual)}}"
+        wx:if="{{relationshipPermissionVerified && !isPremiumMember && (relationshipCounts.incoming || relationshipCounts.mutual)}}"
         class="btn relationship-unlock"
         bindtap="promptOpenMembership"
       >联系主理人开通会员</button>
@@ -167,5 +172,4 @@
     </view>
   </view>
 
-  <bottom-nav role="user" active="messages"></bottom-nav>
 </view>

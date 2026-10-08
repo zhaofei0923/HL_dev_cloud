@@ -9,6 +9,9 @@ exports.matchmakerApi = {
     dashboard(showError = true) {
         return (0, api_1.request)('/matchmaker/dashboard', { showError });
     },
+    status(showError = true) {
+        return (0, api_1.request)('/matchmaker/status', { showError });
+    },
     inviteCard(showError = true) {
         return (0, api_1.request)('/matchmaker/invite-card', { showError });
     },

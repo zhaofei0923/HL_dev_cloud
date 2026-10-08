@@ -14,10 +14,21 @@
           <text class="detail-name">{{member.displayName}}</text>
           <text class="detail-meta">{{member.metaText}}</text>
         </view>
+        <text class="detail-work">{{member.workText}}</text>
         <view class="tag-row hero-tags">
           <text wx:for="{{member.profileTags}}" wx:key="*this" class="tag gold">{{item}}</text>
         </view>
       </view>
+    </view>
+
+    <view class="detail-scroll-cue">
+      <text>向下滑动查看详细资料</text>
+      <view class="detail-scroll-chevron"></view>
+    </view>
+
+    <view class="detail-content-heading">
+      <text class="detail-content-title">详细资料</text>
+      <text class="detail-content-note">了解 TA 的生活与期待</text>
     </view>
 
     <view class="card info-card detail-section">
@@ -28,24 +39,35 @@
           <text class="metric-value small">{{item.value}}</text>
         </view>
       </view>
-      <view class="divider"></view>
-      <text class="section-title">职业与生活</text>
-      <view class="info-grid compact-grid">
+    </view>
+
+    <view class="card info-card detail-section">
+      <text class="section-title">职业与背景</text>
+      <view class="info-grid">
         <view wx:for="{{member.careerRows}}" wx:key="label" class="info-cell">
           <text class="metric-label">{{item.label}}</text>
           <text class="metric-value small">{{item.value}}</text>
         </view>
       </view>
-      <view class="tag-row life-tags">
-        <text wx:for="{{member.lifeRows}}" wx:key="label" class="tag">{{item.label}}：{{item.value}}</text>
+    </view>
+
+    <view class="card info-card detail-section">
+      <text class="section-title">生活情况</text>
+      <view class="detail-fact-list">
+        <view wx:for="{{member.lifeRows}}" wx:key="label" class="detail-fact-row">
+          <text class="metric-label">{{item.label}}</text>
+          <text class="detail-fact-value">{{item.value}}</text>
+        </view>
       </view>
     </view>
 
     <view class="card story-card detail-section">
-      <text class="story-label">关于我</text>
+      <text class="section-title">关于我</text>
       <text class="item-desc story-text">{{member.introText}}</text>
-      <view class="divider"></view>
-      <text class="story-label">期待的关系</text>
+    </view>
+
+    <view class="card story-card detail-section">
+      <text class="section-title">期待的关系</text>
       <text class="item-desc story-text">{{member.partnerText}}</text>
     </view>
 

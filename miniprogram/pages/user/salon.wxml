@@ -41,5 +41,4 @@
     </view>
   </view>
 
-  <bottom-nav role="user" active="salon"></bottom-nav>
 </view>

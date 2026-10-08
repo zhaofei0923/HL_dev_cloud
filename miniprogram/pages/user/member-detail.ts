@@ -40,7 +40,7 @@ Page({
   },
 
   goProfile() {
-    wx.navigateTo({ url: '/pages/user/profile' })
+    wx.switchTab({ url: '/pages/user/profile' })
   },
 
   async startChat() {

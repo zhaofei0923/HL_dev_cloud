@@ -55,12 +55,16 @@ function request(path, options = {}) {
                     return;
                 }
                 const code = body && body.code;
-                if (isUnauthorized(code) && !options.preserveSessionOnUnauthorized) {
+                const currentToken = app.globalData.token || wx.getStorageSync('token');
+                const currentEnv = app.globalData.env || cloud_1.CLOUD_ENV_ID;
+                // A late response from a previous account must not clear the new session.
+                if (isUnauthorized(code) && !options.preserveSessionOnUnauthorized
+                    && token === currentToken && env === currentEnv) {
                     wx.removeStorageSync('token');
                     wx.removeStorageSync('user');
                     app.globalData.token = '';
                     app.globalData.user = null;
-                    wx.redirectTo({ url: '/pages/index/index' });
+                    wx.redirectTo({ url: options.unauthorizedRedirect || '/pages/index/index' });
                 }
                 const message = body && body.message ? body.message : '请求失败';
                 if (options.showError !== false)

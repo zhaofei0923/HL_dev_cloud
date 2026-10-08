@@ -17,6 +17,7 @@
       <text class="tag {{statusTagClass}}">{{statusText}}</text>
     </view>
     <button wx:if="{{statusText === '已拒绝'}}" class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="applyAgain">重新提交申请</button>
+    <button wx:if="{{refreshError || statusText === '待核验'}}" class="btn ghost approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="refreshGate">重新加载</button>
   </view>
 
   <block wx:if="{{canOperate}}">
@@ -31,7 +32,7 @@
           <text class="section-title">{{active === 'mine' ? '我创建的活动' : '活动广场'}}</text>
           <text class="section-note">先查看时间、地点和报名状态</text>
         </view>
-        <text class="list-state">{{loading ? '刷新中' : list.length + ' 场'}}</text>
+        <text class="list-state">{{loading && !initialized ? '刷新中' : list.length + ' 场'}}</text>
       </view>
 
       <block wx:if="{{list.length}}">
@@ -62,15 +63,20 @@
 
           <view wx:if="{{active === 'mine' && managingEventId === item.idText}}" class="manage-panel">
             <block wx:if="{{item.canInvite}}">
-              <picker wx:if="{{memberOptions.length}}" mode="selector" range="{{memberOptions}}" value="{{selectedMemberIndex}}" bindchange="onInviteMemberChange">
+              <text wx:if="{{loadingMembers}}" class="section-note">正在整理邀请名单</text>
+              <view wx:if="{{memberOptionsError}}">
+                <text class="section-note">{{memberOptionsError}}</text>
+                <button class="btn ghost" bindtap="loadMembers">重试名单</button>
+              </view>
+              <picker wx:if="{{memberOptions.length}}" disabled="{{loadingMembers}}" mode="selector" range="{{memberOptions}}" value="{{selectedMemberIndex}}" bindchange="onInviteMemberChange">
                 <view class="invite-picker">
                   <text class="field-label">推送给</text>
                   <text class="picker-value">{{selectedMemberName || '选择会员'}}</text>
                 </view>
               </picker>
               <view class="invite-actions">
-                <button class="btn gold invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':one'}}" disabled="{{invitingId || !selectedMemberName}}" bindtap="inviteSelected">推送选中会员</button>
-                <button class="btn secondary invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':all'}}" disabled="{{invitingId || !members.length}}" bindtap="inviteAll">推送全部会员</button>
+                <button class="btn gold invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':one'}}" disabled="{{invitingId || loadingMembers || !selectedMemberName}}" bindtap="inviteSelected">推送选中会员</button>
+                <button class="btn secondary invite-btn" data-id="{{item.id}}" loading="{{invitingId === item.idText + ':all'}}" disabled="{{invitingId || loadingMembers || !members.length}}" bindtap="inviteAll">推送全部会员</button>
               </view>
               <button class="btn ghost share-btn" open-type="share" data-id="{{item.id}}" data-title="{{item.title}}">微信分享</button>
             </block>
@@ -81,10 +87,15 @@
       </block>
 
       <view wx:else class="empty">
-        <text class="empty-title">{{loading ? '正在加载活动' : '暂无活动'}}</text>
-        <text class="empty-note">{{loading ? '请稍候，正在整理活动列表。' : '创建一场活动，会员即可查看和报名。'}}</text>
+        <text class="empty-title">{{loading && !initialized ? '正在加载活动' : '暂无活动'}}</text>
+        <text class="empty-note">{{loading && !initialized ? '请稍候，正在整理活动列表。' : '创建一场活动，会员即可查看和报名。'}}</text>
         <button wx:if="{{!loading && active === 'mine'}}" class="btn gold empty-action" bindtap="goCreate">创建第一场活动</button>
       </view>
+    </view>
+
+    <view wx:if="{{refreshError}}" class="card notice-card">
+      <text class="section-note">{{refreshError}}</text>
+      <button class="btn ghost" loading="{{loading}}" disabled="{{loading}}" bindtap="refreshGate">重新加载</button>
     </view>
   </block>
 

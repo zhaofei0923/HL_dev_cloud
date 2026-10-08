@@ -52,16 +52,42 @@
       <view class="row share-head">
         <view>
           <text class="section-title">邀请好友参加</text>
-          <text class="section-note">好友点开微信分享卡片后，会自动注册并报名本场沙龙。</text>
+          <text class="section-note">好友先填写手机号、称呼和照片，再确认报名；不会变更已有主理人。</text>
         </view>
-        <text class="tag gold">已报名</text>
+        <text class="tag gold">{{event.isOrganizer ? '活动组织者' : '已报名'}}</text>
       </view>
       <button class="btn gold share-btn" open-type="share" loading="{{shareLoading}}" disabled="{{shareLoading}}">分享给微信好友</button>
+    </view>
+
+    <view class="card participants-card">
+      <view class="row">
+        <text class="section-title">已报名的人</text>
+        <text class="tag">{{participantTotal}} 人</text>
+      </view>
+      <text class="section-note">{{participantNote}}</text>
+      <view class="participant-list">
+        <button wx:for="{{participants}}" wx:key="userId" class="participant-row" data-user-id="{{item.userId}}" bindtap="openParticipant">
+          <image class="participant-avatar" src="{{item.avatarUrl}}" mode="aspectFill"></image>
+          <view class="participant-copy">
+            <text class="participant-name">{{item.displayName}}{{item.isSelf ? '（我）' : ''}}</text>
+            <text class="participant-action">{{item.canViewProfile ? '查看资料' : '资料暂不可查看'}}</text>
+          </view>
+          <text wx:if="{{item.canViewProfile}}" class="participant-chevron">›</text>
+        </button>
+      </view>
+      <text wx:if="{{!participants.length && !participantsLoading && !participantsError}}" class="section-note">暂无报名，期待你的加入。</text>
+      <text wx:if="{{participantsLoading}}" class="section-note">正在读取报名名单</text>
+      <view wx:if="{{participantsError}}">
+        <text class="section-note">{{participantsError}}</text>
+        <button class="btn ghost" bindtap="retryParticipants">重试名单</button>
+      </view>
+      <button wx:if="{{participants.length < participantTotal && !participantsError}}" class="btn ghost" loading="{{participantsLoading}}" disabled="{{participantsLoading}}" bindtap="loadMoreParticipants">查看更多报名人</button>
     </view>
   </block>
 
   <view wx:else class="card empty">
-    <text class="empty-title">{{loading ? '正在加载活动' : '活动不存在'}}</text>
-    <text class="empty-note">{{loading ? '请稍候，正在整理沙龙详情。' : '请返回列表重新选择活动。'}}</text>
+    <text class="empty-title">{{loading ? '正在加载活动' : '活动暂不可查看'}}</text>
+    <text class="empty-note">{{loading ? '请稍候，正在整理沙龙详情。' : error}}</text>
+    <button wx:if="{{!loading}}" class="btn ghost" bindtap="load">重新加载</button>
   </view>
 </view>

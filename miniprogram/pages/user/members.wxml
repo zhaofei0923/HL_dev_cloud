@@ -53,17 +53,24 @@
 
   <view class="recommend-stage">
     <block wx:if="{{currentMember}}">
+      <view class="recommend-card-shell">
       <view
         class="recommend-card"
         bindtouchstart="onCardTouchStart"
+        catchtouchmove="noop"
         bindtouchend="onCardTouchEnd"
+        bindtap="onCardTap"
       >
         <image class="recommend-cover" src="{{currentMember.coverUrl}}" mode="aspectFill"></image>
         <text wx:if="{{!currentMember.hasUploadedPhotos}}" class="photo-placeholder-badge recommend-photo-placeholder">系统示意图</text>
         <view class="cover-shade"></view>
         <view class="card-top-meta">
-          <text class="status-chip">{{currentMember.statusText}}</text>
-          <text wx:if="{{favoriteQuotaText}}" class="quota-chip">{{favoriteQuotaText}}</text>
+          <view class="certification-list" aria-label="认证信息">
+            <view wx:for="{{currentMember.certificationBadges}}" wx:key="label" class="certification-badge">
+              <text class="certification-label">{{item.label}}</text>
+              <text class="certification-state">{{item.statusText}}</text>
+            </view>
+          </view>
           <text wx:if="{{positionText}}" class="position-chip">{{positionText}}</text>
         </view>
 
@@ -88,10 +95,9 @@
         <view class="member-overlay">
           <view class="name-line">
             <text class="recommend-name">{{currentMember.displayName}}</text>
-            <text class="recommend-age">{{currentMember.ageText}}</text>
           </view>
           <text class="recommend-meta">{{currentMember.primaryMeta}}</text>
-          <text class="recommend-work">{{currentMember.profileLine}}</text>
+          <text class="recommend-work">{{currentMember.ageText}}{{currentMember.profileLine ? ' · ' + currentMember.profileLine : ''}}</text>
           <view wx:if="{{currentMember.cardTags.length}}" class="card-tag-row">
             <text wx:for="{{currentMember.cardTags}}" wx:key="*this" class="card-tag">{{item}}</text>
           </view>
@@ -101,36 +107,28 @@
           </view>
         </view>
       </view>
-
-      <view class="recommend-actions" aria-label="会员操作">
-        <button
-          class="recommend-action next"
-          disabled="{{actionAnimating}}"
-          bindtap="nextMember"
-        >下一位</button>
-        <button
-          class="recommend-action detail"
-          disabled="{{actionAnimating}}"
-          bindtap="goMemberDetail"
-        >查看资料</button>
-        <button
-          class="recommend-action favorite"
-          loading="{{favoriteLoading}}"
-          disabled="{{favoriteLoading || hideLoading || actionAnimating}}"
-          bindtap="toggleFavorite"
-        >喜欢</button>
+      <view class="quick-actions" aria-label="会员操作">
+        <button class="quick-action" hover-class="action-icon-hover"
+          aria-label="赠送礼物" disabled="{{loading || giftLoading || favoriteLoading || hideLoading || sendingGiftId !== '' || actionAnimating || giftPanelOpen}}"
+          bindtap="openGiftPanel">
+          <view class="action-icon action-gift"><view class="gift-shape"><view class="gift-bow"></view><view class="gift-box"></view></view></view>
+        </button>
+        <button class="quick-action" hover-class="action-icon-hover"
+          aria-label="{{currentMember.isFavorite ? '撤回爱心' : '送爱心'}}" disabled="{{loading || favoriteLoading || hideLoading || sendingGiftId !== '' || actionAnimating || giftPanelOpen}}"
+          bindtap="toggleFavorite">
+          <view class="action-icon action-heart {{currentMember.isFavorite ? 'active' : ''}}"><view class="heart-shape"></view></view>
+        </button>
+        <button class="quick-action" hover-class="action-icon-hover"
+          aria-label="不再查看" disabled="{{loading || hideLoading || favoriteLoading || sendingGiftId !== '' || actionAnimating || giftPanelOpen}}"
+          bindtap="hideCurrent">
+          <view class="action-icon action-hide"><view class="x-shape"><view class="x-line x-left"></view><view class="x-line x-right"></view></view></view>
+        </button>
       </view>
-      <view class="recommend-secondary-row">
-        <button
-          class="recommend-text-action"
-          disabled="{{giftLoading || hideLoading || actionAnimating}}"
-          bindtap="openGiftPanel"
-        >赠送礼物</button>
-        <button
-          class="recommend-text-action quiet"
-          disabled="{{hideLoading || favoriteLoading || actionAnimating}}"
-          bindtap="hideCurrent"
-        >减少此类推荐</button>
+      </view>
+
+      <view wx:if="{{loadingMore || paginationError}}" class="pagination-note">
+        <text>{{loadingMore ? '正在准备更多会员' : paginationError}}</text>
+        <text wx:if="{{paginationError && !loadingMore}}" class="pagination-retry" bindtap="loadMoreShowcase">重试</text>
       </view>
     </block>
 
@@ -164,6 +162,7 @@
         </view>
       </view>
     </view>
+    <scroll-view class="gift-panel-scroll" scroll-y>
     <view class="gift-list">
       <button
         wx:for="{{gifts}}"
@@ -183,7 +182,7 @@
       <view wx:if="{{giftLoading && !gifts.length}}" class="gift-loading">正在加载礼品库</view>
       <view wx:if="{{!giftLoading && !gifts.length}}" class="gift-loading">礼品库暂不可用</view>
     </view>
+    </scroll-view>
   </view>
 
-  <bottom-nav role="user" active="members"></bottom-nav>
 </view>

@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "沙龙活动",
+  "enablePullDownRefresh": true,
   "usingComponents": {
     "bottom-nav": "/components/bottom-nav/bottom-nav"
   }

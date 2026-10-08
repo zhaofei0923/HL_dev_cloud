@@ -9,7 +9,12 @@
     </view>
   </view>
 
-  <scroll-view class="chat-scroll" scroll-y scroll-into-view="{{scrollIntoView}}" scroll-with-animation>
+  <scroll-view class="chat-scroll" scroll-y scroll-into-view="{{scrollIntoView}}" scroll-with-animation bindscrolltoupper="loadOlder">
+    <view class="chat-history-row">
+      <button wx:if="{{hasMoreHistory}}" class="chat-small-action" bindtap="loadOlder" loading="{{historyLoading}}" disabled="{{historyLoading}}">更早的消息</button>
+      <button class="chat-small-action" bindtap="refreshNewMessages" loading="{{refreshing}}" disabled="{{refreshing || loading}}">刷新</button>
+    </view>
+    <text wx:if="{{errorNote}}" class="chat-error-note">{{errorNote}}</text>
     <view wx:if="{{loading && !messages.length}}" class="empty chat-empty">
       <text class="empty-title">正在加载消息</text>
       <text class="empty-note">请稍候。</text>
@@ -48,7 +53,7 @@
   </scroll-view>
 
   <view class="chat-input-bar">
-    <button class="mode-button {{voiceMode ? 'active' : ''}}" disabled="{{sending || recording}}" bindtap="toggleVoiceMode">{{voiceMode ? '键盘' : '语音'}}</button>
+    <button class="mode-button {{voiceMode ? 'active' : ''}}" disabled="{{sending || recording || loading}}" bindtap="toggleVoiceMode">{{voiceMode ? '键盘' : '语音'}}</button>
     <textarea
       wx:if="{{!voiceMode}}"
       class="chat-input"
@@ -67,6 +72,6 @@
       bindtouchend="finishVoice"
       bindtouchcancel="cancelVoice"
     >{{recording ? '松开发送' : recordingTip}}</button>
-    <button wx:else class="send-button" loading="{{sending}}" disabled="{{sending}}" bindtap="send">发送</button>
+    <button wx:else class="send-button" loading="{{sending}}" disabled="{{sending || loading || !conversation}}" bindtap="send">发送</button>
   </view>
 </view>

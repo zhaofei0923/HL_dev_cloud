@@ -688,3 +688,18 @@
 .conversation-empty {
   margin: 0 24rpx 24rpx;
 }
+
+.conversation-update-error {
+  display: flex;
+  gap: 16rpx;
+  justify-content: space-between;
+  padding: 16rpx 24rpx;
+  color: #91877f;
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+
+.conversation-retry {
+  flex-shrink: 0;
+  color: #8f493f;
+}

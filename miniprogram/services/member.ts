@@ -33,6 +33,20 @@ export type LikedMeResult = {
 
 export type RelationshipKind = 'incoming' | 'mutual'
 
+export type InviteMemberOption = {
+  id: number | string
+  userId: number
+  realName: string
+  nickname: string
+}
+
+export type InviteMemberOptionsResult = {
+  list: InviteMemberOption[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 export type RelationshipItem = LikedMeItem & {
   relationshipType?: RelationshipKind
   relationshipAt?: string
@@ -116,6 +130,9 @@ export const memberApi = {
   list(data?: Record<string, any>) {
     return request('/member/list', { data })
   },
+  inviteOptions(data?: Record<string, unknown>) {
+    return request<InviteMemberOptionsResult>('/member/invite-options', { data })
+  },
   resources(data?: Record<string, any>) {
     return request('/member/resources', { data })
   },
@@ -142,14 +159,14 @@ export const memberApi = {
       showError: false
     })
   },
-  gifts() {
-    return request('/member/gifts')
+  gifts(showError = true) {
+    return request('/member/gifts', { showError })
   },
-  interact(data: Record<string, any>) {
-    return request('/member/interactions', { method: 'POST', data })
+  interact(data: Record<string, any>, showError = true) {
+    return request('/member/interactions', { method: 'POST', data, showError })
   },
-  sendGift(data: Record<string, any>) {
-    return request('/member/gifts/send', { method: 'POST', data })
+  sendGift(data: Record<string, any>, showError = true) {
+    return request('/member/gifts/send', { method: 'POST', data, showError })
   },
   resolveMatchmakerInvite(data: Record<string, any>) {
     return request('/member/matchmaker-invite/resolve', { data })

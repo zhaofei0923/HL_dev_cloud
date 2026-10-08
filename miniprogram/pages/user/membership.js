@@ -168,7 +168,7 @@ Page({
             confirmText: '前往绑定',
             success: res => {
                 if (res.confirm)
-                    wx.redirectTo({ url: '/pages/user/profile' });
+                    wx.switchTab({ url: '/pages/user/profile' });
             }
         });
     },
