@@ -13,7 +13,7 @@
   justify-content: space-between;
   gap: 18rpx;
   min-height: 88rpx;
-  margin-bottom: 14rpx;
+  margin-bottom: 0;
 }
 
 .recommend-heading {
@@ -21,24 +21,55 @@
   min-width: 0;
 }
 
-.recommend-title {
-  display: block;
-  color: #241f1b;
-  font-size: 42rpx;
+.recommend-categories {
+  display: flex;
+  align-items: center;
+  gap: 28rpx;
+}
+
+.recommend-category {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 16rpx 0;
+  color: #736256;
+  font-size: 32rpx;
   font-weight: 800;
-  line-height: 1.2;
+  line-height: 1.3;
+}
+
+.recommend-category.active {
+  color: #7b573a;
+}
+
+.category-underline {
+  position: absolute;
+  bottom: 4rpx;
+  left: 50%;
+  width: 28rpx;
+  height: 5rpx;
+  border-radius: 999rpx;
+  background: #7b573a;
+  transform: translateX(-50%);
+}
+
+.recommend-caption {
+  margin-bottom: 16rpx;
+}
+
+.category-description {
+  display: block;
+  color: #7f6650;
+  font-size: 22rpx;
+  line-height: 1.45;
 }
 
 .recommend-note {
   display: block;
-  max-width: 560rpx;
+  max-width: 100%;
   margin-top: 6rpx;
-  overflow: hidden;
   color: #7f6650;
   font-size: 22rpx;
   line-height: 1.36;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .topbar-actions {
@@ -131,7 +162,7 @@
 
 .filter-panel {
   position: absolute;
-  top: 126rpx;
+  top: 112rpx;
   right: 24rpx;
   left: 24rpx;
   z-index: 30;
@@ -275,10 +306,21 @@
 
 .certification-list {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  max-width: 480rpx;
   align-items: flex-start;
   gap: 10rpx;
 }
+
+.applied-filters { display: flex; flex-wrap: wrap; gap: 10rpx; margin: 8rpx 0 16rpx; }
+.recommend-page .filter-chip { margin: 0; padding: 10rpx 18rpx; min-height: 64rpx; background: #fffdf9; color: #79634e; font-size: 23rpx; line-height: 44rpx; border-radius: 32rpx; }
+.recommend-page .hidden-entry { margin: 20rpx 0 0; padding: 12rpx; background: transparent; color: #79634e; font-size: 24rpx; }
+.quick-action-label { margin-top: 10rpx; color: #fffdf9; font-size: 22rpx; line-height: 1.3; text-shadow: 0 1rpx 6rpx #29241f; }
+.undo-banner { position: fixed; left: 28rpx; right: 28rpx; bottom: calc(126rpx + env(safe-area-inset-bottom)); z-index: 12; display: flex; align-items: center; justify-content: space-between; gap: 20rpx; padding: 12rpx 22rpx; background: #fffdf9; color: #29241f; border: 1rpx solid #decdbb; border-radius: 20rpx; box-shadow: 0 8rpx 28rpx rgba(41,36,31,.14); font-size: 25rpx; }
+.undo-banner text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.undo-banner button, .hidden-member-row button, .hidden-close { flex-shrink: 0; margin: 0; padding: 10rpx 20rpx; min-height: 72rpx; color: #a45d43; background: transparent; font-size: 25rpx; line-height: 52rpx; }
+.hidden-member-row { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; padding: 16rpx 0; border-bottom: 1rpx solid #e8ded2; font-size: 28rpx; }
+.hidden-member-row text { flex: 1; min-width: 0; }
 
 .certification-badge {
   display: flex;
@@ -301,6 +343,15 @@
 .certification-state {
   color: #e8d9c7;
   font-size: 19rpx;
+}
+
+.certification-badge.verified {
+  border-color: rgba(232, 199, 154, 0.6);
+  background: rgba(110, 77, 53, 0.7);
+}
+
+.certification-badge.verified .certification-state {
+  color: #f5d7aa;
 }
 
 .quick-actions {

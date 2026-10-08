@@ -34,6 +34,7 @@ cloud1-d2gza7q9c8d69c721
 3. 不要直接修改计数字段：例如 `hl_salon_events.currentParticipants`。报名和取消报名必须走小程序/云函数，否则人数会和报名表不一致。
 4. 不要直接审批“会员添加主理人申请”。手动审批必须由主理人端小程序处理；微信分享注册链接自动注册必须由云函数处理，否则不会自动写入 `hl_members` 和 `hl_messages`。
 5. 任何会同时影响多个集合的动作，都不要在数据库里手动改，要走小程序或云函数接口。
+6. 学历及金融资产核验只能通过管理员核验接口处理，不在 CMS 编辑 `hl_profiles.showcaseCertification`；资产分类同意和区间公开选项只能由会员本人保存，后台不得代授权。
 
 ## 3. 主理人审批
 
@@ -286,7 +287,11 @@ hl_members
 
 认领邀请与并发锁保存在 `hl_member_identity_claims`。该集合和 `hl_member_private_archives` 一样不配置普通运营视图，只允许云函数读写；邀请链接仅显示脱敏姓名、会员编号和手机号。
 
-高敏内部档案使用 `hl_member_private_archives` 独立集合。该集合不配置普通运营视图，不允许主理人或会员直接查询数据库；只能由 `hlApi` 在核验“认证主理人 + 当前有效会员归属”后读写。验资索引、资产区间、内部生活照、风险备注和合规确认不得复制到 `hl_profiles` 或公开资源池响应。
+高敏内部档案使用 `hl_member_private_archives` 独立集合。该集合不配置普通运营视图，不允许主理人或会员直接查询数据库；只能由 `hlApi` 在核验“认证主理人 + 当前有效会员归属”后读写。验资索引、内部生活照、风险备注和合规确认不得复制到 `hl_profiles` 或公开资源池响应；内部档案中自行填写的资产情况也不能直接作为分类核验结论。
+
+正式学历及金融资产核验的凭据引用、审核备注和历史记录保存在受保护集合 `hl_member_certifications`，不配置普通运营 CMS 视图，只允许云函数管理员核验接口维护。审核接口在服务端事务中同步写入 `hl_profiles.showcaseCertification` 受控摘要，其中已核验的金融资产档位仅供分类门槛及排序使用，不在 CMS 手工编辑。公开接口默认只返回“资产已认证”，只有本人设置 `assetRangeDisclosure = true` 时才返回已核验区间；是否进入资产分类由本人设置 `assetCategoryConsent`，CMS 和主理人不得代为同意。
+
+`hl_profiles`、`hl_member_certifications`、`hl_member_private_archives` 和 `hl_member_identity_claims` 必须在云数据库权限规则中禁止小程序端直接读写。用户资料通过 `hlApi` 读取和保存，公开资料由云函数进行字段投影；CMS 隐藏字段不能替代数据库权限规则。上线前核验实际权限配置，本手册不表示云端权限已配置完成。
 
 内部生活照存放在 `hl_uploads/member-private/<主理人用户ID>/`。云存储权限必须禁止公开读取和目录枚举，只允许上传者写入、删除自己上传的文件；详情接口由 `hlApi` 校验归属后在服务端换取短期地址，客户端不得直接用私照 fileID 换取地址。上线前应以普通会员、其他主理人、已移除会员的原主理人三个身份分别验证拒绝访问。
 

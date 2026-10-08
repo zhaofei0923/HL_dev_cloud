@@ -689,6 +689,12 @@
   margin: 0 24rpx 24rpx;
 }
 
+.relationship-shortcuts { display: flex; gap: 16rpx; margin-bottom: 22rpx; }
+.relationship-shortcut { display: flex; align-items: center; justify-content: space-between; flex: 1; margin: 0; padding: 20rpx 24rpx; border: 1rpx solid #e3d7c9; border-radius: 14rpx; background: #fffdf8; color: #745e4d; font-size: 26rpx; line-height: 1.5; }
+.relationship-shortcut::after { border: 0; }
+.shortcut-count { margin-left: 16rpx; color: #a35d45; font-weight: 700; }
+.conversation-avatar-fallback { display: flex; align-items: center; justify-content: center; background: #efe6da; color: #866b52; font-size: 32rpx; }
+
 .conversation-update-error {
   display: flex;
   gap: 16rpx;

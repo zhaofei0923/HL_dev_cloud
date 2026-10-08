@@ -106,6 +106,8 @@ test('a warm activity list recomputes expiry rather than restoring stale open re
   advance(1001);
   await page.onShow();
   assert.equal(reads, 1);
+  assert.equal(page.data.list.length, 0, 'past activities leave the upcoming list even while its cache is warm');
+  await page.loadPast();
   assert.match(page.data.list[0].statusText, /无法报名/);
 });
 

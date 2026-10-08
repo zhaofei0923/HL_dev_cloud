@@ -1,0 +1,126 @@
+<view class="page safe-bottom certification-page">
+  <view class="certification-heading">
+    <text class="subtitle">提交申请后由工作人员核验，通过后展示认证标识。</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="card certification-message">
+    <text class="section-title">正在读取认证状态</text>
+    <text class="section-note">请稍候，确认最新状态后即可申请。</text>
+  </view>
+  <view wx:elif="{{loadError}}" class="card certification-message">
+    <text class="section-title">{{unsupportedKind ? '认证项目不存在' : '暂时无法确认状态'}}</text>
+    <text class="section-note">{{loadError}}</text>
+    <text wx:if="{{submissionError}}" class="certification-form-error">{{submissionError}}</text>
+    <button wx:if="{{!unsupportedKind}}" class="btn secondary certification-action" bindtap="retryLoad">重新读取</button>
+    <button wx:else class="btn secondary certification-action" bindtap="goProfile">返回我的资料</button>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{entry}}" class="card certification-status-card">
+      <view class="certification-status-heading">
+        <text class="section-title">当前状态</text>
+        <text class="certification-status {{verified ? 'verified' : ''}}">{{statusText}}</text>
+      </view>
+      <text wx:if="{{verifiedDetail}}" class="section-note">{{verifiedDetail}}</text>
+      <text wx:if="{{submittedAtText}}" class="certification-time">申请时间：{{submittedAtText}}</text>
+      <text wx:if="{{reviewedAtText}}" class="certification-time">审核时间：{{reviewedAtText}}</text>
+      <text wx:if="{{feedback}}" class="certification-feedback">审核说明：{{feedback}}</text>
+      <text wx:if="{{receivedMaterialCount}}" class="section-note">已收到 {{receivedMaterialCount}} 份核验材料。</text>
+      <text wx:if="{{pending}}" class="section-note">申请已进入待审核状态，审核期间无需重复提交。如需补充材料，请联系主理人。</text>
+      <text wx:elif="{{verified}}" class="section-note">当前认证已通过。如需更正或补充，可提交更新申请；原有有效认证不会因申请更新自动取消。</text>
+    </view>
+
+    <view wx:if="{{entry && !pending}}" class="card certification-application">
+      <text class="section-title">{{verified ? '更新认证申请' : '提交认证申请'}}</text>
+      <block wx:if="{{kind === 'education'}}">
+        <view class="field">
+          <text class="field-label">选择认证方式</text>
+          <view class="field-input certification-picker {{method ? '' : 'placeholder'}}" bindtap="openMethodPicker" aria-role="button">{{methodText}}</view>
+        </view>
+        <view class="field">
+          <text class="field-label">学校全称</text>
+          <input class="field-input" value="{{institutionName}}" maxlength="120" disabled="{{pending || submitting || uploading}}" bindinput="onInstitutionInput" placeholder="请填写认证材料上的学校全称" />
+          <text class="certification-input-note">请确保与证书或认证报告一致。</text>
+        </view>
+        <view class="field">
+          <text class="field-label">学历来源</text>
+          <picker mode="selector" range="{{educationSourceOptions}}" disabled="{{pending || submitting || uploading || method === 'chsi_code' || method === 'cscse_number'}}" bindchange="onEducationSourceChange">
+            <view class="field-input certification-picker {{educationSource ? '' : 'placeholder'}}">{{educationSourceText}}</view>
+          </picker>
+        </view>
+        <view class="field">
+          <text class="field-label">最高已取得学历</text>
+          <picker mode="selector" range="{{educationOptions}}" disabled="{{pending || submitting || uploading}}" bindchange="onEducationLevelChange">
+            <view class="field-input certification-picker {{educationLevel ? '' : 'placeholder'}}">{{educationLevel || '请选择学历层级'}}</view>
+          </picker>
+        </view>
+        <view wx:if="{{method === 'chsi_code' || method === 'cscse_number'}}" class="field">
+          <text class="field-label">{{method === 'chsi_code' ? '学信网在线验证码' : '教育部留服认证书编号'}}</text>
+          <input class="field-input" value="{{method === 'chsi_code' ? verificationCode : certificateNumber}}" maxlength="100" disabled="{{pending || submitting || uploading}}" bindinput="onVerificationInput" placeholder="{{method === 'chsi_code' ? '请输入有效报告的在线验证码' : '请输入认证书上的完整编号'}}" />
+          <text class="certification-input-note">仅用于核验，本页不会公开显示或保存至本机缓存。</text>
+        </view>
+        <text wx:if="{{method === 'study_proof'}}" class="certification-study-note">在读证明仅作为辅助材料，不代表已取得所读学位。请选择已取得的最高学历；硕士或博士在读不能直接按相应学位入选。</text>
+      </block>
+      <view wx:if="{{kind === 'assets'}}" class="field">
+        <text class="field-label">申报金融资产区间</text>
+        <picker mode="selector" range="{{declaredAssetRangeOptions}}" disabled="{{pending || submitting || uploading}}" bindchange="onAssetRangeChange">
+          <view class="field-input certification-picker {{declaredFinancialAssetRange ? '' : 'placeholder'}}">{{declaredAssetRangeText}}</view>
+        </picker>
+        <text class="certification-input-note">申报区间仅供审核参考，最终认证档位以核验结果为准。</text>
+      </view>
+      <view wx:if="{{requiresMaterials}}" class="certification-upload-section">
+        <text class="field-label">核验材料（{{uploadedMaterials.length}}/3）</text>
+        <text class="certification-upload-help">支持 JPEG（JPG）、PNG 图片和 PDF，至少1份、最多3份，每份不超过500 KB。</text>
+        <text class="certification-input-note">较大图片会自动尝试压缩；PDF 请先压缩。请遮挡与核验无关的证件号码、银行账号。</text>
+        <text class="certification-input-note">{{materials}}</text>
+        <view wx:for="{{uploadedMaterials}}" wx:key="localId" class="certification-material-row {{item.status === 'failed' ? 'failed' : ''}}">
+          <view wx:if="{{item.isPdf}}" class="certification-pdf-label">PDF</view>
+          <image wx:else class="certification-material-preview" src="{{item.previewPath}}" mode="aspectFill"></image>
+          <view class="certification-material-copy">
+            <text class="certification-material-name">材料 {{index + 1}}</text>
+            <text class="certification-input-note">{{item.sizeText}}{{item.sizeText ? ' · ' : ''}}{{item.status === 'uploaded' ? '已加密上传' : item.status === 'uploading' ? '正在处理并上传' : item.status === 'failed' ? '上传失败' : '等待上传'}}</text>
+            <text wx:if="{{item.error}}" class="certification-material-error">{{item.error}}</text>
+          </view>
+          <view class="certification-material-actions">
+            <button wx:if="{{item.status === 'failed'}}" class="certification-remove" data-local-id="{{item.localId}}" disabled="{{pending || submitting || uploading}}" bindtap="retryMaterial" aria-label="重试上传材料{{index + 1}}">重试</button>
+            <button class="certification-remove" data-id="{{item.id}}" data-local-id="{{item.localId}}" disabled="{{pending || submitting || uploading}}" bindtap="removeMaterial" aria-label="移除材料{{index + 1}}">移除</button>
+          </view>
+        </view>
+        <button class="btn secondary certification-upload" loading="{{uploading}}" disabled="{{pending || submitting || uploading || uploadedMaterials.length >= 3}}" bindtap="chooseMaterials">{{uploading ? '正在上传材料' : '添加图片或 PDF'}}</button>
+        <text wx:if="{{uploadError}}" class="certification-form-error">{{uploadError}}</text>
+      </view>
+      <checkbox-group bindchange="onConsentChange">
+        <label class="certification-consent">
+          <checkbox value="confirmed" checked="{{consentConfirmed}}" disabled="{{pending || submitting || uploading}}" color="#8f6544" />
+          <text>本人自愿申请认证，确认申报信息真实，并同意由工作人员核验相关材料；认证结果以后台审核为准。</text>
+        </label>
+      </checkbox-group>
+      <text wx:if="{{submissionError}}" class="certification-form-error">{{submissionError}}</text>
+      <button class="btn gold certification-action" loading="{{submitting}}" disabled="{{pending || submitting || uploading || !consentConfirmed}}" bindtap="submitApplication">{{actionText}}</button>
+    </view>
+
+    <view class="card certification-materials">
+      <text class="section-title">核验说明</text>
+      <text wx:if="{{!requiresMaterials || pending}}" class="section-note">{{materials}}</text>
+      <view class="certification-materials-note">
+        <text>材料仅用于认证审核。未提交的信息不会保存为本机草稿，离开页面将清除未提交材料。</text>
+      </view>
+      <text wx:if="{{kind === 'education'}}" class="section-note">学历信息由本人申报，最终层级以核验结果为准。本科及以上通过核验后可进入学历分类；国内与境外同层级采用相同推荐规则。</text>
+      <text wx:if="{{kind === 'assets'}}" class="section-note">金融资产核验达到200万元及以上，且本人开启“参与资产分类”，才可进入资产分类。认证通过不自动开启分类参与或公开区间；公开页面默认仅显示“资产已认证”。</text>
+      <button class="certification-contact" bindtap="goProfile">返回我的资料，联系主理人</button>
+    </view>
+  </block>
+
+  <view wx:if="{{methodPickerOpen}}" class="certification-sheet-mask" bindtap="closeMethodPicker">
+    <view class="certification-method-sheet" catchtap="stopSheetTap">
+      <view class="certification-sheet-heading">
+        <text class="section-title">选择学历认证方式</text>
+        <button class="certification-sheet-close" bindtap="closeMethodPicker">关闭</button>
+      </view>
+      <view wx:for="{{methodOptions}}" wx:key="value" class="certification-method-option {{method === item.value ? 'active' : ''}}" data-method="{{item.value}}" bindtap="chooseMethod" aria-role="button">
+        <text class="certification-method-title">{{item.title}}</text>
+        <text class="certification-input-note">{{item.note}}</text>
+      </view>
+    </view>
+  </view>
+</view>

@@ -361,3 +361,23 @@ test('activity shares and old invite acceptance register without changing anothe
   await r.hooks.auth.wxLogin({ nickname: '新用户' });
   assert.equal(r.fixtures.hl_users[2].nickname, existingName);
 });
+
+test('activity period is filtered before pagination and past view excludes unpublished events', async () => {
+  const input = fixture();
+  const base = input.hl_salon_events[0];
+  input.hl_salon_events = Array.from({ length: 40 }, (_, index) => ({ ...base,
+    _id: `past-${index}`, id: index + 10, eventDate: '2020-01-01T10:00:00Z' }));
+  input.hl_salon_events.push({ ...base },
+    { ...base, _id: 'ended', id: 70, status: 'ended', eventDate: '2021-01-01T10:00:00Z' },
+    { ...base, _id: 'pending', id: 71, status: 'pending', eventDate: '2022-01-01T10:00:00Z' },
+    { ...base, _id: 'rejected', id: 72, status: 'rejected', eventDate: '2023-01-01T10:00:00Z' });
+  const r = runtime(input);
+  const upcoming = await r.hooks.salon.listEvents({ period: 'upcoming', page: 1, pageSize: 1 }, 3);
+  assert.equal(upcoming.total, 1);
+  assert.equal(upcoming.list[0].id, 1);
+  const past = await r.hooks.salon.listEvents({ period: 'past', page: 1, pageSize: 100 }, 3);
+  assert.equal(past.total, 41);
+  assert.equal(past.list[0].id, 70);
+  assert.equal(past.list.some(row => [1, 71, 72].includes(row.id)), false);
+  assert.equal(r.writes.length, 0);
+});

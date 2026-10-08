@@ -33,6 +33,8 @@ export type LikedMeResult = {
 
 export type RelationshipKind = 'incoming' | 'mutual'
 
+export type HiddenMember = { targetUserId: number; displayName: string; available: boolean }
+
 export type InviteMemberOption = {
   id: number | string
   userId: number
@@ -126,7 +128,73 @@ export type MembershipOrderCheckout = {
   payment: MembershipPaymentConfig
 }
 
+export type MemberCertificationKind = 'identity' | 'education' | 'vehicle' | 'property' | 'assets'
+export type MemberCertificationStatus = 'unsubmitted' | 'pending' | 'approved' | 'rejected' | 'revoked'
+export type EducationCertificationMethod = 'chsi_code' | 'diploma_photo' | 'study_proof' | 'cscse_number'
+export type VerifiedEducationLevel = 'bachelors' | 'master' | 'doctor'
+export type FinancialAssetRange = 'under_500k' | '500k_2m' | '2m_5m' | '5m_10m' | 'over_10m'
+export type CertificationMaterialMime = 'image/jpeg' | 'image/png' | 'application/pdf'
+
+export type CertificationMaterial = {
+  id: string
+  kind: MemberCertificationKind
+  mimeType: CertificationMaterialMime
+  size: number
+  createdAt: string
+}
+
+export type CertificationEntry = {
+  kind: MemberCertificationKind
+  status: MemberCertificationStatus
+  verified: boolean
+  verifiedEducation?: '本科' | '硕士' | '博士'
+  verifiedFinancialAssetRange?: FinancialAssetRange
+  source?: string
+  submittedAt?: string
+  reviewedAt?: string
+  feedback?: string
+  application?: {
+    requestId?: string
+    status: MemberCertificationStatus
+    source?: 'chsi' | 'cscse'
+    educationLevel?: VerifiedEducationLevel
+    institutionName?: string
+    method?: EducationCertificationMethod
+    materialIds?: string[]
+    submittedAt?: string
+  }
+}
+
+export type CertificationOverview = { entries: CertificationEntry[] }
+export type CertificationApplicationInput = {
+  kind: MemberCertificationKind
+  consentConfirmed: true
+  materialIds: string[]
+  source?: 'chsi' | 'cscse'
+  educationLevel?: VerifiedEducationLevel
+  institutionName?: string
+  method?: EducationCertificationMethod
+  verificationCode?: string
+  certificateNumber?: string
+  declaredFinancialAssetRange?: FinancialAssetRange
+}
+
 export const memberApi = {
+  certifications(showError = false) {
+    return request<CertificationOverview>('/user/certifications', { showError })
+  },
+  applyCertification(data: CertificationApplicationInput, showError = false) {
+    return request<CertificationOverview>('/user/certification-requests', { method: 'POST', data, showError })
+  },
+  uploadCertificationMaterial(data: { kind: MemberCertificationKind; mimeType: CertificationMaterialMime; contentBase64: string }, showError = false) {
+    return request<{ material: CertificationMaterial }>('/user/certification-materials', { method: 'POST', data, showError })
+  },
+  removeCertificationMaterial(id: string, showError = false) {
+    return request<{ removed: boolean }>(`/user/certification-materials/${encodeURIComponent(id)}`, { method: 'DELETE', showError })
+  },
+  certificationMaterial(id: string, showError = false) {
+    return request<{ material: CertificationMaterial; contentBase64: string }>(`/user/certification-materials/${encodeURIComponent(id)}`, { showError })
+  },
   list(data?: Record<string, any>) {
     return request('/member/list', { data })
   },
@@ -136,8 +204,20 @@ export const memberApi = {
   resources(data?: Record<string, any>) {
     return request('/member/resources', { data })
   },
-  showcase(data?: Record<string, any>) {
-    return request('/member/showcase', { data })
+  async showcase(data?: Record<string, unknown>) {
+    const result = await request<Record<string, unknown>>('/member/showcase', { data })
+    if (data && data.category && data.category !== 'recommend' && result.category !== data.category) {
+      throw new Error('该分类暂不可用，请稍后重试')
+    }
+    return result
+  },
+  showcaseDetail(id: number | string) {
+    return request<Record<string, unknown> & { id: number | string }>(`/member/showcase/${encodeURIComponent(String(id))}`, { showError: false })
+  },
+  hidden(page = 1) {
+    return request<{ list: HiddenMember[]; total: number; page: number; pageSize: number }>('/member/hidden', {
+      data: { page, pageSize: 20 }, showError: false
+    })
   },
   likedMe(data?: Record<string, unknown>) {
     return request<LikedMeResult>('/member/liked-me', { data })

@@ -5,7 +5,8 @@
   </view>
 
   <view class="segment">
-    <button class="btn {{active === 'all' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadAll">全部活动</button>
+    <button class="btn {{active === 'all' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadAll">近期活动</button>
+    <button class="btn {{active === 'past' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadPast">往期活动</button>
     <button class="btn {{active === 'mine' ? 'active' : ''}}" disabled="{{loading}}" bindtap="loadMine">我的报名</button>
   </view>
 
@@ -36,8 +37,10 @@
     </block>
 
     <view wx:else class="empty">
-      <text class="empty-title">{{loading ? '正在加载活动' : '暂无开放活动'}}</text>
-      <text class="empty-note">{{loading ? '请稍候，正在整理近期活动安排。' : '新的线下沙龙开放后会第一时间在这里展示。'}}</text>
+      <text class="empty-title">{{loading ? '正在加载活动' : (active === 'mine' ? '还没有报名的活动' : (active === 'past' ? '暂无往期活动' : '暂无近期活动'))}}</text>
+      <text class="empty-note">{{loading ? '请稍候，正在整理活动安排。' : (active === 'mine' ? '去近期活动看看，选择适合你的时间和地点。' : (active === 'past' ? '已结束的活动会保留在这里。' : '新的活动开放后会在这里展示，也可以先看看往期活动。'))}}</text>
+      <button wx:if="{{!loading && active === 'all'}}" class="btn ghost" bindtap="loadPast">查看往期活动</button>
+      <button wx:if="{{!loading && active === 'mine'}}" class="btn ghost" bindtap="loadAll">查看近期活动</button>
     </view>
   </view>
 

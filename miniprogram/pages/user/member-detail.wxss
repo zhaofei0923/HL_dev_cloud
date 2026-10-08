@@ -247,6 +247,9 @@
   box-shadow: 0 -12rpx 30rpx rgba(56, 42, 29, 0.08);
 }
 
+.detail-action-note { grid-column: 1 / -1; color: #79634e; font-size: 23rpx; line-height: 1.4; text-align: center; }
+.detail-page { padding-bottom: calc(190rpx + env(safe-area-inset-bottom)); }
+
 .detail-action-dock .detail-secondary-action,
 .detail-action-dock .detail-primary-action {
   box-sizing: border-box;

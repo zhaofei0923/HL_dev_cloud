@@ -23,7 +23,7 @@
     <button class="text-command" bindtap="loadOverview">重新加载</button>
   </view>
 
-  <view class="membership-section phone-section">
+  <view wx:if="{{onlineCheckout}}" class="membership-section phone-section">
     <view class="section-copy">
       <text class="section-title">微信手机号</text>
       <text class="section-note">用于确认会员订单与服务联系，可随时拒绝授权。</text>
@@ -39,23 +39,20 @@
     >授权手机号</button>
   </view>
 
-  <view class="membership-section plan-section">
+  <view wx:if="{{loading || plans.length}}" class="membership-section plan-section">
     <view class="section-copy">
       <text class="section-title">会员套餐</text>
       <text class="section-note">选择适合你的会员期限。</text>
     </view>
 
     <view wx:if="{{loading && !plans.length}}" class="empty-state">正在加载会员套餐</view>
-    <view wx:elif="{{!plans.length}}" class="empty-state">会员套餐待后台配置</view>
-    <view wx:else class="plan-list">
-      <view
+    <radio-group wx:else class="plan-list" bindchange="onPlanChange">
+      <label
         wx:for="{{plans}}"
         wx:key="planCode"
         class="plan-row {{selectedPlanCode === item.planCode ? 'selected' : ''}}"
-        data-code="{{item.planCode}}"
-        bindtap="selectPlan"
       >
-        <view class="plan-selector"><view class="selector-dot"></view></view>
+        <radio class="plan-radio" value="{{item.planCode}}" checked="{{selectedPlanCode === item.planCode}}" disabled="{{paymentStarting || confirming || orderCanResume}}" color="#a45d43" aria-label="{{item.title}}，{{item.priceText}}，{{item.durationText}}"></radio>
         <view class="plan-copy">
           <view class="plan-title-row">
             <text class="plan-title">{{item.title}}</text>
@@ -67,21 +64,34 @@
           <text class="price-value">{{item.priceText}}</text>
           <text class="price-duration">{{item.durationText}}</text>
         </view>
-      </view>
-    </view>
+      </label>
+    </radio-group>
   </view>
 
-  <view class="membership-actions">
+  <view wx:if="{{!loading && !onlineCheckout && !errorText}}" class="membership-guide">
+    <text class="section-title">由主理人协助开通</text>
+    <text class="section-note">联系主理人了解适合你的服务方案、费用和有效期，确认后开通会员权益。</text>
+  </view>
+
+  <view wx:if="{{lastOrderId}}" class="order-feedback" aria-role="status">
+    <text class="section-title">{{orderTitle}}</text>
+    <text class="section-note">{{orderPlanText}}</text>
+    <text class="section-note">{{orderNote}}</text>
+    <button class="text-command" bindtap="refreshOrderStatus" loading="{{orderChecking}}" disabled="{{orderChecking || paymentStarting || confirming}}">查询订单状态</button>
+  </view>
+
+  <view class="membership-actions {{onlineCheckout ? '' : 'contact-only'}}">
     <button
+      wx:if="{{onlineCheckout}}"
       class="btn pay-command"
       bindtap="startPayment"
       loading="{{paymentStarting || confirming}}"
       disabled="{{loading || paymentStarting || confirming || !plans.length}}"
-    >{{paymentActionText}}</button>
-    <button class="btn ghost" bindtap="contactMatchmaker">联系主理人开通</button>
+    >{{orderCanResume ? '继续支付原订单' : paymentActionText}}</button>
+    <button class="btn {{onlineCheckout ? 'ghost' : ''}}" bindtap="contactMatchmaker">{{overview.isPremiumMember ? '联系主理人咨询' : '联系主理人开通'}}</button>
   </view>
 
-  <view class="payment-trust">
+  <view wx:if="{{onlineCheckout}}" class="payment-trust">
     <text>付款完成后，会员权益将在确认成功后自动生效。</text>
   </view>
 </view>

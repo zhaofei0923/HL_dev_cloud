@@ -1,13 +1,20 @@
 <view class="page recommend-page safe-bottom with-bottom-nav">
   <view class="recommend-topbar">
     <view class="recommend-heading">
-      <text class="recommend-title">推荐</text>
-      <text class="recommend-note">{{loading ? '正在整理会员资料' : countText}}</text>
+      <view class="recommend-categories" role="tablist" aria-label="会员分类">
+        <view wx:for="{{categories}}" wx:key="id"
+          class="recommend-category {{category === item.id ? 'active' : ''}}"
+          role="tab" aria-selected="{{category === item.id}}"
+          data-category="{{item.id}}" bindtap="switchCategory">
+          <text>{{item.label}}</text>
+          <view wx:if="{{category === item.id}}" class="category-underline"></view>
+        </view>
+      </view>
     </view>
     <view class="topbar-actions">
       <button
-        class="filter-trigger {{filterOpen ? 'active' : ''}}"
-        aria-label="筛选"
+        class="filter-trigger {{filterOpen || filterChips.length ? 'active' : ''}}"
+        aria-label="筛选，已应用{{filterChips.length}}项条件"
         bindtap="toggleFilter"
       >
         <view class="filter-lines">
@@ -19,12 +26,22 @@
     </view>
   </view>
 
+  <view wx:if="{{filterChips.length}}" class="applied-filters">
+    <button wx:for="{{filterChips}}" wx:key="key" class="filter-chip" data-key="{{item.key}}"
+      aria-label="移除筛选：{{item.label}}" bindtap="removeFilter">{{item.label}} ×</button>
+  </view>
+
+  <view class="recommend-caption">
+    <text wx:if="{{categoryDescription}}" class="category-description">{{categoryDescription}}</text>
+    <text class="recommend-note">{{loading ? '正在整理会员资料' : countText}}</text>
+  </view>
+
   <view wx:if="{{filterOpen}}" class="filter-panel">
     <view class="field search-field">
       <input
         class="field-input"
-        placeholder="城市 / 职业 / 学历"
-        value="{{keyword}}"
+        placeholder="搜索职业、学历等关键词"
+        value="{{draftKeyword}}"
         confirm-type="search"
         bindinput="onKeyword"
         bindconfirm="search"
@@ -33,22 +50,23 @@
     <view class="field compact-field">
       <input
         class="field-input"
-        placeholder="单独筛选城市"
-        value="{{city}}"
+        placeholder="城市，如：上海"
+        value="{{draftCity}}"
         confirm-type="search"
         bindinput="onCity"
         bindconfirm="search"
       />
     </view>
     <view class="quick-filter-row">
-      <view class="quick-filter {{gender === '' ? 'active' : ''}}" data-gender="" bindtap="setGender">全部</view>
-      <view class="quick-filter {{gender === '1' ? 'active' : ''}}" data-gender="1" bindtap="setGender">男士</view>
-      <view class="quick-filter {{gender === '2' ? 'active' : ''}}" data-gender="2" bindtap="setGender">女士</view>
+      <view class="quick-filter {{draftGender === '' ? 'active' : ''}}" data-gender="" bindtap="setGender">全部</view>
+      <view class="quick-filter {{draftGender === '1' ? 'active' : ''}}" data-gender="1" bindtap="setGender">男士</view>
+      <view class="quick-filter {{draftGender === '2' ? 'active' : ''}}" data-gender="2" bindtap="setGender">女士</view>
     </view>
     <view class="button-row filter-buttons">
       <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="search">应用筛选</button>
       <button class="btn secondary" disabled="{{loading}}" bindtap="clearKeyword">重置</button>
     </view>
+    <button class="hidden-entry" bindtap="openHiddenPanel">管理不再推荐的会员</button>
   </view>
 
   <view class="recommend-stage">
@@ -65,10 +83,9 @@
         <text wx:if="{{!currentMember.hasUploadedPhotos}}" class="photo-placeholder-badge recommend-photo-placeholder">系统示意图</text>
         <view class="cover-shade"></view>
         <view class="card-top-meta">
-          <view class="certification-list" aria-label="认证信息">
-            <view wx:for="{{currentMember.certificationBadges}}" wx:key="label" class="certification-badge">
+          <view class="certification-list" aria-label="已通过的认证">
+            <view wx:for="{{currentMember.certificationBadges}}" wx:key="label" class="certification-badge {{item.verified ? 'verified' : ''}}">
               <text class="certification-label">{{item.label}}</text>
-              <text class="certification-state">{{item.statusText}}</text>
             </view>
           </view>
           <text wx:if="{{positionText}}" class="position-chip">{{positionText}}</text>
@@ -101,6 +118,9 @@
           <view wx:if="{{currentMember.cardTags.length}}" class="card-tag-row">
             <text wx:for="{{currentMember.cardTags}}" wx:key="*this" class="card-tag">{{item}}</text>
           </view>
+          <view wx:if="{{currentMember.financialAssetText}}" class="card-tag-row">
+            <text class="card-tag">已核验金融资产：{{currentMember.financialAssetText}}</text>
+          </view>
           <view class="quote-block">
             <text class="quote-mark">“</text>
             <text class="quote-text">{{currentMember.partnerPreview}}</text>
@@ -119,9 +139,10 @@
           <view class="action-icon action-heart {{currentMember.isFavorite ? 'active' : ''}}"><view class="heart-shape"></view></view>
         </button>
         <button class="quick-action" hover-class="action-icon-hover"
-          aria-label="不再查看" disabled="{{loading || hideLoading || favoriteLoading || sendingGiftId !== '' || actionAnimating || giftPanelOpen}}"
+          aria-label="不再推荐，可撤销" disabled="{{loading || hideLoading || favoriteLoading || sendingGiftId !== '' || actionAnimating || giftPanelOpen || filterOpen}}"
           bindtap="hideCurrent">
           <view class="action-icon action-hide"><view class="x-shape"><view class="x-line x-left"></view><view class="x-line x-right"></view></view></view>
+          <text class="quick-action-label">不再推荐</text>
         </button>
       </view>
       </view>
@@ -143,12 +164,36 @@
     </view>
   </view>
 
+  <view wx:if="{{undoHidden}}" class="undo-banner" aria-live="polite">
+    <text>已不再推荐{{undoHidden.displayName}}</text>
+    <button loading="{{restoringUserId === undoHidden.targetUserId}}" disabled="{{restoringUserId || actionAnimating}}" bindtap="undoHide">撤销</button>
+  </view>
+
+  <view wx:if="{{hiddenPanelOpen}}" class="gift-mask" catchtap="closeHiddenPanel" catchtouchmove="noop"></view>
+  <view wx:if="{{hiddenPanelOpen}}" class="gift-panel hidden-panel" catchtap="noop">
+    <view class="gift-panel-head">
+      <view><text class="gift-panel-title">不再推荐的会员</text><text class="gift-panel-subtitle">恢复后，仍需符合当前分类与筛选条件</text></view>
+      <button class="hidden-close" bindtap="closeHiddenPanel">关闭</button>
+    </view>
+    <scroll-view class="gift-panel-scroll" scroll-y>
+      <view wx:for="{{hiddenMembers}}" wx:key="targetUserId" class="hidden-member-row">
+        <text>{{item.displayName}}</text>
+        <button data-user-id="{{item.targetUserId}}" bindtap="restoreHidden"
+          loading="{{restoringUserId === item.targetUserId}}" disabled="{{restoringUserId || hiddenLoading}}">恢复推荐</button>
+      </view>
+      <view wx:if="{{hiddenError}}" class="gift-loading">{{hiddenError}}</view>
+      <view wx:elif="{{!hiddenMembers.length}}" class="gift-loading">{{hiddenLoading ? '正在加载' : '还没有不再推荐的会员'}}</view>
+      <button wx:if="{{hiddenError || hiddenMembers.length < hiddenTotal}}" class="hidden-entry"
+        loading="{{hiddenLoading}}" disabled="{{hiddenLoading || restoringUserId}}" bindtap="loadMoreHidden">{{hiddenError ? '重试' : '加载更多'}}</button>
+    </scroll-view>
+  </view>
+
   <view wx:if="{{giftPanelOpen}}" class="gift-mask" catchtap="closeGiftPanel" catchtouchmove="noop"></view>
   <view wx:if="{{giftPanelOpen}}" class="gift-panel" catchtap="noop">
     <view class="gift-panel-head">
       <view>
-        <text class="gift-panel-title">赠送礼物</text>
-        <text class="gift-panel-subtitle">选择一个免费虚拟礼物</text>
+        <text class="gift-panel-title">赠送给 {{currentMember.displayName}}</text>
+        <text class="gift-panel-subtitle">免费虚拟礼物 · 点击即送出，同时表达喜欢</text>
       </view>
       <view
         class="gift-close {{sendingGiftId !== '' ? 'disabled' : ''}}"

@@ -1,4 +1,5 @@
-<view class="page safe-bottom with-bottom-nav profile-page">
+<view class="page safe-bottom with-bottom-nav profile-page {{editingProfile ? 'editing-mode' : ''}}">
+  <block wx:if="{{!editingProfile}}">
   <view class="profile-summary">
     <image class="profile-summary-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
     <view class="profile-summary-copy">
@@ -17,7 +18,38 @@
         <text class="section-note">{{completionNote}}</text>
       </view>
     </view>
-    <button class="profile-primary-action" bindtap="toggleProfileEditor">{{editingProfile ? '收起编辑' : '编辑资料'}}</button>
+    <button class="profile-primary-action" bindtap="toggleProfileEditor">{{formDirty ? '继续编辑' : '编辑资料'}}</button>
+  </view>
+
+  <text wx:if="{{formDirty}}" class="profile-save-feedback dirty">资料有修改尚未保存，点击“继续编辑”完成保存。</text>
+
+  <view class="certification-center">
+    <view class="certification-center-heading" bindtap="toggleCertifications" aria-role="button" aria-label="{{certificationsExpanded ? '收起认证中心' : '展开认证中心'}}">
+      <view class="profile-menu-copy">
+        <text class="section-title">认证中心</text>
+        <text class="section-note">{{certificationsLoading ? '读取认证状态中' : certificationsError ? '认证状态暂未读取' : certificationSummary}}</text>
+      </view>
+      <text class="profile-menu-state">{{certificationsExpanded ? '收起' : '查看全部'}}</text>
+    </view>
+    <view wx:if="{{certificationsError}}" class="certification-load-error">
+      <text>{{certificationsError}}</text>
+      <button class="certification-retry" bindtap="retryCertifications" disabled="{{certificationsLoading}}">重试</button>
+    </view>
+    <view wx:if="{{!certificationsExpanded}}" class="certification-quick-links">
+      <button class="certification-quick-link" data-kind="education" bindtap="openCertification">学历认证</button>
+      <button class="certification-quick-link" data-kind="assets" bindtap="openCertification">资产认证</button>
+    </view>
+    <block wx:if="{{certificationsExpanded}}">
+    <text class="certification-explainer">小程序内上传材料，认证状态以后台审核结果为准。</text>
+    <view wx:for="{{certificationRows}}" wx:key="kind" class="profile-menu-row certification-row" data-kind="{{item.kind}}" bindtap="openCertification" aria-role="button" aria-label="{{item.title}}，{{certificationsError ? '状态未读取' : item.state}}">
+      <view class="profile-menu-copy">
+        <text class="profile-menu-title">{{item.title}}</text>
+        <text class="profile-menu-note">{{item.note}}</text>
+      </view>
+      <text class="certification-state {{item.verified && !certificationsError ? 'verified' : ''}}">{{certificationsLoading ? '读取中' : certificationsError ? '状态未读取' : item.state}}</text>
+      <view class="profile-menu-chevron"></view>
+    </view>
+    </block>
   </view>
 
   <view class="profile-menu">
@@ -100,44 +132,44 @@
   </block>
 
   <view wx:if="{{accountPanelOpen}}" class="card profile-subpanel account-panel">
+    <text class="section-note preference-save-note">以下设置即时保存，与资料文字的保存分别处理。</text>
+    <text class="profile-save-feedback {{saveState}}" aria-live="polite">{{saveStatus}}</text>
     <view class="privacy-row">
       <view class="privacy-copy">
         <text class="section-title">资料展示</text>
         <text class="section-note">开启后进入会员浏览与主理人资源池；联系方式仍不公开。</text>
       </view>
-      <switch checked="{{form.displayEnabled}}" color="#b4814f" bindchange="onDisplayEnabledChange"></switch>
+      <switch checked="{{form.displayEnabled}}" color="#a45d43" disabled="{{!profileReady || loading || saving}}" bindchange="onDisplayEnabledChange"></switch>
+    </view>
+    <view class="divider"></view>
+    <view class="privacy-row">
+      <view class="privacy-copy">
+        <text class="section-title">参与资产分类</text>
+        <text class="section-note">开启后，金融资产核验达到200万元及以上时，可进入资产分类。</text>
+      </view>
+      <switch checked="{{form.assetCategoryConsent}}" color="#a45d43" data-field="assetCategoryConsent" disabled="{{!profileReady || loading || saving}}" bindchange="onAssetPreferenceChange"></switch>
+    </view>
+    <view class="divider"></view>
+    <view class="privacy-row">
+      <view class="privacy-copy">
+        <text class="section-title">公开已核验资产区间</text>
+        <text class="section-note">开启后可公开已核验的金融资产区间；关闭时仅显示“资产已认证”。</text>
+      </view>
+      <switch checked="{{form.assetRangeDisclosure}}" color="#a45d43" data-field="assetRangeDisclosure" disabled="{{!profileReady || loading || saving}}" bindchange="onAssetPreferenceChange"></switch>
     </view>
     <view class="divider"></view>
     <button class="btn ghost logout-action" bindtap="logout">退出登录</button>
   </view>
+  </block>
 
   <view wx:if="{{editingProfile}}" class="card form-card profile-subpanel">
     <view class="profile-panel-heading">
       <view>
         <text class="section-title">编辑资料</text>
-        <text class="section-note">按实际情况填写，保存后会同步档案预览。</text>
+        <text class="section-note">文字修改点击保存后生效；照片单独即时保存。</text>
       </view>
-      <button class="panel-close" bindtap="toggleProfileEditor">收起</button>
+      <button class="panel-close" disabled="{{saving || uploadingPhotos}}" bindtap="toggleProfileEditor">返回我的</button>
     </view>
-
-    <view class="form-section">
-      <text class="section-title">形象资料</text>
-      <text class="section-note">第一张照片会自动作为头像和封面；未上传时仅显示系统示意图。</text>
-      <view wx:if="{{photoCount}}" class="photo-grid">
-        <view wx:for="{{form.photoDisplayUrls}}" wx:key="*this" class="photo-tile">
-          <image class="photo-thumb" src="{{item}}" mode="aspectFill"></image>
-          <view class="photo-delete" data-index="{{index}}" catchtap="deletePhoto" aria-role="button" aria-label="删除照片">
-            <view class="photo-delete-line photo-delete-line-a"></view>
-            <view class="photo-delete-line photo-delete-line-b"></view>
-          </view>
-        </view>
-      </view>
-      <view wx:else class="photo-empty">尚未上传本人照片，当前仅使用系统示意图。</view>
-      <text class="photo-ratio-note">支持 1:1 方图、3:2 横图、4:5 竖图；上传后可选择截取区域。</text>
-      <button class="btn ghost upload-wall-btn" bindtap="choosePhotos">上传照片</button>
-    </view>
-
-    <view class="divider"></view>
 
     <view class="form-section">
       <text class="section-title">基础信息</text>
@@ -178,6 +210,26 @@
     <view class="divider"></view>
 
     <view class="form-section">
+      <text class="section-title">形象资料</text>
+      <text class="section-note">第一张照片会自动作为头像和封面；未上传时仅显示系统示意图。</text>
+      <view wx:if="{{photoCount}}" class="photo-grid">
+        <view wx:for="{{form.photoDisplayUrls}}" wx:key="*this" class="photo-tile">
+          <image class="photo-thumb" src="{{item}}" mode="aspectFill"></image>
+          <view class="photo-delete" data-index="{{index}}" catchtap="deletePhoto" aria-role="button" aria-disabled="{{saving || uploadingPhotos}}" aria-label="删除第{{index + 1}}张照片">
+            <view class="photo-delete-disc"></view>
+            <view class="photo-delete-line photo-delete-line-a"></view>
+            <view class="photo-delete-line photo-delete-line-b"></view>
+          </view>
+        </view>
+      </view>
+      <view wx:else class="photo-empty">尚未上传本人照片，当前仅使用系统示意图。</view>
+      <text class="photo-ratio-note">支持 1:1 方图、3:2 横图、4:5 竖图；上传后可选择截取区域。</text>
+      <button class="btn ghost upload-wall-btn" loading="{{uploadingPhotos}}" disabled="{{!profileReady || saving || uploadingPhotos}}" bindtap="choosePhotos">{{uploadingPhotos ? '正在处理照片' : '上传照片并保存'}}</button>
+    </view>
+
+    <view class="divider"></view>
+
+    <view class="form-section">
       <text class="section-title">城市与职业</text>
       <view class="field">
         <text class="field-label">城市</text>
@@ -199,6 +251,7 @@
           </picker>
         </view>
       </view>
+      <text class="section-note">此处填写学历信息；进入学历分类需通过核验，支持国内、海外及港澳台学历。</text>
       <view class="field">
         <text class="field-label">职业</text>
         <picker mode="selector" range="{{occupationOptions}}" bindchange="onOccupationChange">
@@ -248,10 +301,13 @@
       </view>
     </view>
 
-    <button class="btn gold save-btn" loading="{{saving}}" disabled="{{saving || loading}}" bindtap="save">保存资料</button>
+    <view class="profile-save-bar">
+      <text class="profile-save-feedback {{saveState}}" aria-live="polite">{{saveStatus}}</text>
+      <button class="btn gold save-btn" loading="{{saving}}" disabled="{{!profileReady || saving || loading || uploadingPhotos || !formDirty}}" bindtap="save">{{saving ? '保存中' : formDirty ? '保存资料' : '已保存'}}</button>
+    </view>
   </view>
 
-  <view wx:if="{{previewOpen}}" class="card preview-card profile-subpanel">
+  <view wx:if="{{previewOpen && !editingProfile}}" class="card preview-card profile-subpanel">
     <view class="profile-panel-heading">
       <view>
         <text class="section-title">档案预览</text>

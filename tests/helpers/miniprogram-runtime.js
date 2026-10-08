@@ -106,6 +106,7 @@ function runtime(relativePath, overrides = {}) {
     showLoading() {}, hideLoading() {},
     nextTick: callback => callback()
   };
+  Object.assign(wx, overrides.wx || {});
   const tabBar = { setData: data => calls.tabUpdates.push(data) };
   const context = vm.createContext({
     Page: options => {

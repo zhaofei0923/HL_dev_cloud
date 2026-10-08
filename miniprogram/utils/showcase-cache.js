@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.applyShowcaseInteraction = exports.mergeShowcasePage = exports.rememberShowcaseSelection = exports.requestShowcase = exports.readShowcaseCache = exports.normalizeFavoriteQuota = exports.showcaseQueryKey = exports.showcaseSessionScope = exports.ShowcaseRequestDiscarded = exports.SHOWCASE_CACHE_TTL_MS = void 0;
+exports.invalidateShowcaseCategory = exports.applyShowcaseInteraction = exports.mergeShowcasePage = exports.rememberShowcaseSelection = exports.requestShowcase = exports.readShowcaseCache = exports.normalizeFavoriteQuota = exports.showcaseQueryKey = exports.showcaseSessionScope = exports.ShowcaseRequestDiscarded = exports.SHOWCASE_CACHE_TTL_MS = void 0;
 exports.SHOWCASE_CACHE_TTL_MS = 45 * 1000;
 const PUBLIC_FIELDS = [
     'id', 'userId', 'source', 'sortId', 'status', 'createdAt', 'updatedAt',
@@ -8,7 +8,9 @@ const PUBLIC_FIELDS = [
     'incomeRange', 'city', 'province', 'nativePlace', 'maritalStatus', 'houseStatus',
     'carStatus', 'selfIntro', 'partnerRequirement', 'photos', 'avatarUrl', 'coverUrl',
     'isVerified', 'memberType', 'identityStatus', 'identityStatusText',
-    'profileCompletion', 'displayStatus', 'lastRecommendStatus'
+    'profileCompletion', 'displayStatus', 'lastRecommendStatus',
+    'identityVerified', 'educationVerified', 'verifiedEducation', 'vehicleVerified', 'propertyVerified',
+    'assetVerified', 'financialAssetRange'
 ];
 const snapshots = new Map();
 const pendingReads = new Map();
@@ -42,7 +44,7 @@ function showcaseSessionScope(token, user, env) {
 }
 exports.showcaseSessionScope = showcaseSessionScope;
 function showcaseQueryKey(query) {
-    return JSON.stringify([query.page, query.pageSize, query.keyword, query.city, query.gender]);
+    return JSON.stringify([query.page, query.pageSize, query.keyword, query.city, query.gender, query.category || 'recommend']);
 }
 exports.showcaseQueryKey = showcaseQueryKey;
 function synchronizeScope(scope) {
@@ -102,12 +104,12 @@ function normalizeResult(value, query) {
         favoriteQuota: normalizeFavoriteQuota(body.favoriteQuota)
     };
 }
-function readShowcaseCache(scope, query) {
+function readShowcaseCache(scope, query, allowStale = false) {
     synchronizeScope(scope);
     if (!scope)
         return null;
     const snapshot = snapshots.get(showcaseQueryKey(query));
-    if (!snapshot || Date.now() - snapshot.loadedAt >= exports.SHOWCASE_CACHE_TTL_MS)
+    if (!snapshot || !allowStale && Date.now() - snapshot.loadedAt >= exports.SHOWCASE_CACHE_TTL_MS)
         return null;
     return snapshot;
 }
@@ -198,31 +200,53 @@ function mergeShowcasePage(scope, query, incoming) {
     return snapshot;
 }
 exports.mergeShowcasePage = mergeShowcasePage;
-function applyShowcaseInteraction(scope, query, targetUserId, action, favoriteQuota = null, active = true) {
+function applyShowcaseInteraction(scope, _query, targetUserId, action, favoriteQuota = null, active = true) {
     if (!scope || activeScope !== scope)
         return;
     revision += 1;
     pendingReads.clear();
-    const key = showcaseQueryKey(query);
-    const snapshot = snapshots.get(key);
-    snapshots.clear();
-    if (!snapshot)
-        return;
-    snapshot.revision = revision;
     const matchesTarget = (row) => Number(row.userId) === targetUserId;
-    const removed = action === 'hide' ? snapshot.result.list.filter(matchesTarget).length : 0;
-    snapshot.result = {
-        ...snapshot.result,
-        list: action === 'hide'
-            ? snapshot.result.list.filter(row => !matchesTarget(row))
-            : snapshot.result.list.map(row => matchesTarget(row) ? {
-                ...row,
-                viewerState: { isFavorite: active, isHidden: false }
-            } : row),
-        total: Math.max(snapshot.result.total - removed, 0),
-        favoriteQuota: favoriteQuota || snapshot.result.favoriteQuota
-    };
-    // Keep the original read timestamp: mutations do not extend public-profile freshness.
-    snapshots.set(key, snapshot);
+    snapshots.forEach(snapshot => {
+        snapshot.revision = revision;
+        if (action === 'hide' && !active) {
+            // Restore from the current server qualifications, keeping each category's browse position.
+            snapshot.loadedAt = Math.min(snapshot.loadedAt, Date.now() - exports.SHOWCASE_CACHE_TTL_MS);
+            return;
+        }
+        const removed = action === 'hide' ? snapshot.result.list.filter(matchesTarget).length : 0;
+        snapshot.result = {
+            ...snapshot.result,
+            list: action === 'hide'
+                ? snapshot.result.list.filter(row => !matchesTarget(row))
+                : snapshot.result.list.map(row => matchesTarget(row) ? {
+                    ...row,
+                    viewerState: { isFavorite: active, isHidden: false }
+                } : row),
+            total: Math.max(snapshot.result.total - removed, 0),
+            favoriteQuota: favoriteQuota || snapshot.result.favoriteQuota
+        };
+        if (removed) {
+            const selectedIndex = snapshot.result.list.findIndex(row => String(row.id) === snapshot.selectedMemberId);
+            snapshot.currentIndex = selectedIndex >= 0 ? selectedIndex
+                : Math.min(snapshot.currentIndex, Math.max(snapshot.result.list.length - 1, 0));
+            const selected = snapshot.result.list[snapshot.currentIndex];
+            snapshot.selectedMemberId = selected ? String(selected.id) : '';
+        }
+        // Mutations do not extend public-profile freshness, for any category or filter.
+    });
 }
 exports.applyShowcaseInteraction = applyShowcaseInteraction;
+function invalidateShowcaseCategory(scope, category) {
+    if (!scope || activeScope !== scope)
+        return;
+    revision += 1;
+    pendingReads.clear();
+    snapshots.forEach((snapshot, key) => {
+        snapshot.revision = revision;
+        const queryParts = JSON.parse(key);
+        if (Array.isArray(queryParts) && queryParts[5] === category) {
+            snapshot.loadedAt = Math.min(snapshot.loadedAt, Date.now() - exports.SHOWCASE_CACHE_TTL_MS);
+        }
+    });
+}
+exports.invalidateShowcaseCategory = invalidateShowcaseCategory;

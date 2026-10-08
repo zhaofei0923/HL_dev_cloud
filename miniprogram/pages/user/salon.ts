@@ -3,7 +3,7 @@ import { pageSessionScope } from '../../utils/page-session'
 import { syncUserTabBar } from '../../utils/user-navigation'
 import { salonAvailability } from '../../utils/salon-availability'
 
-type SalonTab = 'all' | 'mine'
+type SalonTab = 'all' | 'past' | 'mine'
 type SalonSnapshot = { list: any[]; loadedAt: number }
 const SALON_TTL_MS = 30 * 1000
 
@@ -15,7 +15,8 @@ function formatDate(value: string) {
   if (!value) return '时间待定'
   const date = new Date(value)
   if (isNaN(date.getTime())) return value
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+  const weekday = ['日', '一', '二', '三', '四', '五', '六'][date.getDay()]
+  return `${date.getMonth() + 1}月${date.getDate()}日 周${weekday} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 function normalizeSalonRow(row: any) {
@@ -39,9 +40,20 @@ function normalizeSalonRow(row: any) {
       ? (maxParticipants > 0 ? `剩余 ${Math.max(maxParticipants - currentParticipants, 0)} 席` : '席位不限')
       : availability.statusText,
     priceText: price > 0 ? `¥${price}` : '免费',
+    isPast: availability.expired || event.status === 'ended' || event.status === 'cancelled',
     raw: event,
     registered
   }
+}
+
+function visibleSalons(rows: ReturnType<typeof normalizeSalonRow>[], active: SalonTab) {
+  if (active === 'mine') return rows
+  return rows.filter(row => active === 'past' ? row.isPast : !row.isPast)
+    .sort((a, b) => {
+      const left = new Date(a.raw.eventDate || '').getTime() || 0
+      const right = new Date(b.raw.eventDate || '').getTime() || 0
+      return active === 'past' ? right - left : left - right
+    })
 }
 
 Page({
@@ -55,7 +67,7 @@ Page({
     active: 'all' as SalonTab,
     list: [] as any[],
     loading: false,
-    listTitle: '近期精选',
+    listTitle: '即将开始',
     listNote: '点击活动卡片查看详情和报名。'
   },
 
@@ -74,7 +86,7 @@ Page({
       this._salonGeneration += 1
       this._salonSnapshots = {}
       this._salonPending = null
-      this.setData({ active: 'all', list: [], loading: false, listTitle: '近期精选', listNote: '点击活动卡片查看详情和报名。' })
+      this.setData({ active: 'all', list: [], loading: false, listTitle: '即将开始', listNote: '点击活动卡片查看详情和报名。' })
     }
     if (scope) return scope
     wx.redirectTo({ url: '/pages/index/index' })
@@ -89,6 +101,10 @@ Page({
     return this.loadSalons('mine', true)
   },
 
+  loadPast() {
+    return this.loadSalons('past', true)
+  },
+
   loadSalons(active: SalonTab, force = false): Promise<void> {
     const scope = this.synchronizeSession()
     if (!scope) return Promise.resolve()
@@ -98,21 +114,21 @@ Page({
     this._salonPending = null
     const generation = ++this._salonGeneration
     const cached = this._salonSnapshots[active]
-    const listTitle = active === 'mine' ? '我的报名' : '近期精选'
-    const listNote = active === 'mine' ? '已报名活动会显示在这里。' : '点击活动卡片查看详情和报名。'
+    const listTitle = active === 'mine' ? '我的报名' : active === 'past' ? '往期活动' : '即将开始'
+    const listNote = active === 'mine' ? '已报名活动会显示在这里。' : active === 'past' ? '查看已结束或取消的活动。' : '点击活动卡片查看详情和报名。'
     const cachedList = cached ? cached.list.map((row: { raw: Record<string, unknown>; registered?: boolean }) => normalizeSalonRow({ event: row.raw, registered: row.registered })) : []
-    this.setData({ active, list: cachedList, listTitle, listNote, loading: !cached })
+    this.setData({ active, list: visibleSalons(cachedList, active), listTitle, listNote, loading: !cached })
     const isCurrent = () => this._salonGeneration === generation && pageSessionScope() === scope
     if (cached && !force && Date.now() - cached.loadedAt < SALON_TTL_MS) return Promise.resolve()
     const promise = Promise.resolve().then(async () => {
       try {
         const result: any = active === 'mine'
           ? await salonApi.myRegistrations({ page: 1, pageSize: 30 })
-          : await salonApi.list({ page: 1, pageSize: 30 })
+          : await salonApi.list({ page: 1, pageSize: 30, period: active === 'past' ? 'past' : 'upcoming' })
         if (!isCurrent()) return
         const list = (result.list || []).map((row: any) => normalizeSalonRow(row))
         this._salonSnapshots[active] = { list, loadedAt: Date.now() }
-        this.setData({ list, listTitle, listNote })
+        this.setData({ list: visibleSalons(list, active), listTitle, listNote })
       } catch (err) {
         if (!isCurrent()) return
         console.warn('load salons failed', err)

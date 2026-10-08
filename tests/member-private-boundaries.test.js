@@ -80,7 +80,7 @@ test('member and self-profile updates use an explicit profile-field allowlist', 
   const helper = between('function editableProfilePatch', 'function intakeProfilePatch');
   assert.match(helper, /PROFILE_MUTABLE_FIELDS/);
   const update = between('async update(matchmakerUserId', 'async remove(matchmakerUserId');
-  assert.match(update, /editableProfilePatch\(data\)/);
+  assert.match(update, /editableProfilePatch\(data,\s*\{\s*allowAssetPreferences:\s*false\s*\}\)/);
   assert.doesNotMatch(update, /const profilePatch = \{ \.\.\.data \}/);
   const selfProfileRoute = between("if (method === 'PUT' && path === '/user/profile')", "if (method === 'POST' && path === '/matchmaker/apply')");
   assert.match(selfProfileRoute, /editableProfilePatch\(data\)/);

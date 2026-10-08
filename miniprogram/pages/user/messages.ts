@@ -17,6 +17,7 @@ type ConversationItem = ChatConversation & {
   timeText: string
   unreadText: string
   typeText: string
+  avatarInitial: string
 }
 
 type RelationshipCard = {
@@ -85,10 +86,13 @@ function typeText(type: ChatConversation['conversationType']) {
 
 function normalizeConversation(row: ChatConversation): ConversationItem {
   const peer = row.peer || { id: 0, nickname: row.title || '会话', avatarUrl: '' }
+  const name = String(peer.nickname || row.title || '').trim()
+  const peerName = !name || /^(新用户|微信用户|会话)$/.test(name) ? `会话 ${row.id}` : name
   return {
     ...row,
-    peerName: peer.nickname || row.title || '会话',
-    peerAvatar: peer.avatarUrl || '/assets/members/avatar-female-1.png',
+    peerName,
+    peerAvatar: peer.avatarUrl || '',
+    avatarInitial: peerName.slice(0, 1),
     preview: row.lastMessageContent || '暂无消息，进入后开始沟通',
     timeText: formatTime(row.lastMessageAt || row.updatedAt),
     unreadText: row.unreadCount > 99 ? '99+' : String(row.unreadCount || ''),
@@ -455,6 +459,17 @@ Page({
       relationshipHasMore: false
     })
     return this.loadRelationships(type, { force: true })
+  },
+
+  async openRelationshipShortcut(e: WechatMiniprogram.TouchEvent) {
+    await this.switchRelationship(e)
+    if (this.data.relationshipOpen) wx.pageScrollTo({ selector: '.relationship-shell', duration: 250 })
+  },
+
+  onConversationAvatarError(e: WechatMiniprogram.CustomEvent) {
+    const id = Number(e.currentTarget.dataset.id)
+    const index = this.data.list.findIndex(item => item.id === id)
+    if (index >= 0) this.setData({ [`list[${index}].peerAvatar`]: '' })
   },
 
   toggleRelationshipOpen() {

@@ -1,23 +1,27 @@
-import { memberApi } from '../../services/member'
+import { memberApi, type HiddenMember } from '../../services/member'
 import { apiErrorMessage } from '../../services/api'
 import { normalizeMemberProfile } from '../../utils/member-format'
+import { financialAssetRangeText } from '../../utils/member-certification'
 import { syncUserTabBar } from '../../utils/user-navigation'
 import {
   applyShowcaseInteraction,
   FavoriteQuota,
+  invalidateShowcaseCategory,
   mergeShowcasePage,
   normalizeFavoriteQuota,
+  PublicShowcaseMember,
   readShowcaseCache,
   rememberShowcaseSelection,
   requestShowcase,
   SHOWCASE_CACHE_TTL_MS,
+  ShowcaseCategory,
   ShowcaseQuery,
   showcaseQueryKey,
   ShowcaseRequestDiscarded,
   showcaseSessionScope
 } from '../../utils/showcase-cache'
 
-type MemberView = Record<string, any>
+type MemberView = ReturnType<typeof normalizeMember>
 
 type GiftOption = {
   id: string
@@ -28,6 +32,31 @@ type GiftOption = {
 }
 
 type ActionEffect = 'gift' | 'heart' | 'hide'
+
+const SHOWCASE_CATEGORIES: Array<{ id: ShowcaseCategory; label: string; description: string }> = [
+  { id: 'recommend', label: '推荐', description: '' },
+  { id: 'popularity', label: '颜值', description: '收到超过100人爱心的会员' },
+  { id: 'education', label: '学历', description: '学历核验通过的本科及以上会员，含海外及港澳台学历' },
+  { id: 'assets', label: '资产', description: '金融资产核验200万元及以上，并同意进入此分类的会员' }
+]
+
+function categoryEmptyState(category: ShowcaseCategory, filtered: boolean) {
+  if (category === 'recommend') return {
+    emptyTitle: filtered ? '暂无匹配会员' : '暂无可推荐会员',
+    emptyNote: filtered ? '可以调整城市、性别或关键词后再试。' : '主理人精选会员资料后，会在这里展示脱敏信息。'
+  }
+  const label = SHOWCASE_CATEGORIES.find(item => item.id === category)?.label || ''
+  return {
+    emptyTitle: `暂无符合条件的${label}会员`,
+    emptyNote: filtered ? '当前筛选下暂无符合本栏目条件的会员，可调整筛选后再试；入选门槛保持不变。'
+      : '暂时没有符合本栏目条件的公开会员，请稍后再来；入选门槛保持不变。'
+  }
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
 
 const SWIPE_DISTANCE = 56
 const SHOWCASE_PAGE_SIZE = 50
@@ -74,23 +103,25 @@ function uniqueLocationParts(city: string, nativePlace: string | number | null |
   return [cityText, nativeText]
 }
 
-function normalizeMember(row: MemberView) {
+function normalizeMember(row: PublicShowcaseMember) {
   const member = normalizeMemberProfile(row)
-  const viewerState = row.viewerState && typeof row.viewerState === 'object' ? row.viewerState : {}
-  const ageText = textWithUnit(row.age, '岁', '年龄保密')
-  const heightText = textWithUnit(row.height, 'cm', '')
+  const viewerState = record(row.viewerState)
+  const ageText = textWithUnit(String(row.age || ''), '岁', '年龄保密')
+  const heightText = textWithUnit(String(row.height || ''), 'cm', '')
   const city = String(member.cityText || row.city || row.province || '').trim()
-  const education = String(row.education || '').trim()
+  const educationVerified = row.educationVerified === true
+  const assetVerified = row.assetVerified === true
+  const education = String(educationVerified && row.verifiedEducation || row.education || '').trim()
   const occupation = String(row.occupation || '').trim()
-  const income = String(row.incomeRange || '').trim()
-  const primaryMeta = uniqueLocationParts(city, row.nativePlace).join(' · ') || member.metaText
+  const primaryMeta = uniqueLocationParts(city, String(row.nativePlace || '')).join(' · ') || member.metaText
   const profileLine = compactList([heightText, education, occupation]).join(' · ') || member.workText
-  const cardTags = compactList([city, education, occupation, income]).slice(0, 3)
-  const partnerPreview = truncateText(row.partnerRequirement || member.partnerText, 44)
-  const introPreview = truncateText(row.selfIntro || member.introText, 42)
+  const cardTags: string[] = []
+  const partnerPreview = truncateText(String(row.partnerRequirement || member.partnerText), 44)
+  const introPreview = truncateText(String(row.selfIntro || member.introText), 42)
 
   return {
     ...member,
+    id: row.id,
     userId: row.userId,
     ageText,
     primaryMeta,
@@ -98,13 +129,19 @@ function normalizeMember(row: MemberView) {
     cardTags,
     partnerPreview,
     introPreview,
+    educationVerified,
+    assetVerified,
+    financialAssetText: assetVerified ? financialAssetRangeText(row.financialAssetRange) : '',
     isFavorite: !!viewerState.isFavorite,
-    // Public profiles do not yet contain separately reviewed credential results.
-    // Filled profile fields and the legacy isVerified flag are not proof of certification.
-    certificationBadges: ['实名认证', '学历认证', '车辆认证', '房产认证', '资产认证'].map(label => ({
-      label,
-      statusText: '待认证'
-    }))
+    // Only separately reviewed credentials can display an approved badge.
+    certificationBadges: ['实名认证', '学历认证', '资产认证', '车辆认证', '房产认证'].map(label => {
+      const verified = label === '实名认证' && row.identityVerified === true
+        || label === '学历认证' && educationVerified
+        || label === '车辆认证' && row.vehicleVerified === true
+        || label === '房产认证' && row.propertyVerified === true
+        || label === '资产认证' && assetVerified
+      return { label, verified, statusText: verified ? '已认证' : '待认证' }
+    }).filter(item => item.verified).slice(0, 3)
   }
 }
 
@@ -163,12 +200,29 @@ Page({
   _showcaseMoreGeneration: 0,
   _advanceAfterMore: false,
   _favoriteGeneration: 0,
+  _popularityRefreshNeeded: false,
+  _hiddenGeneration: 0,
 
   data: {
+    category: 'recommend' as ShowcaseCategory,
+    categories: SHOWCASE_CATEGORIES,
+    categoryDescription: '',
     keyword: '',
     city: '',
     gender: '',
+    draftKeyword: '',
+    draftCity: '',
+    draftGender: '',
+    filterChips: [] as Array<{ key: string; label: string }>,
     filterOpen: false,
+    hiddenPanelOpen: false,
+    hiddenMembers: [] as HiddenMember[],
+    hiddenLoading: false,
+    hiddenError: '',
+    hiddenPage: 0,
+    hiddenTotal: 0,
+    restoringUserId: 0,
+    undoHidden: null as { targetUserId: number; displayName: string } | null,
     list: [] as MemberView[],
     currentIndex: 0,
     currentMember: null as MemberView | null,
@@ -206,8 +260,10 @@ Page({
 
   onUnload() {
     this._showcaseUnloaded = true
+    this._popularityRefreshNeeded = false
     this._favoriteGeneration += 1
-    if (this.data.favoriteLoading) wx.hideLoading()
+    this._hiddenGeneration += 1
+    if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId) wx.hideLoading()
     this.setData({ favoriteLoading: false })
     this.invalidateShowcaseLoad()
     this._showcaseMorePromise = null
@@ -230,7 +286,8 @@ Page({
       pageSize: SHOWCASE_PAGE_SIZE,
       keyword: this.data.keyword,
       city: this.data.city,
-      gender: this.data.gender
+      gender: this.data.gender,
+      category: this.data.category
     }
   },
 
@@ -249,6 +306,8 @@ Page({
     if (force === false && !refresh && this._showcaseLoadPromise && this._showcaseLoadKey === key) return this._showcaseLoadPromise
     if (!scope || this._showcaseUnloaded) return Promise.resolve()
     const cached = force === false && !refresh ? readShowcaseCache(scope, query) : null
+    const retained = force === false ? readShowcaseCache(scope, query, true) : null
+    const retainedPage = retained ? retained.result.page : 1
     if (cached && this._showcaseScope === scope && this._showcaseQuery
       && showcaseQueryKey(this._showcaseQuery) === showcaseQueryKey(query)
       && this._showcaseLoadedAt === cached.loadedAt) {
@@ -262,28 +321,44 @@ Page({
       && this._showcaseRequestGeneration === generation
       && this.sessionScope() === scope
       && showcaseQueryKey(this.showcaseQuery()) === showcaseQueryKey(query)
-    const previousMemberId = this._showcaseScope === scope && this.data.currentMember
+    const sameQuery = this._showcaseScope === scope && !!this._showcaseQuery
+      && showcaseQueryKey(this._showcaseQuery) === showcaseQueryKey(query)
+    const previousMemberId = sameQuery && this.data.currentMember
       ? String(this.data.currentMember.id)
       : ''
-    const previousIndex = this._showcaseScope === scope ? this.data.currentIndex : 0
+    const previousIndex = sameQuery ? this.data.currentIndex : 0
     const hasSnapshot = this._showcaseScope === scope && !!this._showcaseQuery
       && showcaseQueryKey(this._showcaseQuery) === showcaseQueryKey(query)
       && this._showcaseLoadedAt > 0
     if (this._showcaseScope !== scope) {
       this._favoriteGeneration += 1
-      if (this.data.favoriteLoading) wx.hideLoading()
+      if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId) wx.hideLoading()
       clearActionTimers()
       this.setData({ list: [], ...selectionState([], 0), total: 0, showcasePage: 1, hasMore: false,
-        favoriteQuota: null, giftPanelOpen: false, favoriteLoading: false, actionEffect: '', actionAnimating: false })
+        favoriteQuota: null, giftPanelOpen: false, favoriteLoading: false, actionEffect: '', actionAnimating: false,
+        hiddenPanelOpen: false, hiddenMembers: [], undoHidden: null, restoringUserId: 0, hiddenLoading: false,
+        hideLoading: false, sendingGiftId: '' })
     }
     this.setData({ loading: force !== false || !hasSnapshot, loadingMore: false, paginationError: '' })
     const loadPromise = (async () => {
       await Promise.resolve()
       try {
-        const snapshot = cached || await requestShowcase(
+        let snapshot = cached || await requestShowcase(
           scope, query, () => memberApi.showcase(query), force !== false || refresh, isCurrent
         )
         if (!isCurrent()) return
+        // Refresh the previously browsed pages so a category keeps its position after qualification changes.
+        if (!cached) {
+          for (let page = 2; page <= retainedPage && snapshot.result.list.length < snapshot.result.total; page += 1) {
+            const nextQuery = { ...query, page }
+            const incoming = await requestShowcase(scope, nextQuery, () => memberApi.showcase(nextQuery), true, isCurrent)
+            if (!isCurrent()) return
+            const merged = mergeShowcasePage(scope, query, incoming)
+            if (!merged) return
+            snapshot = merged
+            if (!incoming.result.list.length) break
+          }
+        }
         const list: MemberView[] = snapshot.result.list.map(row => normalizeMember(row))
         const hasCurrentSelection = this._showcaseScope === scope && !!this._showcaseQuery
           && showcaseQueryKey(this._showcaseQuery) === showcaseQueryKey(query)
@@ -308,10 +383,7 @@ Page({
           hasMore: list.length < snapshot.result.total,
           countText: countText(snapshot.result.total),
           favoriteQuota: snapshot.result.favoriteQuota,
-          emptyTitle: this.hasFilters() ? '暂无匹配会员' : '暂无可推荐会员',
-          emptyNote: this.hasFilters()
-            ? '可以调整城市、性别或关键词后再试。'
-            : '主理人精选会员资料后，会在这里展示脱敏信息。'
+          ...categoryEmptyState(this.data.category, this.hasFilters())
         })
         rememberShowcaseSelection(scope, query, selected.currentMember && selected.currentMember.id, selected.currentIndex)
       } catch (err) {
@@ -326,7 +398,7 @@ Page({
           showcasePage: 1, hasMore: false,
           countText: '云服务暂不可用',
           emptyTitle: '数据暂不可用',
-          emptyNote: '请确认 hlApi 云函数已部署后重试。'
+          emptyNote: '暂时无法加载会员，请稍后重试。'
         })
       } finally {
         if (this._showcaseRequestGeneration === generation && !this._showcaseUnloaded) {
@@ -430,22 +502,41 @@ Page({
   },
 
   onKeyword(e: WechatMiniprogram.Input) {
+    this.setData({ draftKeyword: e.detail.value })
+  },
+
+  switchCategory(e: WechatMiniprogram.TouchEvent) {
+    const category = SHOWCASE_CATEGORIES.find(item => item.id === e.currentTarget.dataset.category)
+    if (!category || category.id === this.data.category) return Promise.resolve()
+    if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId || this.data.actionAnimating) return Promise.resolve()
+    this.rememberSelection()
     this.invalidateShowcaseLoad()
-    this.setData({ keyword: e.detail.value, loading: false })
+    this._advanceAfterMore = false
+    this._popularityRefreshNeeded = false
+    clearActionTimers()
+    this.setData({
+      category: category.id,
+      categoryDescription: category.description,
+      list: [], ...selectionState([], 0), total: 0, showcasePage: 1, hasMore: false,
+      loadingMore: false, paginationError: '', giftPanelOpen: false, filterOpen: false,
+      actionEffect: '', actionAnimating: false, countText: '正在整理会员资料',
+      ...categoryEmptyState(category.id, this.hasFilters())
+    })
+    return this.load(false)
   },
 
   onCity(e: WechatMiniprogram.Input) {
-    this.invalidateShowcaseLoad()
-    this.setData({ city: e.detail.value, loading: false })
+    this.setData({ draftCity: e.detail.value })
   },
 
   setGender(e: WechatMiniprogram.TouchEvent) {
-    this.invalidateShowcaseLoad()
-    this.setData({ gender: String(e.currentTarget.dataset.gender || ''), loading: false })
+    this.setData({ draftGender: String(e.currentTarget.dataset.gender || '') })
   },
 
   toggleFilter() {
-    this.setData({ filterOpen: !this.data.filterOpen })
+    if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId || this.data.actionAnimating) return
+    this.setData({ filterOpen: !this.data.filterOpen,
+      draftKeyword: this.data.keyword, draftCity: this.data.city, draftGender: this.data.gender })
   },
 
   hasFilters() {
@@ -453,18 +544,40 @@ Page({
   },
 
   search() {
-    this.setData({ filterOpen: false })
+    this.invalidateShowcaseLoad()
+    this.setData({ keyword: this.data.draftKeyword.trim(), city: this.data.draftCity.trim(),
+      gender: this.data.draftGender, filterOpen: false })
+    this.updateFilterChips()
+    return this.load(true)
+  },
+
+  updateFilterChips() {
+    this.setData({ filterChips: [
+      { key: 'keyword', label: this.data.keyword },
+      { key: 'city', label: this.data.city ? `城市：${this.data.city}` : '' },
+      { key: 'gender', label: this.data.gender === '1' ? '男士' : this.data.gender === '2' ? '女士' : '' }
+    ].filter(item => item.label) })
+  },
+
+  removeFilter(e: WechatMiniprogram.TouchEvent) {
+    const key = String(e.currentTarget.dataset.key || '')
+    if (!['keyword', 'city', 'gender'].includes(key) || this.isCardBusy(false)) return
+    this.invalidateShowcaseLoad()
+    this.setData({ [key]: '' })
+    this.updateFilterChips()
     return this.load(true)
   },
 
   clearKeyword() {
     this.setData({ keyword: '', city: '', gender: '', filterOpen: false })
+    this.updateFilterChips()
     return this.load(true)
   },
 
   isShowcaseFresh() {
     return this._showcaseScope === this.sessionScope()
       && !!this._showcaseQuery
+      && showcaseQueryKey(this._showcaseQuery) === showcaseQueryKey(this.showcaseQuery())
       && Date.now() - this._showcaseLoadedAt < SHOWCASE_CACHE_TTL_MS
   },
 
@@ -475,6 +588,7 @@ Page({
     }
     return this.data.loading || this.data.favoriteLoading || this.data.hideLoading
       || !!this.data.sendingGiftId || this.data.actionAnimating || this.data.giftPanelOpen
+      || this.data.filterOpen || this.data.hiddenPanelOpen || !!this.data.restoringUserId
   },
 
   nextMember() {
@@ -511,9 +625,23 @@ Page({
   cacheInteraction(targetUserId: number, action: 'favorite' | 'hide', quota: FavoriteQuota | null = null, active = true) {
     if (!this._showcaseQuery || this._showcaseScope !== this.sessionScope()) return
     applyShowcaseInteraction(this._showcaseScope, this._showcaseQuery, targetUserId, action, quota, active)
+    if (action === 'favorite') {
+      invalidateShowcaseCategory(this._showcaseScope, 'popularity')
+      if (this.data.category === 'popularity') {
+        this._showcaseLoadedAt = Math.min(this._showcaseLoadedAt, Date.now() - SHOWCASE_CACHE_TTL_MS)
+        this._popularityRefreshNeeded = true
+      }
+    }
     this._showcaseMoreGeneration += 1
     this._showcaseMorePromise = null
     this.setData({ loadingMore: false })
+  },
+
+  refreshPopularityAfterInteraction() {
+    if (!this._popularityRefreshNeeded || this._showcaseUnloaded || this.data.category !== 'popularity') return
+    if (this.data.favoriteLoading || this.data.sendingGiftId || this.data.actionAnimating) return
+    this._popularityRefreshNeeded = false
+    void this.load(false, true)
   },
 
   onCardTouchStart(e: WechatMiniprogram.TouchEvent) {
@@ -566,6 +694,7 @@ Page({
       }
       finish()
       this.setData({ actionEffect: '', actionAnimating: false })
+      this.refreshPopularityAfterInteraction()
       this.prefetchMore()
       actionAdvanceTimer = null
     }, 460)
@@ -575,7 +704,7 @@ Page({
     }, 640)
   },
 
-  setCurrentFavoriteAndAdvance(
+  setCurrentFavoriteAndStay(
     active: boolean,
     currentIndex: number,
     effect: ActionEffect,
@@ -585,27 +714,18 @@ Page({
     const list = this.data.list.map(item => (
       Number(item.userId) === targetUserId ? { ...item, isFavorite: active } : item
     ))
-    const targetIndex = list.findIndex(item => Number(item.userId) === targetUserId)
-    const nextIndex = targetIndex >= 0 ? targetIndex + 1 : currentIndex
-    const waitingForMore = nextIndex >= list.length && this.data.hasMore
-    const selectionIndex = waitingForMore ? Math.max(targetIndex, 0) : nextIndex
-    this.rememberActionSelection(list, selectionIndex)
+    this.rememberActionSelection(list, currentIndex)
     if (this.data.giftPanelOpen) {
       this.setData({ giftPanelOpen: false })
     }
     this.runActionEffect(effect, () => {
       const currentList = this.data.list.map(item => Number(item.userId) === targetUserId ? { ...item, isFavorite: active } : item)
-      const currentTargetIndex = currentList.findIndex(item => Number(item.userId) === targetUserId)
-      const currentNextIndex = currentTargetIndex >= 0 ? currentTargetIndex + 1 : currentIndex
-      const waitForPage = currentNextIndex >= currentList.length && this.data.hasMore
-      const selectedIndex = waitForPage ? Math.max(currentTargetIndex, 0) : currentNextIndex
       this.setData({
         list: currentList,
-        ...selectionState(currentList, selectedIndex),
+        ...selectionState(currentList, currentIndex),
         ...extraState,
         giftPanelOpen: false
       })
-      if (waitForPage) this._advanceAfterMore = true
       this.rememberSelection()
     })
   },
@@ -627,11 +747,12 @@ Page({
     this.setData({ favoriteLoading: true })
     wx.showLoading({ title: active ? '正在送出爱心' : '正在撤回爱心', mask: true })
     try {
-      const result: any = await memberApi.interact({ ...target, actionType: 'favorite', active }, false)
+      const result = record(await memberApi.interact({ ...target, actionType: 'favorite', active }, false))
       if (!isCurrent()) return
       wx.hideLoading()
       const favoriteQuota = normalizeFavoriteQuota(result && result.favoriteQuota)
-      const savedActive = typeof result?.viewerState?.isFavorite === 'boolean' ? result.viewerState.isFavorite : active
+      const viewerState = record(result.viewerState)
+      const savedActive = typeof viewerState.isFavorite === 'boolean' ? viewerState.isFavorite : active
       this.cacheInteraction(target.targetUserId, 'favorite', favoriteQuota, savedActive)
       const list = this.data.list.map(item => Number(item.userId) === target.targetUserId ? { ...item, isFavorite: savedActive } : item)
       this.setData({ list, ...selectionState(list, this.data.currentIndex), ...(favoriteQuota ? { favoriteQuota } : {}) })
@@ -653,7 +774,10 @@ Page({
       console.warn('toggle favorite failed', err)
       wx.showToast({ title: apiErrorMessage(err) || (active ? '爱心未送出，请重试' : '爱心撤回失败，请重试'), icon: 'none', duration: 3000 })
     } finally {
-      if (isCurrent()) this.setData({ favoriteLoading: false })
+      if (isCurrent()) {
+        this.setData({ favoriteLoading: false })
+        this.refreshPopularityAfterInteraction()
+      }
     }
   },
 
@@ -667,10 +791,13 @@ Page({
     }
 
     const currentIndex = this.data.currentIndex
+    const scope = this.sessionScope()
+    const isCurrent = () => !this._showcaseUnloaded && this.sessionScope() === scope
     this.setData({ hideLoading: true })
     wx.showLoading({ title: '正在处理', mask: true })
     try {
       await memberApi.interact({ ...target, actionType: 'hide', active: true }, false)
+      if (!isCurrent()) return
       wx.hideLoading()
       this.cacheInteraction(target.targetUserId, 'hide')
       const list = this.data.list.filter(item => Number(item.userId) !== target.targetUserId)
@@ -687,18 +814,79 @@ Page({
           total,
           hasMore,
           countText: countText(total),
-          giftPanelOpen: false
+          giftPanelOpen: false,
+          undoHidden: { targetUserId: target.targetUserId, displayName: member!.displayName }
         })
         if (waitingForMore) this._advanceAfterMore = true
         this.prefetchMore()
       })
-      wx.showToast({ title: '将不再推荐此人', icon: 'none' })
     } catch (err) {
+      if (!isCurrent()) return
       wx.hideLoading()
       console.warn('hide member failed', err)
       wx.showToast({ title: apiErrorMessage(err) || '操作未完成，请重试', icon: 'none', duration: 3000 })
     } finally {
-      this.setData({ hideLoading: false })
+      if (isCurrent()) this.setData({ hideLoading: false })
+    }
+  },
+
+  async openHiddenPanel() {
+    this.setData({ filterOpen: false, hiddenPanelOpen: true, hiddenMembers: [], hiddenPage: 0, hiddenTotal: 0 })
+    await this.loadHidden(true)
+  },
+
+  closeHiddenPanel() {
+    this._hiddenGeneration += 1
+    this.setData({ hiddenPanelOpen: false, hiddenLoading: false })
+  },
+
+  async loadHidden(reset = false) {
+    if (this.data.hiddenLoading) return
+    const scope = this.sessionScope()
+    const generation = ++this._hiddenGeneration
+    const isCurrent = () => !this._showcaseUnloaded && scope === this.sessionScope() && generation === this._hiddenGeneration
+    const page = reset ? 1 : this.data.hiddenPage + 1
+    this.setData({ hiddenLoading: true, hiddenError: '' })
+    try {
+      const result = await memberApi.hidden(page)
+      if (!isCurrent()) return
+      this.setData({ hiddenMembers: reset ? result.list : [...this.data.hiddenMembers, ...result.list],
+        hiddenPage: result.page, hiddenTotal: result.total })
+    } catch (err) {
+      if (isCurrent()) this.setData({ hiddenError: '暂时无法加载，请重试。' })
+    } finally {
+      if (isCurrent()) this.setData({ hiddenLoading: false })
+    }
+  },
+
+  loadMoreHidden() { return this.loadHidden(this.data.hiddenPage === 0) },
+
+  undoHide() {
+    if (this.data.undoHidden) return this.restoreHiddenUser(this.data.undoHidden.targetUserId)
+  },
+
+  restoreHidden(e: WechatMiniprogram.TouchEvent) {
+    return this.restoreHiddenUser(Number(e.currentTarget.dataset.userId))
+  },
+
+  async restoreHiddenUser(targetUserId: number) {
+    if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0 || this.data.restoringUserId || this.data.actionAnimating) return
+    const scope = this.sessionScope()
+    const isCurrent = () => !this._showcaseUnloaded && scope === this.sessionScope()
+    this.setData({ restoringUserId: targetUserId })
+    try {
+      const result = record(await memberApi.interact({ targetUserId, actionType: 'hide', active: false }, false))
+      if (!isCurrent()) return
+      if (record(result.viewerState).isHidden !== false) throw new Error('服务尚未确认恢复')
+      this.cacheInteraction(targetUserId, 'hide', null, false)
+      this.setData({ undoHidden: this.data.undoHidden?.targetUserId === targetUserId ? null : this.data.undoHidden })
+      if (this.data.hiddenPanelOpen) await this.loadHidden(true)
+      await this.load(false)
+      if (isCurrent()) wx.showToast({ title: '已恢复推荐，仍按分类条件展示', icon: 'none' })
+    } catch (err) {
+      if (isCurrent()) wx.showToast({ title: '恢复未完成，请重试', icon: 'none' })
+    } finally {
+      if (isCurrent()) this.setData({ restoringUserId: 0 })
     }
   },
 
@@ -740,17 +928,20 @@ Page({
     }
 
     const currentIndex = this.data.currentIndex
+    const scope = this.sessionScope()
+    const isCurrent = () => !this._showcaseUnloaded && this.sessionScope() === scope
     this.setData({ sendingGiftId: giftId })
     wx.showLoading({ title: '正在赠送礼物', mask: true })
     try {
-      const result: any = await memberApi.sendGift({ ...target, giftId }, false)
+      const result = record(await memberApi.sendGift({ ...target, giftId }, false))
+      if (!isCurrent()) return
       wx.hideLoading()
-      const favoriteQuota = normalizeFavoriteQuota(result && result.favorite && result.favorite.favoriteQuota)
+      const favoriteResult = record(result.favorite)
+      const favoriteQuota = normalizeFavoriteQuota(favoriteResult.favoriteQuota)
       this.cacheInteraction(target.targetUserId, 'favorite', favoriteQuota)
-      this.setCurrentFavoriteAndAdvance(true, currentIndex, 'gift', favoriteQuota ? {
+      this.setCurrentFavoriteAndStay(true, currentIndex, 'gift', favoriteQuota ? {
         favoriteQuota
       } : {}, target.targetUserId)
-      const favoriteResult = result && result.favorite
       wx.showToast({
         title: favoriteResult && favoriteResult.mutualFavorite
           ? (favoriteResult.canChat
@@ -760,11 +951,15 @@ Page({
         icon: favoriteResult && favoriteResult.mutualFavorite && !favoriteResult.canChat ? 'none' : 'success'
       })
     } catch (err) {
+      if (!isCurrent()) return
       wx.hideLoading()
       console.warn('send gift failed', err)
       wx.showToast({ title: apiErrorMessage(err) || '礼物未送出，请重试', icon: 'none', duration: 3000 })
     } finally {
-      this.setData({ sendingGiftId: '' })
+      if (isCurrent()) {
+        this.setData({ sendingGiftId: '' })
+        this.refreshPopularityAfterInteraction()
+      }
     }
   },
 
@@ -777,7 +972,11 @@ Page({
       wx.showToast({ title: '暂无法查看该会员', icon: 'none' })
       return
     }
-    wx.setStorageSync('selectedUserMember', member)
+    const cachedMember: Record<string, unknown> = { ...member }
+    delete cachedMember.financialAssetRange
+    delete cachedMember.financialAssetText
+    wx.setStorageSync('selectedUserMember', cachedMember)
+    wx.setStorageSync('selectedUserMemberScope', this.sessionScope())
     wx.navigateTo({ url: `/pages/user/member-detail?id=${encodeURIComponent(String(member.id))}` })
   },
 

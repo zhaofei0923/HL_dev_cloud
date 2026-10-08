@@ -29,7 +29,8 @@
   "protectedCollections": [
     "hl_counters",
     "hl_payment_orders",
-    "hl_member_private_archives"
+    "hl_member_private_archives",
+    "hl_member_certifications"
   ],
   "statusDictionary": {
     "matchmakerCertificationStatus": [
@@ -255,13 +256,19 @@
       "hiddenFields": [
         "_id",
         "_openid",
-        "openid"
+        "openid",
+        "showcaseCertification",
+        "assetCategoryConsent",
+        "assetRangeDisclosure"
       ],
       "preferredActions": [],
       "manualCmsAllowed": true,
       "warnings": [
         "displayEnabled = true 后会员会进入公开浏览和主理人资源池。",
-        "手机号、登录态和 token 字段不应进入运营视图。"
+        "手机号、登录态和 token 字段不应进入运营视图。",
+        "showcaseCertification 只能由管理员核验接口写入，禁止 CMS 手工编辑；hl_member_certifications 不配置普通运营视图。",
+        "assetCategoryConsent 与 assetRangeDisclosure 必须由会员本人通过 hlApi 保存，CMS 和主理人不得代授权。",
+        "hl_profiles 必须在云数据库权限规则中禁止小程序端直接读写；字段隐藏不能替代数据库权限规则。"
       ]
     },
     {

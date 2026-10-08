@@ -211,15 +211,21 @@
 
 .photo-delete {
   position: absolute;
-  top: 8rpx;
-  right: 8rpx;
+  top: 0;
+  right: 0;
   z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 42rpx;
-  height: 42rpx;
+  width: 88rpx;
+  height: 88rpx;
   box-sizing: border-box;
+}
+
+.photo-delete-disc {
+  position: absolute;
+  width: 44rpx;
+  height: 44rpx;
   border: 1rpx solid rgba(36, 31, 27, 0.12);
   border-radius: 50%;
   background: rgba(255, 248, 237, 0.95);
@@ -541,4 +547,165 @@
 .panel-action,
 .logout-action {
   margin-top: 20rpx;
+}
+
+.certification-center {
+  margin-top: 20rpx;
+  overflow: hidden;
+  border: 1rpx solid rgba(151, 119, 82, 0.2);
+  border-radius: 18rpx;
+  background: #fffdf8;
+}
+
+.certification-center-heading {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  min-height: 92rpx;
+  box-sizing: border-box;
+  padding: 24rpx 24rpx 20rpx;
+  background: rgba(180, 129, 79, 0.07);
+}
+
+.certification-row {
+  gap: 12rpx;
+}
+
+.certification-state {
+  flex: 0 0 auto;
+  max-width: 216rpx;
+  color: #8f6544;
+  font-size: 21rpx;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.certification-state.verified {
+  color: #3e6758;
+}
+
+.certification-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 18rpx 24rpx;
+  color: #8f493f;
+  font-size: 22rpx;
+  line-height: 1.4;
+}
+
+.certification-retry {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 18rpx;
+  border-radius: 10rpx;
+  background: rgba(180, 129, 79, 0.1);
+  color: #7b573a;
+  font-size: 22rpx;
+  line-height: 54rpx;
+}
+
+.certification-retry::after {
+  border: 0;
+}
+
+.certification-quick-links {
+  display: flex;
+  gap: 14rpx;
+  padding: 0 24rpx 22rpx;
+  background: rgba(180, 129, 79, 0.07);
+}
+
+.certification-quick-link {
+  flex: 1;
+  margin: 0;
+  padding: 0 12rpx;
+  min-height: 64rpx;
+  border-radius: 12rpx;
+  background: #fffdf9;
+  color: #79634e;
+  font-size: 23rpx;
+  line-height: 64rpx;
+}
+
+.certification-quick-link::after {
+  border: 1rpx solid rgba(121, 99, 78, 0.18);
+  border-radius: 12rpx;
+}
+
+.certification-explainer {
+  display: block;
+  padding: 18rpx 24rpx;
+  color: #79634e;
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+
+.editing-mode {
+  padding-bottom: calc(280rpx + env(safe-area-inset-bottom));
+}
+
+.editing-mode .form-card {
+  margin-top: 0;
+}
+
+.editing-mode .profile-panel-heading .section-title {
+  color: #29241f;
+  font-size: 34rpx;
+}
+
+.editing-mode .section-note {
+  font-weight: 400;
+}
+
+.profile-save-bar {
+  position: fixed;
+  right: 0;
+  bottom: calc(105rpx + env(safe-area-inset-bottom));
+  left: 0;
+  z-index: 85;
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  box-sizing: border-box;
+  padding: 18rpx 28rpx;
+  border-top: 1rpx solid rgba(121, 99, 78, 0.16);
+  background: #fffdf9;
+}
+
+.profile-save-feedback {
+  display: block;
+  margin-top: 12rpx;
+  color: #79634e;
+  font-size: 23rpx;
+  line-height: 1.5;
+}
+
+.profile-save-feedback.dirty,
+.profile-save-feedback.error {
+  color: #a45d43;
+}
+
+.profile-save-feedback.saved {
+  color: #3e6758;
+}
+
+.profile-save-bar .profile-save-feedback {
+  flex: 1;
+  margin-top: 0;
+}
+
+.profile-save-bar .save-btn {
+  flex: 0 0 210rpx;
+  margin: 0;
+}
+
+.preference-save-note {
+  margin-bottom: 10rpx;
+}
+
+.account-panel > .profile-save-feedback {
+  margin-bottom: 24rpx;
 }

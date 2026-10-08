@@ -1,5 +1,6 @@
 import { bindWechatPhone } from '../../services/auth'
 import { chatApi } from '../../services/chat'
+import { pageSessionScope } from '../../utils/page-session'
 import {
   memberApi,
   type MembershipOrderCheckout,
@@ -53,11 +54,11 @@ function expiryText(overview: MembershipOverview) {
 
 function paymentReasonText(reason: string) {
   const labels: Record<string, string> = {
-    merchant_not_configured: '微信支付开通准备中',
-    integration_incomplete: '微信支付配置待完善',
+    merchant_not_configured: '请联系主理人开通会员',
+    integration_incomplete: '请联系主理人开通会员',
     member_assignment_required: '绑定主理人后可开通会员',
     phone_required: '授权微信手机号后可付款',
-    plans_not_configured: '会员套餐待配置'
+    plans_not_configured: '请联系主理人了解会员方案'
   }
   return labels[reason] || '微信支付暂不可用'
 }
@@ -82,7 +83,19 @@ function wait(delay: number) {
   return new Promise<void>(resolve => setTimeout(resolve, delay))
 }
 
+function orderFeedback(status: string) {
+  const feedback: Record<string, { title: string; note: string }> = {
+    paid: { title: '会员已开通', note: '付款已确认，会员权益已经生效。' },
+    closed: { title: '订单已关闭', note: '此订单已关闭，未开通会员权益。需要开通时可重新选择套餐。' },
+    failed: { title: '支付未成功', note: '此订单支付失败，未开通会员权益。请查看订单结果后重试。' },
+    refunded: { title: '订单已退款', note: '此订单已退款，到账情况请查看微信支付账单。会员状态以当前权益为准。' }
+  }
+  return feedback[status] || { title: '付款结果确认中', note: '暂未收到最终结果，请查询订单状态。确认前请勿重复付款。' }
+}
+
 Page({
+  _membershipScope: '',
+  _resumableCheckout: null as MembershipOrderCheckout | null,
   data: {
     loading: true,
     refreshing: false,
@@ -94,7 +107,15 @@ Page({
     selectedPlanCode: '',
     statusTitle: '会员权益',
     expiryText: '',
-    paymentActionText: '微信支付开通准备中',
+    paymentActionText: '联系主理人开通',
+    onlineCheckout: false,
+    lastOrderId: '',
+    orderTitle: '',
+    orderNote: '',
+    orderStatus: '',
+    orderChecking: false,
+    orderCanResume: false,
+    orderPlanText: '',
     errorText: ''
   },
 
@@ -107,10 +128,19 @@ Page({
   },
 
   async loadOverview(options: { pullDown?: boolean } = {}) {
+    const scope = pageSessionScope()
+    if (scope !== this._membershipScope) {
+      this._membershipScope = scope
+      this._resumableCheckout = null
+      this.setData({ overview: EMPTY_OVERVIEW, plans: [], onlineCheckout: false, selectedPlanCode: '',
+        lastOrderId: '', orderTitle: '', orderNote: '', orderStatus: '', orderChecking: false, orderCanResume: false,
+        orderPlanText: '', paymentStarting: false, confirming: false })
+    }
     if (options.pullDown) this.setData({ refreshing: true })
     else this.setData({ loading: true })
     try {
       const overview = await memberApi.membershipOverview()
+      if (pageSessionScope() !== scope) return
       const plans = overview.plans.map(plan => ({
         ...plan,
         durationText: durationText(plan.durationDays),
@@ -123,6 +153,7 @@ Page({
         overview,
         plans,
         selectedPlanCode,
+        onlineCheckout: plans.length > 0 && (overview.payment.available || overview.payment.reason === 'phone_required'),
         statusTitle: overview.isPremiumMember ? '会员权益已开通' : '开通会员权益',
         expiryText: expiryText(overview),
         paymentActionText: overview.payment.available
@@ -131,18 +162,24 @@ Page({
         errorText: ''
       })
     } catch (err) {
+      if (pageSessionScope() !== scope) return
       console.warn('load membership overview failed', err)
       this.setData({ errorText: '会员信息暂时无法加载，请稍后重试。' })
     } finally {
-      this.setData({ loading: false, refreshing: false })
+      if (pageSessionScope() === scope) this.setData({ loading: false, refreshing: false })
       if (options.pullDown) wx.stopPullDownRefresh()
     }
   },
 
   selectPlan(e: WechatMiniprogram.TouchEvent) {
     const planCode = String(e.currentTarget.dataset.code || '')
-    if (!planCode || this.data.paymentStarting) return
+    if (!planCode || this.data.paymentStarting || this.data.confirming || this.data.orderCanResume) return
     this.setData({ selectedPlanCode: planCode })
+  },
+
+  onPlanChange(e: WechatMiniprogram.RadioGroupChange) {
+    if (this.data.paymentStarting || this.data.confirming || this.data.orderCanResume) return
+    if (this.data.plans.some(plan => plan.planCode === e.detail.value)) this.setData({ selectedPlanCode: e.detail.value })
   },
 
   async authorizePhone(e: WechatMiniprogram.ButtonGetPhoneNumber) {
@@ -225,8 +262,43 @@ Page({
     return memberApi.membershipOrder(outTradeNo)
   },
 
+  async showOrderResult(order: MembershipPaymentOrder, modal = false) {
+    const feedback = orderFeedback(order.status)
+    if (['paid', 'closed', 'failed', 'refunded'].includes(order.status)) {
+      this._resumableCheckout = null
+      this.setData({ orderCanResume: false })
+    }
+    this.setData({ orderTitle: feedback.title, orderNote: feedback.note, orderStatus: order.status })
+    if (order.status === 'paid' || order.status === 'refunded') await this.loadOverview()
+    if (modal) wx.showModal({ title: feedback.title, content: feedback.note, showCancel: false })
+  },
+
+  async refreshOrderStatus() {
+    if (!this.data.lastOrderId || this.data.orderChecking || this.data.confirming) return
+    const scope = pageSessionScope()
+    const orderId = this.data.lastOrderId
+    this.setData({ orderChecking: true })
+    try {
+      const order = await memberApi.membershipOrder(orderId)
+      if (pageSessionScope() !== scope || this.data.lastOrderId !== orderId) return
+      await this.showOrderResult(order)
+    } catch (error) {
+      if (pageSessionScope() !== scope) return
+      this.setData({ orderNote: '暂时无法查询订单，请稍后重试。确认结果前请勿重复付款。' })
+      console.warn('refresh membership order failed', error)
+    } finally {
+      if (pageSessionScope() === scope) this.setData({ orderChecking: false })
+    }
+  },
+
   async startPayment() {
     if (this.data.paymentStarting || this.data.confirming) return
+    const scope = pageSessionScope()
+    if (this.data.lastOrderId && !this.data.orderCanResume && !['paid', 'closed', 'failed', 'refunded'].includes(this.data.orderStatus)) {
+      await this.refreshOrderStatus()
+      if (pageSessionScope() === scope) wx.showToast({ title: '请查看上一笔订单结果', icon: 'none' })
+      return
+    }
     const overview = this.data.overview as MembershipOverview
     if (!overview.payment.available) {
       if (overview.payment.reason === 'member_assignment_required') {
@@ -242,32 +314,45 @@ Page({
     }
 
     this.setData({ paymentStarting: true })
+    let paymentRequested = false
     try {
-      const checkout = await memberApi.createMembershipOrder(this.data.selectedPlanCode)
+      const checkout = this.data.orderCanResume && this._resumableCheckout
+        ? this._resumableCheckout : await memberApi.createMembershipOrder(this.data.selectedPlanCode)
+      if (pageSessionScope() !== scope) return
+      this._resumableCheckout = checkout
+      const orderPlanText = `${checkout.order.planTitle || '会员套餐'}${Number.isFinite(checkout.order.amountFen) ? ` · ¥${(checkout.order.amountFen / 100).toFixed(2)}` : ''}`
+      this.setData({ lastOrderId: checkout.order.outTradeNo, orderStatus: 'pending', orderTitle: '订单待支付',
+        orderNote: '请在微信支付中完成付款。', orderPlanText, orderCanResume: true })
       const paymentParams = await this.callPaymentFunction(checkout)
+      if (pageSessionScope() !== scope) return
+      paymentRequested = true
+      this.setData({ orderCanResume: false })
       await this.requestPayment(paymentParams)
+      if (pageSessionScope() !== scope) return
       this.setData({ paymentStarting: false, confirming: true })
       wx.showLoading({ title: '正在确认付款', mask: true })
       const order = await this.pollPaymentOrder(checkout.order.outTradeNo)
       wx.hideLoading()
-      if (order.status === 'paid') {
-        await this.loadOverview()
-        wx.showModal({ title: '会员已开通', content: '会员权益已经生效。', showCancel: false })
-      } else {
-        wx.showModal({
-          title: '付款结果确认中',
-          content: '微信正在处理最终结果，请稍后下拉刷新查看会员状态。',
-          showCancel: false
-        })
-      }
+      if (pageSessionScope() !== scope) return
+      await this.showOrderResult(order, true)
     } catch (err) {
       wx.hideLoading()
-      const message = String((err as any).errMsg || (err as any).message || err)
-      if (/cancel/i.test(message)) wx.showToast({ title: '已取消支付', icon: 'none' })
-      else wx.showToast({ title: message || '支付未完成', icon: 'none', duration: 3000 })
+      if (pageSessionScope() !== scope) return
+      const error = err && typeof err === 'object' ? err as Record<string, unknown> : {}
+      const message = String(error.errMsg || error.message || err)
+      if (/cancel/i.test(message)) {
+        this.setData({ orderStatus: 'pending', orderTitle: '已取消支付', orderCanResume: !!this._resumableCheckout,
+          orderNote: '你已取消本次支付，可继续支付原订单。若已扣款，请先查询订单状态。' })
+        wx.showToast({ title: '已取消支付', icon: 'none' })
+      } else {
+        if (this.data.lastOrderId) this.setData(!paymentRequested && this._resumableCheckout
+          ? { orderCanResume: true, orderTitle: '支付尚未开始', orderNote: '未能拉起微信支付，请继续支付原订单，不会重新创建订单。' }
+          : { orderCanResume: false, orderTitle: '支付结果待核实', orderNote: '本次支付未能完成确认，请查询订单状态后再操作。' })
+        wx.showToast({ title: message || '支付未完成', icon: 'none', duration: 3000 })
+      }
       console.warn('membership payment failed', err)
     } finally {
-      this.setData({ paymentStarting: false, confirming: false })
+      if (pageSessionScope() === scope) this.setData({ paymentStarting: false, confirming: false })
     }
   }
 })

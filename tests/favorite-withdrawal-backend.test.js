@@ -135,6 +135,50 @@ function fixture() {
 
 const withdraw = r => r.hooks.member.interact(1, { actionType: 'favorite', targetUserId: 2, active: false });
 
+test('hidden list and restoration only affect the authenticated owner, including duplicate and private targets', async () => {
+  const f = fixture();
+  f.hl_member_interactions.push(
+    { _id: 'hide-old', id: 10, userId: 1, targetUserId: 2, actionType: 'hide', active: true },
+    { _id: 'hide-current', id: 11, userId: 1, targetUserId: 2, actionType: 'hide', active: true },
+    { _id: 'other-owner-hide', id: 12, userId: 3, targetUserId: 2, actionType: 'hide', active: true });
+  const r = runtime(f);
+  const hidden = await r.hooks.member.hidden(1, { userId: 3 });
+  assert.equal(hidden.total, 1);
+  assert.equal(hidden.list[0].targetUserId, 2);
+  assert.deepEqual(Object.keys(hidden.list[0]).sort(), ['available', 'displayName', 'targetUserId']);
+  r.fixtures.hl_profiles.find(row => row.userId === 2).displayEnabled = false;
+  const unavailable = await r.hooks.member.hidden(1);
+  assert.equal(unavailable.list[0].available, false);
+  assert.equal(unavailable.list[0].displayName, '暂未公开资料的会员');
+  const restored = await r.hooks.member.interact(1, { targetUserId: 2, userId: 3, actionType: 'hide', active: false });
+  assert.equal(restored.viewerState.isHidden, false);
+  assert.equal(restored.viewerState.isFavorite, true, 'restoring never changes a heart');
+  assert.equal((await r.hooks.member.hidden(1)).total, 0);
+  assert.equal((await r.hooks.member.hidden(3)).total, 1, 'another account remains hidden');
+  assert.ok(r.writes.every(write => write.name === 'hl_member_interactions' && write.id === 'hide-current'));
+  const writes = r.writes.length;
+  const missing = await r.hooks.member.interact(1, { targetUserId: 999, actionType: 'hide', active: false });
+  assert.equal(missing.interaction, null);
+  assert.equal(r.writes.length, writes, 'unknown restoration must not create an interaction');
+});
+
+test('detail action state uses the same mutual, membership, formal pair and service rules as chat', async () => {
+  for (const mode of ['premium_mutual', 'free_mutual', 'formal_pair', 'service', 'none']) {
+    const f = fixture();
+    if (mode !== 'premium_mutual') f.hl_members.forEach(row => { row.memberType = 'normal'; });
+    if (['formal_pair', 'service', 'none'].includes(mode)) f.hl_member_interactions = [];
+    if (mode === 'formal_pair') f.hl_match_records.push({ id: 90, userAId: 1, userBId: 2, status: 'pending' });
+    if (mode === 'service') {
+      f.hl_members[0].matchmakerId = 9;
+      f.hl_matchmakers.push({ id: 9, userId: 2, status: 1, certificationStatus: 2 });
+    }
+    const r = runtime(f);
+    const detail = await r.hooks.member.showcaseDetail(1, 202);
+    assert.equal(detail.viewerState.chatAccess, mode === 'free_mutual' ? 'membership_required' : mode === 'none' ? 'unavailable' : 'allowed', mode);
+    assert.equal(r.writes.length, 0, 'viewing details must not create a conversation or notification');
+  }
+});
+
 test('withdrawal is allowed at an exhausted quota, keeps quota spent, and sends no notification', async () => {
   const f = fixture();
   f.hl_member_interactions.push(...Array.from({ length: 7 }, (_, index) => favorite(100 + index, 1, 20 + index)));

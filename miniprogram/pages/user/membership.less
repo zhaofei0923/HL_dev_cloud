@@ -150,6 +150,7 @@
 }
 
 .plan-list {
+  display: block;
   margin-top: 22rpx;
 }
 
@@ -284,6 +285,14 @@
 .pay-command {
   background: #963b35;
 }
+
+.membership-actions.contact-only { grid-template-columns: 1fr; }
+.membership-guide,
+.order-feedback { margin-top: 26rpx; padding: 26rpx; border-radius: 16rpx; background: #fffdf8; border: 1rpx solid #e7ded4; }
+.membership-guide .section-note,
+.order-feedback .section-note { display: block; margin-top: 12rpx; }
+.order-feedback .text-command { margin-top: 14rpx; padding: 16rpx 0; text-align: left; }
+.plan-radio { transform: scale(0.82); transform-origin: left center; }
 
 .payment-trust,
 .notice {

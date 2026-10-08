@@ -1,11 +1,14 @@
 export const SHOWCASE_CACHE_TTL_MS = 45 * 1000
 
+export type ShowcaseCategory = 'recommend' | 'popularity' | 'education' | 'assets'
+
 export type ShowcaseQuery = {
   page: number
   pageSize: number
   keyword: string
   city: string
   gender: string
+  category?: ShowcaseCategory
 }
 
 export type FavoriteQuota = {
@@ -48,7 +51,9 @@ const PUBLIC_FIELDS = [
   'incomeRange', 'city', 'province', 'nativePlace', 'maritalStatus', 'houseStatus',
   'carStatus', 'selfIntro', 'partnerRequirement', 'photos', 'avatarUrl', 'coverUrl',
   'isVerified', 'memberType', 'identityStatus', 'identityStatusText',
-  'profileCompletion', 'displayStatus', 'lastRecommendStatus'
+  'profileCompletion', 'displayStatus', 'lastRecommendStatus',
+  'identityVerified', 'educationVerified', 'verifiedEducation', 'vehicleVerified', 'propertyVerified',
+  'assetVerified', 'financialAssetRange'
 ]
 
 const snapshots = new Map<string, ShowcaseSnapshot>()
@@ -84,7 +89,7 @@ export function showcaseSessionScope(token: unknown, user: unknown, env: unknown
 }
 
 export function showcaseQueryKey(query: ShowcaseQuery) {
-  return JSON.stringify([query.page, query.pageSize, query.keyword, query.city, query.gender])
+  return JSON.stringify([query.page, query.pageSize, query.keyword, query.city, query.gender, query.category || 'recommend'])
 }
 
 function synchronizeScope(scope: string) {
@@ -141,11 +146,11 @@ function normalizeResult(value: unknown, query: ShowcaseQuery): ShowcaseResult {
   }
 }
 
-export function readShowcaseCache(scope: string, query: ShowcaseQuery) {
+export function readShowcaseCache(scope: string, query: ShowcaseQuery, allowStale = false) {
   synchronizeScope(scope)
   if (!scope) return null
   const snapshot = snapshots.get(showcaseQueryKey(query))
-  if (!snapshot || Date.now() - snapshot.loadedAt >= SHOWCASE_CACHE_TTL_MS) return null
+  if (!snapshot || !allowStale && Date.now() - snapshot.loadedAt >= SHOWCASE_CACHE_TTL_MS) return null
   return snapshot
 }
 
@@ -235,7 +240,7 @@ export function mergeShowcasePage(scope: string, query: ShowcaseQuery, incoming:
 
 export function applyShowcaseInteraction(
   scope: string,
-  query: ShowcaseQuery,
+  _query: ShowcaseQuery,
   targetUserId: number,
   action: 'favorite' | 'hide',
   favoriteQuota: FavoriteQuota | null = null,
@@ -244,24 +249,46 @@ export function applyShowcaseInteraction(
   if (!scope || activeScope !== scope) return
   revision += 1
   pendingReads.clear()
-  const key = showcaseQueryKey(query)
-  const snapshot = snapshots.get(key)
-  snapshots.clear()
-  if (!snapshot) return
-  snapshot.revision = revision
   const matchesTarget = (row: PublicShowcaseMember) => Number(row.userId) === targetUserId
-  const removed = action === 'hide' ? snapshot.result.list.filter(matchesTarget).length : 0
-  snapshot.result = {
-    ...snapshot.result,
-    list: action === 'hide'
-      ? snapshot.result.list.filter(row => !matchesTarget(row))
-      : snapshot.result.list.map(row => matchesTarget(row) ? {
-        ...row,
-        viewerState: { isFavorite: active, isHidden: false }
-      } : row),
-    total: Math.max(snapshot.result.total - removed, 0),
-    favoriteQuota: favoriteQuota || snapshot.result.favoriteQuota
-  }
-  // Keep the original read timestamp: mutations do not extend public-profile freshness.
-  snapshots.set(key, snapshot)
+  snapshots.forEach(snapshot => {
+    snapshot.revision = revision
+    if (action === 'hide' && !active) {
+      // Restore from the current server qualifications, keeping each category's browse position.
+      snapshot.loadedAt = Math.min(snapshot.loadedAt, Date.now() - SHOWCASE_CACHE_TTL_MS)
+      return
+    }
+    const removed = action === 'hide' ? snapshot.result.list.filter(matchesTarget).length : 0
+    snapshot.result = {
+      ...snapshot.result,
+      list: action === 'hide'
+        ? snapshot.result.list.filter(row => !matchesTarget(row))
+        : snapshot.result.list.map(row => matchesTarget(row) ? {
+          ...row,
+          viewerState: { isFavorite: active, isHidden: false }
+        } : row),
+      total: Math.max(snapshot.result.total - removed, 0),
+      favoriteQuota: favoriteQuota || snapshot.result.favoriteQuota
+    }
+    if (removed) {
+      const selectedIndex = snapshot.result.list.findIndex(row => String(row.id) === snapshot.selectedMemberId)
+      snapshot.currentIndex = selectedIndex >= 0 ? selectedIndex
+        : Math.min(snapshot.currentIndex, Math.max(snapshot.result.list.length - 1, 0))
+      const selected = snapshot.result.list[snapshot.currentIndex]
+      snapshot.selectedMemberId = selected ? String(selected.id) : ''
+    }
+    // Mutations do not extend public-profile freshness, for any category or filter.
+  })
+}
+
+export function invalidateShowcaseCategory(scope: string, category: ShowcaseCategory) {
+  if (!scope || activeScope !== scope) return
+  revision += 1
+  pendingReads.clear()
+  snapshots.forEach((snapshot, key) => {
+    snapshot.revision = revision
+    const queryParts: unknown = JSON.parse(key)
+    if (Array.isArray(queryParts) && queryParts[5] === category) {
+      snapshot.loadedAt = Math.min(snapshot.loadedAt, Date.now() - SHOWCASE_CACHE_TTL_MS)
+    }
+  })
 }

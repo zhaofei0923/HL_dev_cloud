@@ -35,6 +35,13 @@ const {
   validateMemberIntake
 } = require('./member-intake-policy');
 const {
+  assetPreferencePatch, categoryRank, normalizeCertificationReview, normalizeCertificationRequest, normalizeShowcaseCategory,
+  ownCertificationOverview, popularityCounts, publicCertificationFields, sanitizeProfileCertification
+} = require('./showcase-policy');
+const {
+  validateMaterialInput, sealMaterial, openMaterial, sealVerification, openVerification
+} = require('./certification-material-policy');
+const {
   archivedMergedOpenid,
   claimExpiresAt,
   claimTokenMatches,
@@ -63,6 +70,7 @@ const C = {
   matchmakers: 'hl_matchmakers',
   members: 'hl_members',
   memberPrivateArchives: 'hl_member_private_archives',
+  memberCertifications: 'hl_member_certifications',
   salonEvents: 'hl_salon_events',
   registrations: 'hl_registrations',
   matchRecords: 'hl_match_records',
@@ -386,9 +394,14 @@ function collectionsForPath(path) {
   if (path === '/matchmaker/status') return [C.users, C.matchmakers];
   if (path === '/member/invite-options') return [C.users, C.matchmakers, C.members, C.profiles];
   if (path === '/member/gifts') return [C.users];
-  if (path === '/member/showcase') {
-    return [C.users, C.profiles, C.members, C.matchRecords, C.memberInteractions];
+  if (path === '/user/certifications' || path === '/user/certification-requests' || path.startsWith('/user/certification-materials')) {
+    return [C.users, C.profiles, C.memberCertifications];
   }
+  if (path === '/member/showcase' || /^\/member\/showcase\/(?:\d+|profile_\d+)$/.test(path)) {
+    const names = [C.users, C.profiles, C.members, C.matchRecords, C.memberInteractions];
+    return path === '/member/showcase' ? names : [...names, C.matchmakers];
+  }
+  if (path === '/member/hidden') return [C.users, C.profiles, C.members, C.memberInteractions];
   if (path === '/member/interactions' || path === '/member/gifts/send') {
     const names = [C.users, C.profiles, C.members, C.memberInteractions, C.counters, C.messages, C.conversations];
     return path === '/member/gifts/send' ? [...names, C.giftRecords] : names;
@@ -810,6 +823,7 @@ async function memberView(member, context = {}) {
     avatarUrl: photos[0] || media.avatarUrl,
     gender: user.gender || 0,
     isVerified: user.isVerified || 0,
+    ...publicCertificationFields(profile),
     identityStatus,
     identityStatusText: identityStatus === 'pending' ? '待会员认领' : '已绑定微信',
     realName: profile.realName || user.nickname || '',
@@ -863,6 +877,7 @@ async function profileMemberView(profile, context = {}) {
     avatarUrl: photos[0] || media.avatarUrl,
     gender: user.gender || profile.gender || 0,
     isVerified: user.isVerified || 0,
+    ...publicCertificationFields(profile),
     realName: profile.realName || user.nickname || '',
     age: profile.age || null,
     height: profile.height || null,
@@ -952,7 +967,8 @@ const SHOWCASE_MEMBER_INDEX_FIELDS = Object.fromEntries([
 ].map(field => [field, true]));
 const SHOWCASE_PROFILE_INDEX_FIELDS = Object.fromEntries([
   '_id', 'id', 'userId', 'displayEnabled', 'realName', 'gender', 'age', 'city',
-  'occupation', 'education', 'maritalStatus', 'incomeRange'
+  'occupation', 'education', 'maritalStatus', 'incomeRange',
+  'showcaseCertification', 'assetCategoryConsent', 'assetRangeDisclosure'
 ].map(field => [field, true]));
 const SHOWCASE_USER_INDEX_FIELDS = { id: true, nickname: true, gender: true, status: true };
 const SHOWCASE_PROFILE_FIELDS = Object.fromEntries([
@@ -983,6 +999,7 @@ async function pageRecommendationRecords(userIds) {
 }
 
 async function publicShowcasePage(userId, filters = {}) {
+  const category = normalizeShowcaseCategory(filters.category);
   // Source indexes stay fresh per request. Exact mixed-source totals and legacy visibility
   // require these lightweight scans; full profiles, users and recommendation history are page-scoped.
   const [members, profiles] = await Promise.all([
@@ -991,7 +1008,7 @@ async function publicShowcasePage(userId, filters = {}) {
   ]);
   // Imported non-positive/missing references use the original lookups and defaults.
   // Keeping this rare compatibility path also avoids changing visibility of malformed legacy rows.
-  if ([...members, ...profiles].some(row => !Number.isFinite(Number(row.userId)) || Number(row.userId) <= 0)) {
+  if (category === 'recommend' && [...members, ...profiles].some(row => !Number.isFinite(Number(row.userId)) || Number(row.userId) <= 0)) {
     const rows = await withMemberViewerState(await publicShowcaseRows({ keepUserId: true }), userId);
     return paginate(rows.filter(row => Number(row.userId) !== Number(userId))
       .filter(row => !row.viewerState.isHidden && matchesMemberFilters(row, filters))
@@ -1004,13 +1021,17 @@ async function publicShowcasePage(userId, filters = {}) {
   });
   const standalone = profiles.filter(profile => isTrue(profile.displayEnabled) && !memberUserIds.has(Number(profile.userId)));
   const indexedUserIds = standalone.map(profile => Number(profile.userId));
-  if (filters.keyword || filters.gender) indexedUserIds.push(...memberUserIds);
-  const usersById = await getFirstRowsByNumericField(C.users, 'id', indexedUserIds, [], { fields: SHOWCASE_USER_INDEX_FIELDS });
+  if (filters.keyword || filters.gender || category !== 'recommend') indexedUserIds.push(...memberUserIds);
+  const usersById = await getFirstRowsByNumericField(C.users, 'id', indexedUserIds, [], {
+    fields: { ...SHOWCASE_USER_INDEX_FIELDS, ...(category !== 'recommend' ? { mergedIntoUserId: true } : {}) }
+  });
   const candidates = [];
   function appendCandidate(member, profile) {
     if (!profile || !isTrue(profile.displayEnabled)) return;
     const targetUserId = Number(member ? member.userId : profile.userId);
     const user = usersById.get(targetUserId) || {};
+    if (category !== 'recommend' && (!Number.isFinite(targetUserId) || targetUserId <= 0
+      || Number(user.status) !== 1 || user.mergedIntoUserId)) return;
     const profileId = Number(profile.id || profile.userId || 0);
     const row = {
       id: member ? Number(member.id) : `profile_${profileId || Number(profile.userId)}`,
@@ -1029,7 +1050,12 @@ async function publicShowcasePage(userId, filters = {}) {
   members.forEach(member => appendCandidate(member, firstNumericProfiles.get(Number(member.userId))));
   standalone.forEach(profile => appendCandidate(null, profile));
   const viewerStates = await memberInteractionStateMap(userId, candidates.map(row => row.userId));
-  const visible = candidates.filter(row => !(viewerStates[String(row.userId)] || {}).hide).sort(sortMemberRowsDesc);
+  const counts = category === 'popularity' ? await memberPopularityCounts(candidates.map(row => row.userId)) : new Map();
+  const visible = candidates
+    .filter(row => !(viewerStates[String(row.userId)] || {}).hide)
+    .map(row => ({ ...row, categoryRank: categoryRank(category, row.profile, counts.get(row.userId) || 0) }))
+    .filter(row => row.categoryRank !== null)
+    .sort((a, b) => b.categoryRank - a.categoryRank || sortMemberRowsDesc(a, b));
   const page = paginate(visible, filters.page, filters.pageSize);
   if (!page.list.length) return page;
   const pageUserIds = page.list.map(row => row.userId);
@@ -1053,11 +1079,33 @@ async function publicShowcasePage(userId, filters = {}) {
     const view = candidate.member
       ? await publicMemberView(candidate.member, context, { keepUserId: true })
       : sanitizePublicMemberRow(await profileMemberView(profile, context), { keepUserId: true });
-    if (!view || !isTrue(profile.displayEnabled) || Number(view.status) !== 1 || !matchesMemberFilters(view, filters)) return null;
+    if (!view || !isTrue(profile.displayEnabled) || Number(view.status) !== 1 || !matchesMemberFilters(view, filters)
+      || categoryRank(category, profile, counts.get(candidate.userId) || 0) === null) return null;
     const state = viewerStates[String(candidate.userId)] || {};
-    return { ...view, viewerState: { isFavorite: !!state.favorite, isHidden: !!state.hide } };
+    return { ...view, ...(category === 'popularity' ? { popularityCount: counts.get(candidate.userId) || 0 } : {}),
+      viewerState: { isFavorite: !!state.favorite, isHidden: !!state.hide } };
   }));
   return { ...page, list: list.filter(Boolean) };
+}
+
+async function memberPopularityCounts(targetUserIds) {
+  const targets = new Set(targetUserIds.map(Number).filter(id => Number.isFinite(id) && id > 0));
+  if (!targets.size) return new Map();
+  const references = Array.from(targets);
+  const fields = { id: true, userId: true, targetUserId: true, actionType: true,
+    active: true, status: true, createdAt: true, updatedAt: true, expiresAt: true,
+    invalidatedAt: true, withdrawnAt: true, deletedAt: true };
+  // Include legacy string references before deduplication: a newer withdrawal
+  // must win over an older numeric heart for the same sender and target.
+  const query = references.length <= 50 ? _.and([
+    { actionType: 'favorite' }, _.or([{ targetUserId: _.in(references) }, { targetUserId: db.RegExp({ regexp: '^' }) }])
+  ]) : { actionType: 'favorite' };
+  const rows = await getAll(C.memberInteractions, query, Infinity, { fields });
+  const latest = latestMemberInteractionRows(rows.filter(row => targets.has(Number(row.targetUserId))));
+  const users = await getFirstRowsByNumericField(C.users, 'id', latest.map(row => row.userId), [], {
+    fields: { id: true, status: true, mergedIntoUserId: true }
+  });
+  return popularityCounts(latest, users);
 }
 
 async function memberInteractionStateMap(userId, targetUserIds = []) {
@@ -2178,7 +2226,7 @@ async function memberRequestView(row) {
   const profile = await getOne(C.profiles, { userId: Number(row.userId) }) || {};
   const matchmaker = await getById(C.matchmakers, row.matchmakerId);
   const matchmakerUser = matchmaker ? await getById(C.users, matchmaker.userId) : null;
-  const profileView = stripInternal(profile) || {};
+  const profileView = sanitizeProfileCertification(stripInternal(profile) || {});
   return {
     ...stripInternal(row),
     user: user ? publicUser(user) : null,
@@ -3533,7 +3581,7 @@ const PROFILE_MUTABLE_FIELDS = [
   'partnerRequirement'
 ];
 
-function editableProfilePatch(data = {}) {
+function editableProfilePatch(data = {}, options = {}) {
   const patch = {};
   PROFILE_MUTABLE_FIELDS.forEach(field => {
     if (Object.prototype.hasOwnProperty.call(data, field)) patch[field] = data[field];
@@ -3545,6 +3593,7 @@ function editableProfilePatch(data = {}) {
     patch.displayEnabled = isTrue(data.displayEnabled);
     patch.displayUpdatedAt = nowIso();
   }
+  if (options.allowAssetPreferences !== false) Object.assign(patch, assetPreferencePatch(data));
   return patch;
 }
 
@@ -3934,8 +3983,56 @@ const member = {
     ]);
     return {
       ...page,
+      category: normalizeShowcaseCategory(filters.category),
       favoriteQuota
     };
+  },
+
+  async showcaseDetail(userId, publicId) {
+    const id = String(publicId || '');
+    const profileMatch = /^profile_(\d+)$/.exec(id);
+    const source = profileMatch
+      ? await getById(C.profiles, profileMatch[1]) || await getOne(C.profiles, { userId: Number(profileMatch[1]) })
+      : /^\d+$/.test(id) ? await getById(C.members, id) : null;
+    if (!source || Number(source.userId) === Number(userId)) throw createHttpError('member not found', 404, 40400);
+    const target = await publicShowcaseTarget({ targetUserId: source.userId });
+    const targetUser = await getById(C.users, target.userId);
+    const states = await memberInteractionStateMap(userId, [target.userId]);
+    const state = states[String(target.userId)] || {};
+    if (String(target.id) !== id || !targetUser || Number(targetUser.status) !== 1
+      || targetUser.mergedIntoUserId || state.hide) throw createHttpError('member not found', 404, 40400);
+    let chatAccess = 'unavailable';
+    try {
+      await resolveChatAccess(userId, target.userId);
+      chatAccess = 'allowed';
+    } catch (error) {
+      if (error.code === 40302) chatAccess = 'membership_required';
+      else if (error.status !== 403) throw error;
+    }
+    const page = await resolveMemberMediaPage({ list: [{ ...target,
+      viewerState: { isFavorite: !!state.favorite, isHidden: false, chatAccess } }] });
+    return page.list[0];
+  },
+
+  async hidden(userId, filters = {}) {
+    const rows = latestMemberInteractionRows(await getAll(C.memberInteractions,
+      { userId: Number(userId), actionType: 'hide' }, Infinity)).filter(isActiveInteraction);
+    const page = paginate(rows, filters.page, Math.min(Number(filters.pageSize) || 20, 20));
+    const list = await Promise.all(page.list.map(async row => {
+      let target = null;
+      try {
+        const user = await getById(C.users, row.targetUserId);
+        if (user && Number(user.status) === 1 && !user.mergedIntoUserId) {
+          target = await publicShowcaseTarget({ targetUserId: row.targetUserId });
+        }
+      }
+      catch (error) { if (error.status !== 404) throw error; }
+      // The list contains only the caller's own choices. Do not disclose a withdrawn profile.
+      return { targetUserId: Number(row.targetUserId),
+        displayName: target ? String(target.realName || target.nickname || '会员') : '暂未公开资料的会员',
+        available: !!target };
+    }));
+    return { ...page, list };
   },
 
   async relationships(userId, filters = {}) {
@@ -4063,12 +4160,10 @@ const member = {
     if (!['favorite', 'hide'].includes(actionType)) {
       throw createHttpError('unsupported interaction action');
     }
-    const active = actionType === 'hide'
-      ? true
-      : (data.active === undefined ? true : isTrue(data.active));
+    const active = data.active === undefined ? true : isTrue(data.active);
     // Withdrawal only changes the caller's own interaction; a target may have
     // stopped sharing their profile since the original heart was sent.
-    const target = actionType === 'favorite' && !active
+    const target = !active
       ? { userId: interactionTargetUserId(data) }
       : await publicShowcaseTarget(data);
     if (Number(target.userId) === Number(userId)) {
@@ -4094,7 +4189,9 @@ const member = {
       return favoriteActionResponse(userId, target, interaction, active, wasFavoriteActive, favoriteQuota);
     }
 
-    const interaction = await upsertMemberInteraction(userId, target.userId, actionType, active);
+    const existingHide = await latestMemberInteraction(userId, target.userId, 'hide');
+    const interaction = !active && !existingHide ? null
+      : await upsertMemberInteraction(userId, target.userId, actionType, active);
     const stateMap = await memberInteractionStateMap(userId, [target.userId]);
     const viewerState = stateMap[String(target.userId)] || {};
     return {
@@ -4205,7 +4302,7 @@ const member = {
       }
     }
     const profile = await getOne(C.profiles, { userId: row.userId });
-    const profilePatch = editableProfilePatch(data);
+    const profilePatch = editableProfilePatch(data, { allowAssetPreferences: false });
     if (profile && Object.keys(profilePatch).length) await updateRow(C.profiles, profile, profilePatch);
     else if (!profile) await addRow(C.profiles, { id: await nextId('profile'), userId: row.userId, displayEnabled: false, ...profilePatch });
     return memberView(updated);
@@ -4508,8 +4605,18 @@ const salon = {
   },
 
   async listEvents(filters = {}, currentUserId = null) {
-    let rows = await getAll(C.salonEvents, { status: filters.status || 'upcoming' }, Infinity);
-    rows = rows.sort((a, b) => new Date(a.eventDate) - new Date(b.eventDate));
+    const period = ['upcoming', 'past'].includes(filters.period) ? filters.period : '';
+    const statuses = period === 'past' ? _.in(['upcoming', 'ended', 'cancelled']) : (period ? 'upcoming' : filters.status || 'upcoming');
+    let rows = await getAll(C.salonEvents, { status: statuses }, Infinity);
+    if (period) {
+      const now = Date.now();
+      rows = rows.filter(row => {
+        const startsAt = new Date(row.eventDate).getTime();
+        const past = row.status === 'ended' || row.status === 'cancelled' || (Number.isFinite(startsAt) && startsAt <= now);
+        return period === 'past' ? past : !past;
+      });
+    }
+    rows = rows.sort((a, b) => period === 'past' ? new Date(b.eventDate) - new Date(a.eventDate) : new Date(a.eventDate) - new Date(b.eventDate));
     const page = paginate(rows, filters.page, filters.pageSize);
     const context = await eventViewContext(page.list, currentUserId);
     return { ...page, list: await Promise.all(page.list.map(row => eventView(row, currentUserId, context))) };
@@ -4725,16 +4832,359 @@ const salon = {
   }
 };
 
+function certificationOwnerRecord(record, userId) {
+  if (record && Number(record.userId) !== Number(userId)) {
+    throw createHttpError('认证申请归属不一致，请联系工作人员', 409, 40940);
+  }
+  return record || {};
+}
+
+function certificationRecordData(record, patch = {}) {
+  const { _id: _documentId, _openid: _databaseOwner, ...data } = record;
+  return { ...data, ...patch };
+}
+
+function certificationSecrets() {
+  return { encryptionKey: process.env.MEMBER_CERTIFICATION_ENCRYPTION_KEY, jwtSecret: process.env.JWT_SECRET };
+}
+
+function certificationAdminCredentialFingerprint() {
+  const configuredCode = process.env.ADMIN_CODE;
+  if (typeof configuredCode !== 'string' || !configuredCode.trim() || configuredCode.trim().toUpperCase() === 'HLADMIN') {
+    throw createHttpError('管理员认证核验暂未正确配置，请联系管理员', 503, 50340);
+  }
+  const jwtSecret = process.env.JWT_SECRET;
+  if (typeof jwtSecret !== 'string' || jwtSecret.length < 32) throw createHttpError('管理员认证核验暂未正确配置，请联系管理员', 503, 50340);
+  return crypto.createHmac('sha256', jwtSecret).update(JSON.stringify(['hl.member-certification.admin-access.v1', configuredCode])).digest('hex');
+}
+
+function requireCertificationAdminAccess(session) {
+  const current = certificationAdminCredentialFingerprint();
+  if (session.certificationAdminVersion !== 1 || typeof session.certificationCredentialFingerprint !== 'string'
+    || !/^[a-f0-9]{64}$/.test(session.certificationCredentialFingerprint)
+    || !crypto.timingSafeEqual(Buffer.from(current, 'hex'), Buffer.from(session.certificationCredentialFingerprint, 'hex'))) {
+    throw createHttpError('请重新管理员登录后核验认证申请', 401, 40102);
+  }
+}
+
+function certificationMaterialMetadata(material) {
+  return { id: material.id, kind: material.kind, mimeType: material.mimeType, size: material.size, createdAt: material.createdAt };
+}
+
+function certificationMaterialIsBound(record, id) {
+  return !!record.materials?.[id]?.applicationId || Object.values(record.applications || {}).some(application => application.materialIds?.includes(id))
+    || (record.applicationHistory || []).some(application => application.materialIds?.includes(id));
+}
+
+async function certificationDeleteStorage(fileID) {
+  if (!fileID) return;
+  try {
+    const result = await cloud.deleteFile({ fileList: [fileID] });
+    if (!result || !Array.isArray(result.fileList) || result.fileList.some(file => Number(file.status) !== 0)) {
+      throw createHttpError('认证材料删除未完成，请稍后再试', 503, 50340);
+    }
+  } catch (_error) {
+    throw createHttpError('认证材料删除未完成，请稍后再试', 503, 50340);
+  }
+}
+
+async function certificationRemoveMetadata(userId, id, fileID) {
+  const documentId = `user_${Number(userId)}`;
+  return db.runTransaction(async transaction => {
+    const previous = certificationOwnerRecord(await salonTransactionDocument(transaction, C.memberCertifications, documentId), userId);
+    const material = previous.materials?.[id];
+    if (!material || material.fileID !== fileID || material.status !== 'deleting' || certificationMaterialIsBound(previous, id)) return;
+    const materials = { ...previous.materials }; delete materials[id];
+    await transaction.collection(C.memberCertifications).doc(documentId).set({
+      data: certificationRecordData(previous, { materials, updatedAt: nowIso() })
+    });
+  });
+}
+
+async function certificationCleanupStaging(userId) {
+  const documentId = `user_${Number(userId)}`;
+  const expired = await db.runTransaction(async transaction => {
+    const previous = certificationOwnerRecord(await salonTransactionDocument(transaction, C.memberCertifications, documentId), userId);
+    const materials = { ...(previous.materials || {}) };
+    const removals = Object.values(materials).filter(material => !material.applicationId && !certificationMaterialIsBound(previous, material.id)
+      && (material.status === 'deleting' || (material.status === 'staging' && new Date(material.expiresAt).getTime() <= Date.now())));
+    if (removals.some(material => material.status !== 'deleting')) {
+      removals.forEach(material => { materials[material.id] = { ...material, status: 'deleting' }; });
+      await transaction.collection(C.memberCertifications).doc(documentId).set({
+        data: certificationRecordData(previous, { materials, updatedAt: nowIso() })
+      });
+    }
+    return removals;
+  });
+  for (const material of expired) {
+    try {
+      await certificationDeleteStorage(material.fileID);
+      await certificationRemoveMetadata(userId, material.id, material.fileID);
+    } catch (_error) {
+      // The deleting state prevents submission/read and is retried on the next
+      // owner upload. Log only an operational event, never evidence or file IDs.
+      console.warn('certification staging cleanup deferred');
+    }
+  }
+}
+
+function certificationAdminProjection(record) {
+  const safeApplication = application => {
+    const { sealedVerification: _sealedVerification, ...safe } = application;
+    return safe;
+  };
+  return { ...stripInternal(record),
+    applications: Object.fromEntries(Object.entries(record.applications || {}).map(([kind, application]) => [kind, safeApplication(application)])),
+    applicationHistory: (record.applicationHistory || []).map(safeApplication),
+    materials: Object.fromEntries(Object.values(record.materials || {}).map(material => [material.id, certificationMaterialMetadata(material)]))
+  };
+}
+
+const certifications = {
+  async overview(userId) {
+    const record = await salonTransactionDocument(db, C.memberCertifications, `user_${Number(userId)}`);
+    return ownCertificationOverview(certificationOwnerRecord(record, userId));
+  },
+
+  async uploadMaterial(userId, data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)
+      || Object.keys(data).some(key => !['kind', 'mimeType', 'contentBase64'].includes(key))
+      || !['identity', 'education', 'vehicle', 'property', 'assets'].includes(data.kind)) {
+      throw createHttpError('请选择有效认证类型并上传支持的材料', 422, 42240);
+    }
+    const validated = validateMaterialInput({ mimeType: data.mimeType, base64: data.contentBase64 });
+    const [user, profile] = await Promise.all([getUserOrThrow(userId), getOne(C.profiles, { userId: Number(userId) })]);
+    if (!profile || !profile._id) throw createHttpError('请先保存我的资料，再上传认证材料', 422, 42240);
+    await certificationCleanupStaging(userId);
+    const id = crypto.randomUUID(), createdAt = nowIso();
+    const encrypted = sealMaterial(validated.buffer, { userId: Number(userId), kind: data.kind, id }, certificationSecrets());
+    let fileID = '';
+    try {
+      const uploaded = await cloud.uploadFile({
+        cloudPath: `hl_uploads/member-certification-encrypted/${id}.enc`, fileContent: encrypted
+      });
+      if (!uploaded || typeof uploaded.fileID !== 'string' || !uploaded.fileID) throw createHttpError('认证材料上传失败，请稍后重试', 503, 50340);
+      fileID = uploaded.fileID;
+      const material = { id, kind: data.kind, mimeType: validated.mimeType, size: validated.size, createdAt,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), status: 'staging', fileID };
+      await db.runTransaction(async transaction => {
+        const [currentUser, currentProfile, certification] = await Promise.all([
+          salonTransactionDocument(transaction, C.users, user._id), salonTransactionDocument(transaction, C.profiles, profile._id),
+          salonTransactionDocument(transaction, C.memberCertifications, `user_${Number(userId)}`)
+        ]);
+        if (!currentUser || Number(currentUser.id) !== Number(userId) || Number(currentUser.status) !== 1 || currentUser.mergedIntoUserId
+          || Number(currentUser.authVersion || 1) !== Number(user.authVersion || 1) || !currentProfile || Number(currentProfile.userId) !== Number(userId)) {
+          throw createHttpError('本人资料已变化，请重新登录后上传', 409, 40940);
+        }
+        const previous = certificationOwnerRecord(certification, userId);
+        if (previous.applications?.[data.kind]?.status === 'pending') throw createHttpError('此项认证正在审核，请等待结果后再上传', 409, 40940);
+        if (Object.values(previous.materials || {}).filter(row => row.kind === data.kind && row.status === 'staging').length >= 3) {
+          throw createHttpError('每项认证最多上传3份材料，请先移除不需要的材料', 422, 42240);
+        }
+        await transaction.collection(C.memberCertifications).doc(`user_${Number(userId)}`).set({
+          data: certificationRecordData(previous, { userId: Number(userId), materials: { ...(previous.materials || {}), [id]: material },
+            createdAt: previous.createdAt || createdAt, updatedAt: createdAt })
+        });
+      });
+      return { material: certificationMaterialMetadata(material) };
+    } catch (error) {
+      if (fileID) await certificationDeleteStorage(fileID);
+      throw error && error.status ? error : createHttpError('认证材料上传失败，请稍后重试', 503, 50340);
+    }
+  },
+
+  async removeMaterial(userId, id) {
+    const documentId = `user_${Number(userId)}`;
+    const material = await db.runTransaction(async transaction => {
+      const previous = certificationOwnerRecord(await salonTransactionDocument(transaction, C.memberCertifications, documentId), userId);
+      const found = previous.materials?.[id];
+      if (!found) throw createHttpError('认证材料不存在', 404, 40400);
+      if (found.applicationId || certificationMaterialIsBound(previous, id) || found.status === 'bound') {
+        throw createHttpError('已提交申请的认证材料不能移除', 409, 40940);
+      }
+      await transaction.collection(C.memberCertifications).doc(documentId).set({
+        data: certificationRecordData(previous, { materials: { ...previous.materials, [id]: { ...found, status: 'deleting' } }, updatedAt: nowIso() })
+      });
+      return found;
+    });
+    await certificationDeleteStorage(material.fileID);
+    await certificationRemoveMetadata(userId, id, material.fileID);
+    return { removed: true };
+  },
+
+  async readMaterial(userId, id, administrator = false) {
+    const record = certificationOwnerRecord(await salonTransactionDocument(db, C.memberCertifications, `user_${Number(userId)}`), userId);
+    const material = record.materials?.[id];
+    const bound = material && certificationMaterialIsBound(record, id);
+    if (!material || material.status === 'deleting' || (administrator && !bound)
+      || (!bound && (material.status !== 'staging' || new Date(material.expiresAt).getTime() <= Date.now()))) {
+      throw createHttpError('认证材料不存在或已过期', 404, 40400);
+    }
+    let downloaded;
+    try { downloaded = await cloud.downloadFile({ fileID: material.fileID }); }
+    catch (_error) { throw createHttpError('认证材料读取失败，请稍后重试', 503, 50340); }
+    const decrypted = openMaterial(downloaded.fileContent, { userId: Number(userId), kind: material.kind, id }, certificationSecrets());
+    const contentBase64 = decrypted.toString('base64');
+    const validated = validateMaterialInput({ mimeType: material.mimeType, base64: contentBase64 });
+    if (validated.size !== material.size) throw createHttpError('认证材料记录与文件不一致，请联系工作人员', 422, 42240);
+    return { material: certificationMaterialMetadata(material), contentBase64 };
+  },
+
+  async request(userId, data) {
+    const application = normalizeCertificationRequest(data);
+    const [user, profile] = await Promise.all([
+      getUserOrThrow(userId), getOne(C.profiles, { userId: Number(userId) })
+    ]);
+    if (!profile || !profile._id) throw createHttpError('请先保存我的资料，再申请认证', 422, 42240);
+    const documentId = `user_${Number(userId)}`;
+    const timestamp = nowIso();
+    const { verificationCode, certificateNumber, declaredFinancialAssetRange, ...applicationFields } = application;
+    const requestId = crypto.randomUUID();
+    const privateVerification = { ...(verificationCode ? { verificationCode } : {}), ...(certificateNumber ? { certificateNumber } : {}),
+      ...(declaredFinancialAssetRange ? { declaredFinancialAssetRange } : {}) };
+    const submitted = { ...applicationFields, requestId, status: 'pending', submittedAt: timestamp,
+      ...(Object.keys(privateVerification).length ? { sealedVerification: sealVerification(privateVerification,
+        { userId: Number(userId), kind: application.kind, id: requestId }, certificationSecrets()) } : {}) };
+    return db.runTransaction(async transaction => {
+      const [currentUser, currentProfile, certification] = await Promise.all([
+        salonTransactionDocument(transaction, C.users, user._id),
+        salonTransactionDocument(transaction, C.profiles, profile._id),
+        salonTransactionDocument(transaction, C.memberCertifications, documentId)
+      ]);
+      if (!currentUser || Number(currentUser.id) !== Number(userId) || Number(currentUser.status) !== 1
+        || currentUser.mergedIntoUserId || Number(currentUser.authVersion || 1) !== Number(user.authVersion || 1)
+        || !currentProfile || Number(currentProfile.userId) !== Number(userId)) {
+        throw createHttpError('本人资料已变化，请刷新后重新申请', 409, 40940);
+      }
+      const previous = certificationOwnerRecord(certification, userId);
+      const oldApplication = previous.applications?.[application.kind];
+      // A repeated pending request has no second write, history entry or new date.
+      if (oldApplication && oldApplication.status === 'pending') return ownCertificationOverview(previous);
+      const materials = { ...(previous.materials || {}) };
+      application.materialIds.forEach(id => {
+        const material = materials[id];
+        if (!material || material.kind !== application.kind || material.status !== 'staging' || material.applicationId
+          || certificationMaterialIsBound(previous, id) || new Date(material.expiresAt).getTime() <= Date.now()) {
+          throw createHttpError('认证材料不属于本人当前类型、已过期或已提交，请重新选择', 422, 42240);
+        }
+        materials[id] = { ...material, status: 'bound', applicationId: requestId };
+      });
+      const record = { ...certificationRecordData(previous), userId: Number(userId), current: previous.current || {}, reviews: previous.reviews || [], materials,
+        applications: { ...(previous.applications || {}), [application.kind]: submitted },
+        applicationHistory: [...(previous.applicationHistory || []), ...(oldApplication ? [oldApplication] : [])].slice(-25),
+        createdAt: previous.createdAt || timestamp, updatedAt: timestamp };
+      await transaction.collection(C.memberCertifications).doc(documentId).set({ data: record });
+      // Submission records intent only. Approved results and owner-controlled
+      // profile preferences are untouched until the administrator reviews it.
+      return ownCertificationOverview(record);
+    });
+  }
+};
+
 const admin = {
   async login(code) {
-    const adminCode = process.env.ADMIN_CODE || 'HLADMIN';
+    const adminCode = process.env.ADMIN_CODE;
+    if (typeof adminCode !== 'string' || !adminCode.trim() || adminCode.trim().toUpperCase() === 'HLADMIN') {
+      throw createHttpError('管理员登录暂未正确配置，请联系管理员', 503, 50340);
+    }
     if (!code || String(code) !== String(adminCode)) {
       throw createHttpError('管理员码不正确', 401, 40102);
     }
     return {
-      token: tokenService.sign({ role: 'admin' }, { type: TOKEN_TYPES.ADMIN }),
+      token: tokenService.sign({ role: 'admin', adminSessionId: crypto.randomUUID(), certificationAdminVersion: 1,
+        certificationCredentialFingerprint: certificationAdminCredentialFingerprint() }, { type: TOKEN_TYPES.ADMIN }),
       admin: { role: 'admin', name: 'HL 管理员' }
     };
+  },
+
+  async listMemberCertifications(filters = {}) {
+    const rawUserId = filters.userId;
+    const userId = Number(rawUserId);
+    if (rawUserId !== undefined && (!Number.isSafeInteger(userId) || userId <= 0)) {
+      throw createHttpError('userId is required', 422, 42240);
+    }
+    const rows = await getAll(C.memberCertifications, rawUserId === undefined ? null : { userId }, Infinity);
+    return paginate(rows.map(certificationAdminProjection).sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))),
+      filters.page, filters.pageSize);
+  },
+
+  async memberCertificationEvidence(rawUserId, kind, filters = {}) {
+    const userId = Number(rawUserId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw createHttpError('请选择有效会员', 422, 42240);
+    const record = certificationOwnerRecord(await salonTransactionDocument(db, C.memberCertifications, `user_${userId}`), userId);
+    const application = record.applications?.[kind];
+    if (!application) throw createHttpError('当前认证申请不存在', 404, 40400);
+    if (filters.applicationId && filters.applicationId !== application.requestId) throw createHttpError('认证申请已变化，请重新读取', 409, 40940);
+    const verification = application.sealedVerification ? openVerification(application.sealedVerification,
+      { userId, kind, id: application.requestId }, certificationSecrets()) : {};
+    const materials = (application.materialIds || []).map(id => {
+      const material = record.materials?.[id];
+      if (!material || material.kind !== kind || material.applicationId !== application.requestId || material.status !== 'bound') {
+        throw createHttpError('申请关联材料已变化，请重新核对', 409, 40940);
+      }
+      return certificationMaterialMetadata(material);
+    });
+    return { userId, applicationId: application.requestId, kind, status: application.status, source: application.source,
+      ...(application.method ? { method: application.method } : {}), ...(application.educationLevel ? { educationLevel: application.educationLevel } : {}),
+      ...(application.institutionName ? { institutionName: application.institutionName } : {}),
+      ...(typeof verification.verificationCode === 'string' ? { verificationCode: verification.verificationCode } : {}),
+      ...(typeof verification.certificateNumber === 'string' ? { certificateNumber: verification.certificateNumber } : {}),
+      ...(typeof verification.declaredFinancialAssetRange === 'string' ? { declaredFinancialAssetRange: verification.declaredFinancialAssetRange } : {}), materials };
+  },
+
+  async reviewMemberCertification(rawUserId, data, session) {
+    const userId = Number(rawUserId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw createHttpError('userId is required', 422, 42240);
+    const review = normalizeCertificationReview(data);
+    const [user, profile] = await Promise.all([
+      getById(C.users, userId), getOne(C.profiles, { userId })
+    ]);
+    if (!user || Number(user.status) !== 1 || user.mergedIntoUserId || !profile || !profile._id) {
+      throw createHttpError('待核验会员资料不存在或已失效', 404, 40400);
+    }
+    const timestamp = nowIso();
+    const reviewRecord = { ...review, reviewId: crypto.randomUUID(), reviewedAt: timestamp,
+      reviewedBy: { role: 'admin', account: 'shared-admin',
+        sessionId: String(session.adminSessionId || `legacy-issued-${session.iat}`) } };
+    const documentId = `user_${userId}`;
+    return db.runTransaction(async transaction => {
+      const profileRef = transaction.collection(C.profiles).doc(profile._id);
+      const userRef = transaction.collection(C.users).doc(user._id);
+      const [profileSnapshot, userSnapshot, certificationSnapshot] = await Promise.all([
+        profileRef.get(), userRef.get(), salonTransactionDocument(transaction, C.memberCertifications, documentId)
+      ]);
+      const currentProfile = profileSnapshot.data;
+      const currentUser = userSnapshot.data;
+      const previous = certificationOwnerRecord(certificationSnapshot, userId);
+      if (!currentProfile || Number(currentProfile.userId) !== userId || !currentUser
+        || Number(currentUser.id) !== userId || Number(currentUser.status) !== 1 || currentUser.mergedIntoUserId) {
+        throw createHttpError('会员资料已变化，请重新核验', 409, 40940);
+      }
+      const { kind, evidenceReference: _evidenceReference, remark: _remark, feedback: _feedback,
+        applicationId: _applicationId, ...summaryReview } = review;
+      const oldApplication = previous.applications?.[kind];
+      if (oldApplication && oldApplication.status === 'pending' && !review.applicationId) {
+        throw createHttpError('待审认证必须提供当前申请ID，请先重新读取申请', 422, 42240);
+      }
+      if (review.applicationId && review.applicationId !== oldApplication?.requestId) {
+        throw createHttpError('认证申请已变化，请重新读取并核对当前申请', 409, 40940);
+      }
+      const summary = { ...(currentProfile.showcaseCertification || {}), policyVersion: 1,
+        [kind]: summaryReview };
+      const reviewed = { ...reviewRecord, ...(oldApplication ? { applicationId: oldApplication.requestId } : {}) };
+      const record = { ...certificationRecordData(previous), userId, current: { ...(previous.current || {}), [kind]: reviewed },
+        reviews: [...(previous.reviews || []), reviewed],
+        applications: { ...(previous.applications || {}), ...(oldApplication ? {
+          [kind]: { ...oldApplication, status: review.status, reviewedAt: timestamp }
+        } : {}) },
+        applicationHistory: previous.applicationHistory || [],
+        createdAt: previous.createdAt || timestamp, updatedAt: timestamp };
+      await transaction.collection(C.memberCertifications).doc(documentId).set({ data: record });
+      // Update only the controlled summary. Intake and the member's own consent
+      // preferences remain separate fields and cannot be overwritten by this review.
+      await profileRef.update({ data: { showcaseCertification: summary, updatedAt: timestamp } });
+      return { userId, kind, status: review.status, ...publicCertificationFields({ ...currentProfile, showcaseCertification: summary }) };
+    });
   },
 
   async dashboard() {
@@ -4886,7 +5336,23 @@ exports.main = async (event = {}) => {
     }
 
     if (path.startsWith('/admin/')) {
-      requireAdmin(apiToken);
+      const adminSession = requireAdmin(apiToken);
+      if (path.startsWith('/admin/member-certifications')) requireCertificationAdminAccess(adminSession);
+      if (method === 'GET' && path === '/admin/member-certifications') {
+        return ok(await admin.listMemberCertifications(data));
+      }
+      const adminCertificationEvidenceMatch = path.match(/^\/admin\/member-certifications\/(\d+)\/applications\/(identity|education|vehicle|property|assets)\/evidence$/);
+      if (method === 'GET' && adminCertificationEvidenceMatch) {
+        return ok(await admin.memberCertificationEvidence(adminCertificationEvidenceMatch[1], adminCertificationEvidenceMatch[2], data));
+      }
+      const adminCertificationMaterialMatch = path.match(/^\/admin\/member-certifications\/(\d+)\/materials\/([a-zA-Z0-9_-]{1,80})$/);
+      if (method === 'GET' && adminCertificationMaterialMatch) {
+        return ok(await certifications.readMaterial(Number(adminCertificationMaterialMatch[1]), adminCertificationMaterialMatch[2], true));
+      }
+      const adminCertificationMatch = path.match(/^\/admin\/member-certifications\/(\d+)$/);
+      if (adminCertificationMatch && method === 'PUT') {
+        return ok(await admin.reviewMemberCertification(adminCertificationMatch[1], data, adminSession));
+      }
       if (method === 'GET' && path === '/admin/dashboard') return ok(await admin.dashboard());
       if (method === 'GET' && path === '/admin/matchmakers') return ok(await admin.listMatchmakers(data));
       const adminMatchmakerMatch = path.match(/^\/admin\/matchmakers\/(\d+)\/certification$/);
@@ -4918,8 +5384,14 @@ exports.main = async (event = {}) => {
     if (method === 'GET' && path === '/user/profile') {
       const user = await getUserOrThrow(session.userId);
       const profile = await getOne(C.profiles, { userId: Number(session.userId) });
-      return ok({ ...publicUser(user), profile: profile ? stripInternal(profile) : null });
+      return ok({ ...publicUser(user), profile: profile ? sanitizeProfileCertification(stripInternal(profile)) : null });
     }
+    if (method === 'GET' && path === '/user/certifications') return ok(await certifications.overview(session.userId));
+    if (method === 'POST' && path === '/user/certification-requests') return ok(await certifications.request(session.userId, data));
+    if (method === 'POST' && path === '/user/certification-materials') return ok(await certifications.uploadMaterial(session.userId, data));
+    const ownCertificationMaterialMatch = path.match(/^\/user\/certification-materials\/([a-zA-Z0-9_-]{1,80})$/);
+    if (method === 'GET' && ownCertificationMaterialMatch) return ok(await certifications.readMaterial(session.userId, ownCertificationMaterialMatch[1]));
+    if (method === 'DELETE' && ownCertificationMaterialMatch) return ok(await certifications.removeMaterial(session.userId, ownCertificationMaterialMatch[1]));
     if (method === 'GET' && path === '/user/minimum-registration') return ok(await minimumRegistrationView(session.userId));
     if (method === 'PUT' && path === '/user/minimum-registration') return ok(await saveMinimumRegistration(session.userId, data));
     if (method === 'PUT' && path === '/user/profile') {
@@ -4935,7 +5407,7 @@ exports.main = async (event = {}) => {
       }
       if (profile) profile = await updateRow(C.profiles, profile, profilePatch);
       else profile = await addRow(C.profiles, { id: await nextId('profile'), userId: Number(session.userId), ...profilePatch });
-      return ok({ ...publicUser(updatedUser), profile: stripInternal(profile) });
+      return ok({ ...publicUser(updatedUser), profile: sanitizeProfileCertification(stripInternal(profile)) });
     }
 
     if (method === 'POST' && path === '/matchmaker/apply') return ok(await matchmaker.apply(session.userId, {
@@ -4967,6 +5439,8 @@ exports.main = async (event = {}) => {
     if (method === 'GET' && path === '/member/list') return ok(await member.listOwn(session.userId, data));
     if (method === 'GET' && path === '/member/resources') return ok(await member.resources(session.userId, data));
     if (method === 'GET' && path === '/member/showcase') return ok(await member.showcase(session.userId, data));
+    const publicMemberMatch = path.match(/^\/member\/showcase\/(\d+|profile_\d+)$/);
+    if (method === 'GET' && publicMemberMatch) return ok(await member.showcaseDetail(session.userId, publicMemberMatch[1]));
     if (method === 'GET' && path === '/member/gifts') return ok(await member.gifts());
     if (method === 'GET' && path === '/member/membership-plans') return ok(await membership.overview(session.userId));
     if (method === 'POST' && path === '/member/payment-orders') return ok(await membership.createOrder(session.userId, data));
@@ -4976,6 +5450,7 @@ exports.main = async (event = {}) => {
     }
     if (method === 'GET' && path === '/member/relationships') return ok(await member.relationships(session.userId, data));
     if (method === 'GET' && path === '/member/liked-me') return ok(await member.likedMe(session.userId, data));
+    if (method === 'GET' && path === '/member/hidden') return ok(await member.hidden(session.userId, data));
     if (method === 'POST' && path === '/member/interactions') return ok(await member.interact(session.userId, data));
     if (method === 'POST' && path === '/member/gifts/send') return ok(await member.sendGift(session.userId, data));
     if (method === 'GET' && path === '/member/matchmaker-invite/resolve') return ok(await member.resolveMatchmakerInvite(session.userId, data));
@@ -5022,6 +5497,15 @@ exports.main = async (event = {}) => {
 
     throw createHttpError('not found', 404, 40400);
   } catch (err) {
+    const failedPath = String(event.path || '/');
+    if (failedPath.startsWith('/user/certification') || failedPath.startsWith('/admin/member-certifications')) {
+      const safeError = Number.isInteger(err?.status) && Number.isInteger(err?.code)
+        ? err : createHttpError('认证操作暂不可用，请稍后重试', 503, 50340);
+      // Certification SDK diagnostics can include request bodies or storage IDs.
+      // Keep operational error codes while withholding raw errors from logs/DTOs.
+      console.error('certification request failed', safeError.code);
+      return fail(safeError);
+    }
     console.error(err);
     return fail(err);
   }

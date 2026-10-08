@@ -1,7 +1,12 @@
 <view class="page with-bottom-nav messages-page">
   <view class="messages-intro">
     <text class="messages-title">消息</text>
-    <text class="messages-note">先处理最新会话，心动关系可在下方按需查看。</text>
+    <text class="messages-note">看看新的消息，也别错过对你的喜欢。</text>
+  </view>
+
+  <view class="relationship-shortcuts">
+    <button class="relationship-shortcut" data-type="incoming" bindtap="openRelationshipShortcut"><text>喜欢我的</text><text class="shortcut-count">{{relationshipInitialized ? relationshipCounts.incoming : '—'}}</text></button>
+    <button class="relationship-shortcut" data-type="mutual" bindtap="openRelationshipShortcut"><text>互相喜欢</text><text class="shortcut-count">{{relationshipInitialized ? relationshipCounts.mutual : '—'}}</text></button>
   </view>
 
   <view class="conversation-shell">
@@ -15,7 +20,8 @@
 
     <block wx:if="{{list.length}}">
       <view wx:for="{{list}}" wx:key="id" class="conversation-card" data-id="{{item.id}}" bindtap="openChat">
-        <image class="conversation-avatar" src="{{item.peerAvatar}}" mode="aspectFill"></image>
+        <image wx:if="{{item.peerAvatar}}" class="conversation-avatar" src="{{item.peerAvatar}}" mode="aspectFill" data-id="{{item.id}}" binderror="onConversationAvatarError"></image>
+        <view wx:else class="conversation-avatar conversation-avatar-fallback">{{item.avatarInitial}}</view>
         <view class="conversation-copy">
           <view class="row conversation-title-row">
             <text class="item-title conversation-title">{{item.peerName}}</text>

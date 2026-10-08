@@ -200,7 +200,7 @@ test('upward and horizontal card swipes remain compatible without opening detail
   assert.equal(calls.navigations.length, 0);
 });
 
-test('favorite stays on the target while gift advances after the success animation', async () => {
+test('favorite and gift stay on the target after the success animation', async () => {
   for (const action of ['favorite', 'gift']) {
     const pending = deferred();
     const { page, calls, advance } = runtime(undefined, {
@@ -237,7 +237,7 @@ test('favorite stays on the target while gift advances after the success animati
     assert.equal(page.data.currentMember.id, 501);
     assert.equal(calls.navigations.length, 0);
     advance(1);
-    assert.equal(page.data.currentMember.id, action === 'gift' ? 'profile_602' : 501);
+    assert.equal(page.data.currentMember.id, 501);
     assert.equal(page.data.list[0].isFavorite, true);
     assert.equal(page.data.list[1].isFavorite, false);
     assert.equal(page.data.favoriteQuota.remaining, 7);
@@ -343,7 +343,7 @@ test('failed favorite, hide and gift requests show feedback, clear progress and 
     assert.equal(attempts, 2, `${action} must permit retry after failure`);
     assert.equal(page.data.actionAnimating, true);
     advance(460);
-    assert.equal(page.data.currentMember.id, action === 'favorite' ? 501 : 'profile_602');
+    assert.equal(page.data.currentMember.id, action === 'hide' ? 'profile_602' : 501);
     assert.equal(calls.loadingHidden, 2);
   }
 });
@@ -444,10 +444,7 @@ test('filled profile fields and the legacy verification flag do not imply creden
   const { page } = runtime();
   await page.load();
   const badges = page.data.currentMember.certificationBadges;
-  assert.deepEqual(Array.from(badges, badge => badge.label), [
-    '实名认证', '学历认证', '车辆认证', '房产认证', '资产认证'
-  ]);
-  assert.ok(badges.every(badge => badge.statusText === '待认证'));
+  assert.equal(badges.length, 0);
 });
 
 test('unloading cancels pending card animation and prevents later card mutations', async () => {
@@ -485,10 +482,11 @@ test('showcase caches separate filters, user sessions and cloud environments', a
   await page.load(false);
   assert.equal(calls.showcases.length, 1);
   page.onKeyword({ detail: { value: '上海' } });
-  await page.load(false);
+  await page.search();
   assert.equal(calls.showcases.length, 2);
   assert.equal(calls.showcases[1].keyword, '上海');
   page.onKeyword({ detail: { value: '' } });
+  page.setData({ keyword: '' });
   await page.load(false);
   assert.equal(calls.showcases.length, 2);
   session.token = 'another-session';
@@ -537,7 +535,7 @@ test('a late response from an old filter cannot replace the latest matching card
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls.showcases.length, 1);
   page.onKeyword({ detail: { value: '上海' } });
-  const latestLoad = page.load(false);
+  const latestLoad = page.search();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls.showcases.length, 2);
   latest.resolve({ list: [member('b')], total: 1 });
@@ -559,7 +557,7 @@ test('an old request finishing or failing cannot clear progress while the latest
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(calls.showcases.length, 1);
     page.onKeyword({ detail: { value: '上海' } });
-    const latestLoad = page.load(false);
+    const latestLoad = page.search();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(calls.showcases.length, 2);
     if (oldFails) old.reject(new Error('old request failed'));

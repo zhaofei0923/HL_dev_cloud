@@ -8,6 +8,7 @@
     "pages/user/salon-detail",
     "pages/user/salon-participant",
     "pages/user/profile",
+    "pages/user/certification",
     "pages/user/membership",
     "pages/user/messages",
     "pages/user/chat",
