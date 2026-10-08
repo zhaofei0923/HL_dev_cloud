@@ -67,6 +67,51 @@ test('a warm return preserves an already running recommendation append', async (
   assert.equal(reads, 2);
 });
 
+test('a new leading member cannot trap deduplicated recommendation pages on the same offset', async () => {
+  const rows = Array.from({ length: 155 }, (_, index) => member(index + 1));
+  const pages = [];
+  const { page } = runtime('pages/user/members.js', { memberApi: { showcase: async query => {
+    pages.push(query.page);
+    return pageOf(rows, query);
+  } } });
+  await page.load(false);
+  rows.unshift(member(999));
+  await page.loadMoreShowcase();
+  await page.loadMoreShowcase();
+  assert.deepEqual(pages, [1, 2, 3, 4]);
+  assert.deepEqual(Array.from(page.data.list, row => row.id), Array.from({ length: 155 }, (_, index) => index + 1));
+  assert.equal(page.data.currentMember.id, 1);
+  assert.equal(page.data.hasMore, false);
+  await page.loadMoreShowcase();
+  assert.deepEqual(pages, [1, 2, 3, 4], 'the actual final page terminates even if the new first member has not been seen');
+});
+
+test('an entirely duplicated ranking page advances and its terminal cursor survives a category switch', async () => {
+  let rows = Array.from({ length: 150 }, (_, index) => member(index + 1));
+  const pages = [];
+  const { page } = runtime('pages/user/members.js', { memberApi: { showcase: async query => {
+    if (query.category !== 'popularity') return { list: [member(200)], total: 1 };
+    pages.push(query.page);
+    return pageOf(rows, query);
+  } } });
+  await page.switchCategory({ currentTarget: { dataset: { category: 'popularity' } } });
+  rows = [...rows.slice(50, 100), ...rows.slice(0, 50), ...rows.slice(100)];
+  await page.loadMoreShowcase();
+  assert.deepEqual(pages, [1, 2, 3]);
+  assert.equal(page.data.list.length, 100);
+  assert.equal(page.data.list.at(-1).id, 150);
+  assert.equal(page.data.hasMore, false);
+  page.setData({ currentIndex: 75, currentMember: page.data.list[75] });
+  page.rememberSelection();
+  await page.switchCategory({ currentTarget: { dataset: { category: 'recommend' } } });
+  await page.switchCategory({ currentTarget: { dataset: { category: 'popularity' } } });
+  assert.equal(page.data.currentMember.id, 126);
+  assert.equal(page.data.showcasePage, 3);
+  assert.equal(page.data.hasMore, false);
+  await page.loadMoreShowcase();
+  assert.deepEqual(pages, [1, 2, 3]);
+});
+
 test('a forced recommendation reload supersedes an older same-query request', async () => {
   const old = deferred();
   let reads = 0;
@@ -107,6 +152,30 @@ test('hiding shifts an offset page without losing member 51 or reviving the hidd
   await instance.page.onShow();
   assert.equal(pages.length, reads);
   assert.equal(instance.page.data.list.some(row => row.id === 1), false);
+});
+
+test('several hides refill the server boundary after earlier pages overlapped', async () => {
+  const rows = Array.from({ length: 205 }, (_, index) => member(index + 1));
+  const pages = [];
+  const instance = runtime('pages/user/members.js', { memberApi: {
+    showcase: async query => { pages.push(query.page); return pageOf(rows, query); },
+    interact: async payload => { rows.splice(rows.findIndex(row => row.userId === payload.targetUserId), 1); return {}; }
+  } });
+  await instance.page.load(false);
+  rows.unshift(member(999));
+  await instance.page.loadMoreShowcase();
+  assert.equal(instance.page.data.showcasePage, 3);
+  assert.equal(instance.page.data.list.length, 149);
+  for (let index = 0; index < 2; index += 1) {
+    await instance.page.hideCurrent();
+    instance.advance(460);
+  }
+  await instance.page.loadMoreShowcase();
+  await instance.page.loadMoreShowcase();
+  assert.deepEqual(pages, [1, 2, 3, 3, 4, 5]);
+  assert.deepEqual(Array.from(instance.page.data.list, row => row.id), Array.from({ length: 203 }, (_, index) => index + 3));
+  assert.equal(instance.page.data.hasMore, false);
+  assert.equal(instance.page.data.currentMember.id, 3);
 });
 
 test('failed recommendation append retains the last card and retries; growth and shrink use server totals', async () => {

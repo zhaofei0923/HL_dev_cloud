@@ -9,6 +9,9 @@ exports.memberApi = {
     applyCertification(data, showError = false) {
         return (0, api_1.request)('/user/certification-requests', { method: 'POST', data, showError });
     },
+    stagingCertificationMaterials(kind, showError = false) {
+        return (0, api_1.request)('/user/certification-materials', { data: { kind }, showError });
+    },
     uploadCertificationMaterial(data, showError = false) {
         return (0, api_1.request)('/user/certification-materials', { method: 'POST', data, showError });
     },

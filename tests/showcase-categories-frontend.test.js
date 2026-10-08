@@ -279,6 +279,36 @@ test('reviewed booleans control credential badges and only an approved public as
   assert.equal(page.data.currentMember.financialAssetText, '');
 });
 
+test('reviewed education is identical on cards, detail headers and career fields', async () => {
+  for (const [educationVerified, verifiedEducation, expected, certified] of [
+    [true, '本科', '本科', true],
+    [false, '本科', '博士', false],
+    [1, '本科', '博士', false],
+    ['true', '本科', '博士', false]
+  ]) {
+    const row = member(1, { education: '博士', educationVerified, verifiedEducation });
+    const cards = categoryRuntime({ recommend: [row] });
+    await cards.page.load(false);
+    const detail = runtime('pages/user/member-detail.js', { memberApi: { showcaseDetail: async () => row } });
+    detail.page.setData({ id: '1' });
+    await detail.page.load();
+    const card = cards.page.data.currentMember;
+    const profile = detail.page.data.member;
+    assert.equal(profile.education, expected);
+    assert.equal(card.education, expected);
+    assert.match(card.profileLine, new RegExp(expected));
+    assert.match(profile.workText, new RegExp(expected));
+    assert.equal(profile.careerRows.find(item => item.label === '学历').value, expected);
+    assert.equal(profile.highlightTags.includes(expected), true);
+    assert.equal(card.certificationBadges.some(item => item.label === '学历认证'), certified);
+    assert.equal(detail.page.data.certificationRows.some(item => item.label === '学历核验'), certified);
+    if (certified) {
+      assert.equal(detail.page.data.certificationRows.find(item => item.label === '学历核验').value, '本科 · 学历已认证');
+      assert.doesNotMatch(profile.workText, /博士/);
+    }
+  }
+});
+
 test('empty category messaging keeps its qualification and never falls back to normal recommendation', async () => {
   const { page, reads } = categoryRuntime({ recommend: [member(1)] });
   await page.load(false);

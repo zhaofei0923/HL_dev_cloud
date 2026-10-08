@@ -94,10 +94,19 @@ function runtime(input = fixture(), beforeTransaction = () => {}, options = {}) 
     async runTransaction(callback) {
       beforeTransaction(fixtures);
       const saved = structuredClone(fixtures), writeCount = writes.length;
-      try { return await callback({ collection: name => collection(name, true) }); }
+      let committed = false;
+      try {
+        const result = await callback({ collection: name => collection(name, true) });
+        committed = true;
+        if (options.afterTransaction) options.afterTransaction(fixtures);
+        return result;
+      }
       catch (error) {
-        Object.keys(fixtures).forEach(key => { delete fixtures[key]; }); Object.assign(fixtures, saved);
-        writes.splice(writeCount); throw error;
+        if (!committed) {
+          Object.keys(fixtures).forEach(key => { delete fixtures[key]; }); Object.assign(fixtures, saved);
+          writes.splice(writeCount);
+        }
+        throw error;
       }
     }
   };
@@ -245,7 +254,7 @@ test('admin reviews synchronize pending applications and only approved validated
   assert.equal(policy.publicCertificationFields({ identityVerified: true, propertyVerified: true, vehicleVerified: true }).identityVerified, false);
 });
 
-test('resubmission retains current approved education and assets until rejection/revocation, without changing consent', async () => {
+test('rejection retains the prior approved result while explicit revocation removes it without changing consent', async () => {
   const r = runtime(), token = r.token(1), admin = r.adminToken();
   for (const body of [
     { kind: 'education', source: 'cscse', educationLevel: '博士', status: 'approved', evidenceReference: 'PRIVATE_EDU' },
@@ -263,10 +272,25 @@ test('resubmission retains current approved education and assets until rejection
       applicationId: r.fixtures.hl_member_certifications[0].applications[kind].requestId,
       feedback: '需重新提供可核验材料', remark: 'PRIVATE_AUDIT' }, admin)).code, 0);
     const own = await r.call('/user/certifications', 'GET', {}, token);
-    assert.equal(entry(own, kind).status, status); assert.equal(entry(own, kind).verified, false);
+    assert.equal(entry(own, kind).status, status); assert.equal(entry(own, kind).verified, kind === 'education');
     assert.equal(entry(own, kind).application.status, status); assert.equal(entry(own, kind).feedback, '需重新提供可核验材料');
-    assert.equal('verifiedEducation' in entry(own, kind), false); assert.equal('verifiedFinancialAssetRange' in entry(own, kind), false);
+    assert.equal(entry(own, kind).verifiedEducation, kind === 'education' ? '博士' : undefined);
+    assert.equal('verifiedFinancialAssetRange' in entry(own, kind), false);
   }
+});
+
+test('reapproving a completed asset application cannot extend its validity or create another review write', async () => {
+  const r = runtime(), token = r.token(1), admin = r.adminToken();
+  await r.call('/user/certification-requests', 'POST', request('assets'), token);
+  const applicationId = r.fixtures.hl_member_certifications[0].applications.assets.requestId;
+  const review = { kind: 'assets', status: 'approved', source: 'bank_statement', financialAssetRange: '2m_5m',
+    evidenceReference: 'PRIVATE_VERIFIED_BANK', applicationId };
+  assert.equal((await r.call('/admin/member-certifications/1', 'PUT', review, admin)).code, 0);
+  const priorExpiry = r.fixtures.hl_member_certifications[0].current.assets.expiresAt;
+  const writes = r.writes.length;
+  assert.equal((await r.call('/admin/member-certifications/1', 'PUT', review, admin)).code, 40940);
+  assert.equal(r.fixtures.hl_member_certifications[0].current.assets.expiresAt, priorExpiry);
+  assert.equal(r.writes.length, writes);
 });
 
 test('visible feedback is independent from private evidence, internal remarks and admin session data', async () => {
@@ -361,6 +385,86 @@ test('material upload persists only AEAD ciphertext and returns an opaque metada
   const own = await r.call(`/user/certification-materials/${stored.id}`, 'GET', {}, r.token(1));
   assert.equal(own.code, 0); assert.equal(own.data.contentBase64, JPEG.toString('base64'));
   assert.doesNotMatch(JSON.stringify(own), /fileID|cloud:\/\/|algorithm|iv|tag/);
+});
+
+test('owner can recover all three staged materials after process loss, preview, delete and submit without reuploading', async () => {
+  const r = runtime(fixture(false));
+  const ids = [];
+  for (let i = 0; i < 3; i++) ids.push((await upload(r, 'property', 1, { clientRequestId: `process-loss-request-${i}` })).data.material.id);
+  const list = await r.call('/user/certification-materials', 'GET', { kind: 'property', userId: 2 }, r.token(1));
+  assert.equal(list.code, 0);
+  assert.deepEqual(plain(list.data.materials.map(item => item.id)), ids);
+  assert.ok(list.data.materials.every(item => item.expiresAt && item.clientRequestId));
+  assert.doesNotMatch(JSON.stringify(list), /cloud:\/\/|fileID|requestFingerprint|PRIVATE_DOCUMENT/);
+  assert.deepEqual(plain((await r.call('/user/certification-materials', 'GET', { kind: 'property' }, r.token(2))).data.materials), []);
+  assert.equal((await r.call('/user/certification-materials', 'GET', { kind: 'property' }, r.adminToken())).code, 40100);
+  assert.equal((await r.call(`/user/certification-materials/${ids[0]}`, 'GET', {}, r.token(1))).data.contentBase64, JPEG.toString('base64'));
+  await r.call(`/user/certification-materials/${ids[1]}`, 'DELETE', {}, r.token(1));
+  const submit = await r.call('/user/certification-requests', 'POST', request('property', { materialIds: [ids[0], ids[2]] }), r.token(1));
+  assert.equal(submit.code, 0);
+  assert.deepEqual(plain((await r.call('/user/certification-materials', 'GET', { kind: 'property' }, r.token(1))).data.materials), []);
+  assert.equal(r.uploads.length, 3);
+});
+
+test('upload retries preserve one handle at the three-file limit and reject changed bytes or type under the same key', async () => {
+  const r = runtime(fixture(false));
+  const key = 'lost-response-request-001';
+  const first = await upload(r, 'identity', 1, { clientRequestId: key });
+  await upload(r, 'identity', 1, { clientRequestId: 'lost-response-request-002' });
+  await upload(r, 'identity', 1, { clientRequestId: 'lost-response-request-003' });
+  assert.deepEqual(plain(await upload(r, 'identity', 1, { clientRequestId: key })), plain(first));
+  assert.equal(r.uploads.length, 3); assert.equal(r.storage.size, 3);
+  const changed = Buffer.concat([JPEG, Buffer.from('different')]).toString('base64');
+  assert.equal((await upload(r, 'identity', 1, { clientRequestId: key, contentBase64: changed })).code, 40940);
+  assert.equal((await upload(r, 'property', 1, { clientRequestId: key })).code, 40940);
+  const secondOwner = await upload(r, 'identity', 2, { clientRequestId: key });
+  assert.equal(secondOwner.code, 0); assert.notEqual(secondOwner.data.material.id, first.data.material.id);
+  assert.equal(r.uploads.length, 4);
+});
+
+test('a committed transaction with lost acknowledgement is recovered without deleting referenced ciphertext', async () => {
+  let loseAcknowledgement = true;
+  const r = runtime(fixture(false), undefined, { afterTransaction(fixtures) {
+    if (loseAcknowledgement && Object.keys(fixtures.hl_member_certifications[0]?.materials || {}).length) {
+      loseAcknowledgement = false; throw new Error('transaction acknowledgement lost');
+    }
+  } });
+  const response = await upload(r, 'assets', 1, { clientRequestId: 'committed-but-response-lost' });
+  assert.equal(response.code, 0); assert.equal(r.deletions.length, 0);
+  const read = await r.call(`/user/certification-materials/${response.data.material.id}`, 'GET', {}, r.token(1));
+  assert.equal(read.code, 0); assert.equal(read.data.contentBase64, JPEG.toString('base64'));
+  assert.deepEqual(plain(await upload(r, 'assets', 1, { clientRequestId: 'committed-but-response-lost' })), plain(response));
+  assert.equal(r.uploads.length, 1);
+});
+
+test('uncertain commit and failed recovery read never trigger destructive storage compensation', async () => {
+  const options = { afterTransaction(fixtures) {
+    if (Object.keys(fixtures.hl_member_certifications[0]?.materials || {}).length) {
+      options.certificationReadError = 'database temporarily unreachable';
+      throw new Error('commit acknowledgement lost');
+    }
+  } };
+  const r = runtime(fixture(false), undefined, options);
+  const result = await upload(r, 'identity', 1, { clientRequestId: 'uncertain-commit-read-lost' });
+  assert.equal(result.code, 50340); assert.equal(r.deletions.length, 0); assert.equal(r.storage.size, 1);
+  delete options.certificationReadError;
+  delete options.afterTransaction;
+  const recovered = await r.call('/user/certification-materials', 'GET', { kind: 'identity' }, r.token(1));
+  assert.equal(recovered.code, 0); assert.equal(recovered.data.materials.length, 1);
+  const replay = await upload(r, 'identity', 1, { clientRequestId: 'uncertain-commit-read-lost' });
+  assert.equal(replay.data.material.id, recovered.data.materials[0].id); assert.equal(r.uploads.length, 1);
+});
+
+test('a concurrent request winning between preflight and commit returns its handle and removes only the duplicate blob', async () => {
+  const options = {};
+  const r = runtime(fixture(false), undefined, options);
+  const first = await upload(r, 'identity', 1, { clientRequestId: 'concurrent-upload-request' });
+  const savedRecord = structuredClone(r.fixtures.hl_member_certifications[0]);
+  r.fixtures.hl_member_certifications.length = 0;
+  options.afterUpload = fixtures => { fixtures.hl_member_certifications.push(savedRecord); };
+  const replay = await upload(r, 'identity', 1, { clientRequestId: 'concurrent-upload-request' });
+  assert.deepEqual(plain(replay), plain(first)); assert.equal(r.storage.size, 1); assert.equal(r.deletions.length, 1);
+  assert.ok(r.storage.has(savedRecord.materials[first.data.material.id].fileID));
 });
 
 test('material input validates canonical base64, file signature, size, kind and disallows filenames before uploading', async () => {

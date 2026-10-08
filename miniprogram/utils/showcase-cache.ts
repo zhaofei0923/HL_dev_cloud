@@ -29,6 +29,8 @@ export type ShowcaseResult = {
   total: number
   page: number
   pageSize: number
+  nextOffset: number
+  hasMore: boolean
   favoriteQuota: FavoriteQuota | null
 }
 
@@ -136,12 +138,15 @@ function normalizeResult(value: unknown, query: ShowcaseQuery): ShowcaseResult {
   const list = body.list
     .map(normalizePublicMember)
     .filter((row): row is PublicShowcaseMember => !!row && !row.viewerState?.isHidden)
-  const total = Number(body.total)
+  const reportedTotal = Number(body.total)
+  const total = Number.isFinite(reportedTotal) && reportedTotal >= 0 ? reportedTotal : list.length
   return {
     list,
-    total: Number.isFinite(total) && total >= 0 ? total : list.length,
+    total,
     page: query.page,
     pageSize: query.pageSize,
+    nextOffset: query.page * query.pageSize,
+    hasMore: body.list.length > 0 && query.page * query.pageSize < total,
     favoriteQuota: normalizeFavoriteQuota(body.favoriteQuota)
   }
 }
@@ -232,6 +237,8 @@ export function mergeShowcasePage(scope: string, query: ShowcaseQuery, incoming:
     ...snapshot.result,
     list: [...snapshot.result.list, ...appended],
     page: Math.max(snapshot.result.page, incoming.result.page),
+    nextOffset: incoming.result.nextOffset,
+    hasMore: incoming.result.hasMore,
     total: incoming.result.total,
     favoriteQuota: incoming.result.favoriteQuota || snapshot.result.favoriteQuota
   }
@@ -267,6 +274,8 @@ export function applyShowcaseInteraction(
           viewerState: { isFavorite: active, isHidden: false }
         } : row),
       total: Math.max(snapshot.result.total - removed, 0),
+      // A hide shifts the server offsets; refill the affected boundary before continuing.
+      nextOffset: Math.max(snapshot.result.nextOffset - removed, 0),
       favoriteQuota: favoriteQuota || snapshot.result.favoriteQuota
     }
     if (removed) {

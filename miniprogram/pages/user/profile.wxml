@@ -18,7 +18,12 @@
         <text class="section-note">{{completionNote}}</text>
       </view>
     </view>
-    <button class="profile-primary-action" bindtap="toggleProfileEditor">{{formDirty ? '继续编辑' : '编辑资料'}}</button>
+    <button class="profile-primary-action" disabled="{{!profileReady}}" loading="{{loading}}" bindtap="toggleProfileEditor">{{loading ? '读取资料中' : formDirty ? '继续编辑' : '编辑资料'}}</button>
+  </view>
+
+  <view wx:if="{{!profileReady && profileError}}" class="certification-load-error">
+    <text>{{profileError}}</text>
+    <button class="certification-retry" bindtap="retryProfile" disabled="{{loading}}">重试</button>
   </view>
 
   <text wx:if="{{formDirty}}" class="profile-save-feedback dirty">资料有修改尚未保存，点击“继续编辑”完成保存。</text>
@@ -162,7 +167,7 @@
   </view>
   </block>
 
-  <view wx:if="{{editingProfile}}" class="card form-card profile-subpanel">
+  <view wx:if="{{editingProfile && profileReady}}" class="card form-card profile-subpanel">
     <view class="profile-panel-heading">
       <view>
         <text class="section-title">编辑资料</text>

@@ -24,6 +24,8 @@
       <text wx:if="{{verifiedDetail}}" class="section-note">{{verifiedDetail}}</text>
       <text wx:if="{{submittedAtText}}" class="certification-time">申请时间：{{submittedAtText}}</text>
       <text wx:if="{{reviewedAtText}}" class="certification-time">审核时间：{{reviewedAtText}}</text>
+      <text wx:if="{{expiresAtText}}" class="certification-time">有效期至：{{expiresAtText}}</text>
+      <text wx:if="{{kind === 'assets' && entry.status === 'expired'}}" class="certification-feedback">资产认证已到期，请重新提交核验。</text>
       <text wx:if="{{feedback}}" class="certification-feedback">审核说明：{{feedback}}</text>
       <text wx:if="{{receivedMaterialCount}}" class="section-note">已收到 {{receivedMaterialCount}} 份核验材料。</text>
       <text wx:if="{{pending}}" class="section-note">申请已进入待审核状态，审核期间无需重复提交。如需补充材料，请联系主理人。</text>
@@ -68,13 +70,14 @@
         </picker>
         <text class="certification-input-note">申报区间仅供审核参考，最终认证档位以核验结果为准。</text>
       </view>
-      <view wx:if="{{requiresMaterials}}" class="certification-upload-section">
+      <view wx:if="{{requiresMaterials || uploadedMaterials.length}}" class="certification-upload-section">
         <text class="field-label">核验材料（{{uploadedMaterials.length}}/3）</text>
-        <text class="certification-upload-help">支持 JPEG（JPG）、PNG 图片和 PDF，至少1份、最多3份，每份不超过500 KB。</text>
+        <text wx:if="{{requiresMaterials}}" class="certification-upload-help">支持 JPEG（JPG）、PNG 图片和 PDF，至少1份、最多3份，每份不超过500 KB。</text>
+        <text wx:else class="certification-upload-help">已恢复暂存材料，可预览或移除。选择照片认证方式后可将材料用于本次申请。</text>
         <text class="certification-input-note">较大图片会自动尝试压缩；PDF 请先压缩。请遮挡与核验无关的证件号码、银行账号。</text>
         <text class="certification-input-note">{{materials}}</text>
         <view wx:for="{{uploadedMaterials}}" wx:key="localId" class="certification-material-row {{item.status === 'failed' ? 'failed' : ''}}">
-          <view wx:if="{{item.isPdf}}" class="certification-pdf-label">PDF</view>
+          <view wx:if="{{item.isPdf || !item.previewPath}}" class="certification-pdf-label">{{item.isPdf ? 'PDF' : '图片'}}</view>
           <image wx:else class="certification-material-preview" src="{{item.previewPath}}" mode="aspectFill"></image>
           <view class="certification-material-copy">
             <text class="certification-material-name">材料 {{index + 1}}</text>
@@ -82,11 +85,12 @@
             <text wx:if="{{item.error}}" class="certification-material-error">{{item.error}}</text>
           </view>
           <view class="certification-material-actions">
+            <button wx:if="{{item.id}}" class="certification-remove" data-id="{{item.id}}" disabled="{{previewing || uploading || submitting}}" bindtap="previewMaterial" aria-label="预览材料{{index + 1}}">预览</button>
             <button wx:if="{{item.status === 'failed'}}" class="certification-remove" data-local-id="{{item.localId}}" disabled="{{pending || submitting || uploading}}" bindtap="retryMaterial" aria-label="重试上传材料{{index + 1}}">重试</button>
             <button class="certification-remove" data-id="{{item.id}}" data-local-id="{{item.localId}}" disabled="{{pending || submitting || uploading}}" bindtap="removeMaterial" aria-label="移除材料{{index + 1}}">移除</button>
           </view>
         </view>
-        <button class="btn secondary certification-upload" loading="{{uploading}}" disabled="{{pending || submitting || uploading || uploadedMaterials.length >= 3}}" bindtap="chooseMaterials">{{uploading ? '正在上传材料' : '添加图片或 PDF'}}</button>
+        <button wx:if="{{requiresMaterials}}" class="btn secondary certification-upload" loading="{{uploading}}" disabled="{{pending || submitting || uploading || uploadedMaterials.length >= 3}}" bindtap="chooseMaterials">{{uploading ? '正在上传材料' : '添加图片或 PDF'}}</button>
         <text wx:if="{{uploadError}}" class="certification-form-error">{{uploadError}}</text>
       </view>
       <checkbox-group bindchange="onConsentChange">
@@ -103,10 +107,10 @@
       <text class="section-title">核验说明</text>
       <text wx:if="{{!requiresMaterials || pending}}" class="section-note">{{materials}}</text>
       <view class="certification-materials-note">
-        <text>材料仅用于认证审核。未提交的信息不会保存为本机草稿，离开页面将清除未提交材料。</text>
+        <text>材料仅用于认证审核。已上传材料加密暂存24小时，返回后可继续使用或移除；填写的信息不会保存为本机草稿。</text>
       </view>
       <text wx:if="{{kind === 'education'}}" class="section-note">学历信息由本人申报，最终层级以核验结果为准。本科及以上通过核验后可进入学历分类；国内与境外同层级采用相同推荐规则。</text>
-      <text wx:if="{{kind === 'assets'}}" class="section-note">金融资产核验达到200万元及以上，且本人开启“参与资产分类”，才可进入资产分类。认证通过不自动开启分类参与或公开区间；公开页面默认仅显示“资产已认证”。</text>
+      <text wx:if="{{kind === 'assets'}}" class="section-note">金融资产认证有效期为6个月，到期后暂停认证标识和资产分类资格，重新核验通过后恢复。核验达到200万元及以上，且本人开启“参与资产分类”，才可进入资产分类。认证通过不自动开启分类参与或公开区间；公开页面默认仅显示“资产已认证”。</text>
       <button class="certification-contact" bindtap="goProfile">返回我的资料，联系主理人</button>
     </view>
   </block>

@@ -20,6 +20,89 @@ function profileRuntime(overrides = {}) {
   });
 }
 
+test('cold profile loading blocks editing and saving until the complete server baseline is ready', async () => {
+  const pending = deferred();
+  const original = { realName: '原姓名', city: '上海', education: '本科', age: 29, occupation: '工程师', selfIntro: '原介绍' };
+  const { page, calls } = profileRuntime({ request: async (_path, options) =>
+    options && options.method === 'PUT' ? { profile: plain(options.data) } : pending.promise
+  });
+  const loading = page.onShow();
+  await flush();
+  page.openProfileEditor();
+  page.onInput(change('selfIntro', '过早输入'));
+  page.onCityChange({ detail: { value: ['浙江省', '杭州市'] } });
+  assert.equal(await page.save(), false);
+  assert.equal(page.data.editingProfile, false);
+  assert.equal(page.data.formDirty, false);
+  assert.equal(page.data.profileReady, false);
+  assert.equal(calls.requests.filter(row => row.options?.method === 'PUT').length, 0);
+
+  pending.resolve({ profile: original });
+  await loading;
+  assert.equal(page.data.profileReady, true);
+  assert.equal(page.data.form.city, '上海');
+  assert.equal(page.data.form.selfIntro, '原介绍');
+  page.openProfileEditor();
+  page.onInput(change('selfIntro', '新的介绍'));
+  assert.equal(await page.save(), true);
+  const payload = calls.requests.find(row => row.options?.method === 'PUT').options.data;
+  assert.equal(payload.selfIntro, '新的介绍');
+  for (const key of ['city', 'education', 'age', 'occupation']) {
+    assert.equal(String(payload[key]), String(original[key]), key + ' must retain its loaded value');
+  }
+});
+
+test('failed initial profile read remains noneditable and can recover through explicit retry', async () => {
+  let reads = 0;
+  const { page, calls } = profileRuntime({ request: async () => {
+    if (++reads === 1) throw new Error('offline');
+    return { profile: { realName: '完整资料', city: '成都', education: '硕士' } };
+  } });
+  await page.onShow();
+  assert.equal(page.data.loading, false);
+  assert.equal(page.data.profileReady, false);
+  assert.match(page.data.profileError, /重试/);
+  page.toggleProfileEditor();
+  page.updateForm('realName', '不可写入');
+  assert.equal(await page.save(), false);
+  assert.equal(page.data.editingProfile, false);
+  assert.equal(page.data.formDirty, false);
+  assert.equal(calls.requests.filter(row => row.options?.method === 'PUT').length, 0);
+  await page.retryProfile();
+  assert.equal(page.data.profileReady, true);
+  assert.equal(page.data.profileError, '');
+  page.toggleProfileEditor();
+  assert.equal(page.data.editingProfile, true);
+  assert.equal(page.data.form.city, '成都');
+});
+
+test('a later profile refresh still preserves an existing draft and its saved baseline', async () => {
+  let reads = 0;
+  const { page } = profileRuntime({ request: async () => ({ profile: {
+    realName: ++reads === 1 ? '原姓名' : '后台新姓名', city: '上海', education: '本科'
+  } }) });
+  await page.onShow();
+  page.updateForm('realName', '我的未保存姓名');
+  await page.loadProfile(true);
+  assert.equal(page.data.form.realName, '我的未保存姓名');
+  assert.equal(page._savedForm.realName, '原姓名');
+  assert.equal(page.data.formDirty, true);
+  assert.equal(page.data.profileReady, true);
+});
+
+test('stale profile events cannot edit or save after the account changes before onShow', async () => {
+  const { page, calls, session } = profileRuntime();
+  await page.onShow();
+  session.token = 'another-account';
+  session.user = { id: 2 };
+  page.openProfileEditor();
+  page.updateForm('realName', '来自旧页面的输入');
+  assert.equal(await page.save(), false);
+  assert.equal(page.data.editingProfile, false);
+  assert.equal(page.data.formDirty, false);
+  assert.equal(calls.requests.filter(row => row.options?.method === 'PUT').length, 0);
+});
+
 test('immediate disclosure writes only its preference and never submits or clears draft text', async () => {
   const { page, calls, session } = profileRuntime();
   await page.onShow();

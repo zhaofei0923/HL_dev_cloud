@@ -1,5 +1,5 @@
 import { apiErrorMessage } from '../../services/api'
-import { memberApi, type CertificationApplicationInput, type CertificationEntry, type MemberCertificationKind } from '../../services/member'
+import { memberApi, type CertificationApplicationInput, type CertificationEntry, type CertificationMaterial, type MemberCertificationKind } from '../../services/member'
 import { pageSessionScope } from '../../utils/page-session'
 import { financialAssetRangeText } from '../../utils/member-certification'
 import {
@@ -16,7 +16,7 @@ type EducationLevel = '' | '本科' | '硕士' | '博士'
 type DeclaredAssetRange = '' | typeof DECLARED_FINANCIAL_ASSET_RANGES[number]
 type ChosenMaterial = { path: string; size: number; isPdf: boolean }
 type LocalMaterial = {
-  id: string; localId: string; mimeType: string; size: number; previewPath: string; sizeText: string; isPdf: boolean
+  id: string; localId: string; clientRequestId: string; mimeType: string; size: number; previewPath: string; sizeText: string; isPdf: boolean
   status: 'pending' | 'uploading' | 'uploaded' | 'failed'; error: string; source: ChosenMaterial
 }
 
@@ -61,7 +61,7 @@ async function prepareMaterial(file: ChosenMaterial) {
   if (!mimeType || (file.isPdf ? mimeType !== 'application/pdf' : mimeType === 'application/pdf')) {
     throw new Error('仅支持 JPG、PNG 图片或 PDF，请将其他格式转换后重试')
   }
-  return { mimeType, contentBase64, path }
+  return { mimeType, contentBase64, path, size }
 }
 function entryView(entry: CertificationEntry) {
   const verified = isApprovedCertification(entry)
@@ -73,9 +73,10 @@ function entryView(entry: CertificationEntry) {
     verifiedDetail: education ? `已核验学历：${education}` : assets ? `已核验金融资产：${assets}` : '',
     submittedAtText: certificationTimeText(entry.application && entry.application.submittedAt || entry.submittedAt),
     reviewedAtText: certificationTimeText(entry.reviewedAt),
+    expiresAtText: certificationTimeText(entry.expiresAt),
     receivedMaterialCount: entry.application && Array.isArray(entry.application.materialIds) ? entry.application.materialIds.length : 0,
     feedback: typeof entry.feedback === 'string' ? entry.feedback : '',
-    actionText: pending ? '申请待审核' : verified ? '提交更新申请' : entry.status === 'rejected' || entry.status === 'revoked' ? '重新提交申请' : '提交认证申请'
+    actionText: pending ? '申请待审核' : verified ? '提交更新申请' : ['rejected', 'revoked', 'expired'].includes(entry.status) ? '重新提交申请' : '提交认证申请'
   }
 }
 
@@ -84,18 +85,19 @@ Page({
   _loadPromise: null as Promise<void> | null,
   _disposed: false, _draftEdited: false, _loaded: false,
   _materialSequence: 0, _leaveGuardEnabled: false,
+  _previewPaths: [] as string[],
   data: {
     kind: '' as '' | MemberCertificationKind, title: '资料认证', materials: '',
     loading: false, loadError: '', unsupportedKind: false, submitting: false, submissionError: '',
     entry: null as CertificationEntry | null, statusText: '读取中', verified: false, pending: false,
-    verifiedDetail: '', submittedAtText: '', reviewedAtText: '', feedback: '', actionText: '提交认证申请',
+    verifiedDetail: '', submittedAtText: '', reviewedAtText: '', expiresAtText: '', feedback: '', actionText: '提交认证申请',
     educationSourceOptions: EDUCATION_SOURCE_OPTIONS, educationOptions: CERTIFICATION_EDUCATION_OPTIONS,
     educationSource: '' as EducationSource, educationSourceText: '请选择学历来源', educationLevel: '' as EducationLevel,
     institutionName: '', consentConfirmed: false,
     methodOptions: EDUCATION_CERTIFICATION_METHODS, methodPickerOpen: false,
     method: '' as '' | EducationCertificationMethod, methodText: '请选择认证方式',
     verificationCode: '', certificateNumber: '', requiresMaterials: false,
-    uploadedMaterials: [] as LocalMaterial[], uploading: false, uploadError: '', receivedMaterialCount: 0,
+    uploadedMaterials: [] as LocalMaterial[], uploading: false, previewing: false, uploadError: '', receivedMaterialCount: 0,
     declaredAssetRangeOptions: DECLARED_FINANCIAL_ASSET_RANGE_OPTIONS,
     declaredFinancialAssetRange: '' as DeclaredAssetRange, declaredAssetRangeText: '请选择金融资产区间'
   },
@@ -112,6 +114,7 @@ Page({
     wx.setNavigationBarTitle({ title: definition.title })
   },
   onShow() {
+    this.clearMaterialPreviews()
     if (!this.synchronizeSession() || this.data.unsupportedKind || !this.data.kind) return Promise.resolve()
     return this.loadCertification(true)
   },
@@ -124,14 +127,15 @@ Page({
       this._loadPromise = null
       this._draftEdited = false
       this._loaded = false
+      this.clearMaterialPreviews()
       this.setData({
         loading: false, loadError: this.data.unsupportedKind ? '认证项目不存在，请返回我的资料重新选择' : '',
         submitting: false, submissionError: '', entry: null, statusText: '读取中', verified: false, pending: false,
-        verifiedDetail: '', submittedAtText: '', reviewedAtText: '', feedback: '', actionText: '提交认证申请',
+        verifiedDetail: '', submittedAtText: '', reviewedAtText: '', expiresAtText: '', feedback: '', actionText: '提交认证申请',
         educationSource: '', educationSourceText: '请选择学历来源', educationLevel: '', institutionName: '', consentConfirmed: false,
         method: '', methodText: '请选择认证方式', methodPickerOpen: false, verificationCode: '', certificateNumber: '',
         requiresMaterials: !!this.data.kind && methodRequiresMaterials(this.data.kind, ''),
-        uploadedMaterials: [], uploading: false, uploadError: '', receivedMaterialCount: 0,
+        uploadedMaterials: [], uploading: false, previewing: false, uploadError: '', receivedMaterialCount: 0,
         declaredFinancialAssetRange: '', declaredAssetRangeText: '请选择金融资产区间'
       })
       this.updateLeaveGuard()
@@ -142,24 +146,27 @@ Page({
   },
   loadCertification(force = false): Promise<void> {
     const scope = this.synchronizeSession()
-    if (!scope || this._disposed || !this.data.kind || this.data.submitting) return Promise.resolve()
+    if (!scope || this._disposed || !this.data.kind || this.data.submitting || this.data.uploading) return Promise.resolve()
+    const kind = this.data.kind
     if (!force && this._loadPromise) return this._loadPromise
     const generation = ++this._generation
     const isCurrent = () => !this._disposed && generation === this._generation && pageSessionScope() === scope
     this.setData({ loading: true, loadError: '', submissionError: '' })
     const promise = Promise.resolve().then(async () => {
       try {
-        const overview: unknown = await memberApi.certifications()
+        const [overview, staged] = await Promise.all([memberApi.certifications(), memberApi.stagingCertificationMaterials(kind)])
         if (!isCurrent()) return
         if (!validCertificationOverview(overview)) throw new Error('认证状态不完整')
         const entry = overview.entries.find(item => item.kind === this.data.kind)
         if (!entry) throw new Error('认证状态缺失')
+        if (!staged || !Array.isArray(staged.materials) || staged.materials.some(item => !item || !item.id || item.kind !== this.data.kind)) throw new Error('暂存材料状态缺失')
+        this.restoreStagingMaterials(staged.materials)
         this.applyEntry(entry)
         this._loaded = true
       } catch {
         if (!isCurrent()) return
         this._loaded = false
-        this.setData({ loadError: '认证状态读取失败，请重试后再提交申请' })
+        this.setData({ loadError: '认证状态或暂存材料读取失败，请重试后再继续' })
       } finally {
         if (isCurrent()) { this._loadPromise = null; this.setData({ loading: false }) }
       }
@@ -189,12 +196,67 @@ Page({
     this.updateLeaveGuard()
   },
   retryLoad() { return this.loadCertification(true) },
+  restoreStagingMaterials(materials: CertificationMaterial[]) {
+    const previous = this.data.uploadedMaterials
+    const restored: LocalMaterial[] = materials.map(material => {
+      const local = previous.find(item => item.id === material.id || !!material.clientRequestId && item.clientRequestId === material.clientRequestId)
+      return { id: material.id, localId: local ? local.localId : `restored-${material.id}`,
+        clientRequestId: material.clientRequestId || '', mimeType: material.mimeType, size: material.size,
+        previewPath: local ? local.previewPath : '', sizeText: `${Math.ceil(material.size / 1024)} KB`,
+        isPdf: material.mimeType === 'application/pdf', status: 'uploaded', error: '',
+        source: local ? local.source : { path: '', size: material.size, isPdf: material.mimeType === 'application/pdf' } }
+    })
+    const merged = previous.flatMap(item => {
+      const remote = restored.find(material => material.localId === item.localId)
+      return remote ? [remote] : !item.id ? [item] : []
+    })
+    this.setData({ uploadedMaterials: [...merged, ...restored.filter(item => !merged.some(local => local.localId === item.localId))] })
+    this.updateLeaveGuard()
+  },
+  clearMaterialPreviews() {
+    const paths: string[] = this._previewPaths.splice(0)
+    paths.forEach(filePath => wx.getFileSystemManager().unlink({ filePath, fail: () => undefined }))
+    // Recover cleanup after the OS terminates a preview before onUnload runs.
+    if (typeof wx.getFileSystemManager === 'function' && wx.env && wx.env.USER_DATA_PATH) {
+      const manager = wx.getFileSystemManager()
+      if (typeof manager.readdir === 'function') manager.readdir({ dirPath: wx.env.USER_DATA_PATH,
+        success: result => result.files.filter(name => /^certification-preview-\d+-\d+\.(pdf|png|jpg)$/.test(name)
+          && !this._previewPaths.includes(`${wx.env.USER_DATA_PATH}/${name}`))
+          .forEach(name => manager.unlink({ filePath: `${wx.env.USER_DATA_PATH}/${name}`, fail: () => undefined })),
+        fail: () => undefined })
+    }
+  },
+  async previewMaterial(e: WechatMiniprogram.TouchEvent) {
+    if (this.data.previewing || this.data.uploading || this.data.submitting) return
+    const id = String(e.currentTarget.dataset.id || '')
+    const material = this.data.uploadedMaterials.find(item => item.id === id)
+    const scope = this._scope
+    if (!material || !id || !scope) return
+    const isCurrent = () => !this._disposed && pageSessionScope() === scope
+    this.setData({ previewing: true, uploadError: '' })
+    try {
+      const result = await memberApi.certificationMaterial(id)
+      if (!isCurrent()) return
+      if (!result || result.material.id !== id || result.material.kind !== this.data.kind
+        || certificationMaterialMime(result.contentBase64) !== result.material.mimeType) throw new Error('材料读取结果异常')
+      const extension = result.material.mimeType === 'application/pdf' ? 'pdf' : result.material.mimeType === 'image/png' ? 'png' : 'jpg'
+      const filePath = `${wx.env.USER_DATA_PATH}/certification-preview-${Date.now()}-${++this._materialSequence}.${extension}`
+      this._previewPaths.push(filePath)
+      await new Promise<void>((resolve, reject) => wx.getFileSystemManager().writeFile({ filePath, data: result.contentBase64,
+        encoding: 'base64', success: () => resolve(), fail: reject }))
+      if (!isCurrent()) { this.clearMaterialPreviews(); return }
+      if (extension === 'pdf') await new Promise<void>((resolve, reject) => wx.openDocument({ filePath, fileType: 'pdf', showMenu: false, success: () => resolve(), fail: reject }))
+      else await new Promise<void>((resolve, reject) => wx.previewImage({ urls: [filePath], current: filePath, success: () => resolve(), fail: reject }))
+    } catch {
+      if (isCurrent()) this.setData({ uploadError: '材料预览失败，请重试' })
+      this.clearMaterialPreviews()
+    } finally {
+      if (isCurrent()) this.setData({ previewing: false })
+    }
+  },
   onPullDownRefresh() { return this.loadCertification(true).finally(() => wx.stopPullDownRefresh()) },
   onUnload() {
-    const staged = this.data.uploadedMaterials.map(item => item.id).filter(Boolean)
-    if (this._scope && pageSessionScope() === this._scope && !this.data.submitting) {
-      staged.forEach(id => { void memberApi.removeCertificationMaterial(id).catch(() => undefined) })
-    }
+    this.clearMaterialPreviews()
     this._disposed = true
     this._generation += 1
     this._uploadGeneration += 1
@@ -207,13 +269,13 @@ Page({
     if (enabled === this._leaveGuardEnabled) return
     this._leaveGuardEnabled = enabled
     if (enabled && typeof wx.enableAlertBeforeUnload === 'function') {
-      wx.enableAlertBeforeUnload({ message: '认证申请尚未提交，离开后填写的信息和材料将被清除。', fail: () => undefined })
+      wx.enableAlertBeforeUnload({ message: '填写的信息不会保存，已上传材料将加密暂存24小时，可返回继续申请。', fail: () => undefined })
     } else if (!enabled && typeof wx.disableAlertBeforeUnload === 'function') {
       wx.disableAlertBeforeUnload({ fail: () => undefined })
     }
   },
   markDraftEdited() { this._draftEdited = true; this.updateLeaveGuard() },
-  editingBlocked() { return this.data.pending || this.data.submitting || this.data.uploading },
+  editingBlocked() { return this.data.pending || this.data.submitting || this.data.uploading || this.data.loading || !!this.data.loadError || !this._loaded },
   openMethodPicker() {
     if (!this.editingBlocked()) this.setData({ methodPickerOpen: true })
   },
@@ -297,6 +359,7 @@ Page({
     if (!files.length) return
     const queued: LocalMaterial[] = files.map(source => ({
       id: '', localId: `local-${++this._materialSequence}`, source,
+      clientRequestId: `material_${Date.now().toString(36)}_${this._materialSequence}_${Math.random().toString(36).slice(2)}_${Math.random().toString(36).slice(2)}`,
       mimeType: '', size: source.size, sizeText: source.size ? `${Math.ceil(source.size / 1024)} KB` : '',
       previewPath: source.path, isPdf: source.isPdf, status: 'pending', error: ''
     }))
@@ -321,18 +384,23 @@ Page({
       this.setData({ uploadedMaterials: this.data.uploadedMaterials.map(item => item.localId === localId ? { ...item, ...patch } : item) })
     }
     this.setData({ uploading: true, uploadError: '', submissionError: '' })
+    let reconcile = false
     try {
       for (const localId of localIds) {
         const file = this.data.uploadedMaterials.find(item => item.localId === localId)
         if (!file || file.id) continue
         updateMaterial(localId, { status: 'uploading', error: '' })
+        let attemptedUpload = false
         try {
           const prepared = await prepareMaterial(file.source)
           if (!isCurrent()) return
-          const result = await memberApi.uploadCertificationMaterial({ kind, mimeType: prepared.mimeType, contentBase64: prepared.contentBase64 })
+          // Keep the prepared bytes stable across retries without persisting them
+          // in local storage. The server rejects a changed file under the same ID.
+          updateMaterial(localId, { source: { path: prepared.path, size: prepared.size, isPdf: file.source.isPdf } })
+          attemptedUpload = true
+          const result = await memberApi.uploadCertificationMaterial({ kind, mimeType: prepared.mimeType, contentBase64: prepared.contentBase64, clientRequestId: file.clientRequestId })
           const material = result && result.material
           if (!isCurrent()) {
-            if (material && material.id && pageSessionScope() === scope) void memberApi.removeCertificationMaterial(material.id).catch(() => undefined)
             return
           }
           if (!material || !material.id || material.kind !== kind || material.size > CERTIFICATION_MATERIAL_MAX_BYTES) {
@@ -346,11 +414,13 @@ Page({
           const message = apiErrorMessage(error) || '材料上传失败，请重试'
           updateMaterial(localId, { status: 'failed', error: message })
           this.setData({ uploadError: message })
+          if (attemptedUpload) reconcile = true
         }
       }
     } finally {
       if (isCurrent()) this.setData({ uploading: false })
     }
+    if (reconcile && isCurrent()) await this.loadCertification(true)
   },
   async removeMaterial(e: WechatMiniprogram.TouchEvent) {
     if (this.editingBlocked()) return
@@ -371,8 +441,14 @@ Page({
       if (this._disposed || pageSessionScope() !== scope) return
       this.setData({ uploadedMaterials: remainingMaterials, submissionError: '' })
       this.updateLeaveGuard()
-    } catch {
-      if (!this._disposed && pageSessionScope() === scope) this.setData({ uploadError: '材料删除失败，请重试' })
+    } catch (error) {
+      if (this._disposed || pageSessionScope() !== scope) return
+      const code = error && typeof error === 'object' && 'code' in error ? Number(error.code) : 0
+      if (code === 40400) {
+        // The first deletion may have succeeded before its response was lost.
+        this.setData({ uploadedMaterials: remainingMaterials, uploadError: '', submissionError: '' })
+        this.updateLeaveGuard()
+      } else this.setData({ uploadError: '材料删除失败，请重试' })
     } finally {
       if (!this._disposed && pageSessionScope() === scope) this.setData({ uploading: false })
     }
@@ -450,7 +526,7 @@ Page({
     }
     if (!this.hasUnsubmittedChanges()) { leave(); return }
     const scope = this._scope
-    wx.showModal({ title: '申请尚未提交', content: '离开后，填写的信息和未提交材料将被清除。确定离开吗？',
+    wx.showModal({ title: '申请尚未提交', content: '填写的信息不会保存；已上传材料将加密暂存24小时，返回后可继续使用或移除。确定离开吗？',
       confirmText: '确认离开', cancelText: '继续填写',
       success: result => { if (result.confirm && !this._disposed && pageSessionScope() === scope) leave() } })
   }

@@ -22,6 +22,109 @@ function relationships(premium, list = premium ? [premiumRelationship()] : [{
 
 const itemEvent = id => ({ currentTarget: { dataset: { id } } });
 
+function relationshipPage({ type = 'incoming', page = 1, pageSize = 12 } = {}) {
+  const all = Array.from({ length: type === 'incoming' ? 25 : 0 }, (_, index) => ({
+    ...premiumRelationship(), id: 501 + index, userId: 77 + index
+  }));
+  return {
+    list: all.slice((page - 1) * pageSize, page * pageSize),
+    counts: { incoming: 25, mutual: 0 }, total: all.length, page, pageSize, isPremiumMember: true
+  };
+}
+
+async function loadTwoRelationshipPages(page) {
+  await page.loadRelationships('incoming', { expanded: true, force: true });
+  await page.loadMoreRelationships();
+  assert.equal(page.data.relationshipPage, 2);
+  assert.equal(page.data.relationshipItems.length, 24);
+}
+
+test('opening a second-page relationship revalidates the loaded range and retains pagination', async () => {
+  const reads = [];
+  const { page, calls } = runtime('pages/user/messages.js', { memberApi: { relationships: async query => {
+    reads.push(query.page);
+    return relationshipPage(query);
+  } } });
+  await loadTwoRelationshipPages(page);
+  await page.openRelationshipMember(itemEvent(523));
+  assert.deepEqual(reads, [1, 2, 1, 2]);
+  assert.equal(page.data.relationshipPage, 2);
+  assert.equal(page.data.relationshipItems.length, 24);
+  assert.equal(calls.navigation.at(-1).url, '/pages/user/member-detail?id=523');
+  assert.equal(calls.storage.at(-1).value.userId, 99);
+  await page.loadMoreRelationships();
+  assert.equal(reads.at(-1), 3);
+  assert.equal(page.data.relationshipPage, 3);
+  assert.equal(page.data.relationshipItems.length, 25);
+  assert.equal(page.data.relationshipHasMore, false);
+});
+
+test('responding to a second-page relationship uses the revalidated target', async () => {
+  const responses = [];
+  const { page } = runtime('pages/user/messages.js', { memberApi: {
+    relationships: async query => relationshipPage(query),
+    interact: async payload => { responses.push(JSON.parse(JSON.stringify(payload))); return { canChat: true }; }
+  } });
+  await loadTwoRelationshipPages(page);
+  await page.respondFavorite(itemEvent(523));
+  assert.deepEqual(responses, [{ targetUserId: 99, actionType: 'favorite', active: true }]);
+  assert.equal(page.data.relationshipType, 'mutual');
+  assert.equal(page.data.respondingId, '');
+});
+
+test('second-page permission refresh failure never publishes partially refreshed private rows', async () => {
+  let reads = 0;
+  const { page, calls } = runtime('pages/user/messages.js', { memberApi: { relationships: async query => {
+    if (++reads === 4) throw new Error('second page unavailable');
+    return relationshipPage(query);
+  } } });
+  await loadTwoRelationshipPages(page);
+  calls.updates.length = 0;
+  await page.openRelationshipMember(itemEvent(523));
+  assert.ok(page.data.relationshipError);
+  assert.equal(page.data.relationshipPermissionVerified, false);
+  assert.doesNotMatch(JSON.stringify(calls.updates), /PRIVATE_/);
+  assert.doesNotMatch(JSON.stringify(page.data.relationshipItems), /PRIVATE_/);
+  assert.equal(calls.storage.length, 0);
+  assert.equal(calls.navigation.length, 0);
+});
+
+test('a downgrade during later-page revalidation replaces all private pages with locked previews', async () => {
+  let reads = 0;
+  const { page, calls } = runtime('pages/user/messages.js', { memberApi: { relationships: async query =>
+    ++reads === 4 ? relationships(false) : relationshipPage(query)
+  } });
+  await loadTwoRelationshipPages(page);
+  await page.openRelationshipMember(itemEvent(523));
+  assert.equal(page.data.relationshipPage, 1);
+  assert.equal(page.data.relationshipExpanded, false);
+  assert.equal(page.data.relationshipItems.length, 1);
+  assert.equal(page.data.isPremiumMember, false);
+  assert.equal(page.data.relationshipHasMore, false);
+  assert.doesNotMatch(JSON.stringify(page.data.relationshipItems), /PRIVATE_/);
+  assert.equal(calls.storage.length, 0);
+  assert.ok(calls.navigation.every(call => call.url === '/pages/user/membership'));
+});
+
+test('an account switch during later-page revalidation discards old private pages and navigation', async () => {
+  let reads = 0;
+  const pending = deferred();
+  const { page, calls, session } = runtime('pages/user/messages.js', { memberApi: { relationships: async query =>
+    ++reads === 4 ? pending.promise : relationshipPage(query)
+  } });
+  await loadTwoRelationshipPages(page);
+  const opening = page.openRelationshipMember(itemEvent(523));
+  await flush();
+  session.token = 'new-account-session';
+  session.user = { id: 2 };
+  pending.resolve(relationshipPage({ page: 2 }));
+  await opening;
+  assert.equal(page.data.relationshipItems.length, 0);
+  assert.equal(page.data.relationshipPermissionVerified, false);
+  assert.equal(calls.storage.length, 0);
+  assert.equal(calls.navigation.length, 0);
+});
+
 test('message tab reads deduplicate and warm revisits retain conversations with safe relationship slots', async () => {
   const pending = deferred();
   let conversationReads = 0;

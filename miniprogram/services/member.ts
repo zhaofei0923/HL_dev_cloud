@@ -129,7 +129,7 @@ export type MembershipOrderCheckout = {
 }
 
 export type MemberCertificationKind = 'identity' | 'education' | 'vehicle' | 'property' | 'assets'
-export type MemberCertificationStatus = 'unsubmitted' | 'pending' | 'approved' | 'rejected' | 'revoked'
+export type MemberCertificationStatus = 'unsubmitted' | 'pending' | 'approved' | 'rejected' | 'revoked' | 'expired'
 export type EducationCertificationMethod = 'chsi_code' | 'diploma_photo' | 'study_proof' | 'cscse_number'
 export type VerifiedEducationLevel = 'bachelors' | 'master' | 'doctor'
 export type FinancialAssetRange = 'under_500k' | '500k_2m' | '2m_5m' | '5m_10m' | 'over_10m'
@@ -141,6 +141,8 @@ export type CertificationMaterial = {
   mimeType: CertificationMaterialMime
   size: number
   createdAt: string
+  expiresAt?: string
+  clientRequestId?: string
 }
 
 export type CertificationEntry = {
@@ -152,6 +154,7 @@ export type CertificationEntry = {
   source?: string
   submittedAt?: string
   reviewedAt?: string
+  expiresAt?: string
   feedback?: string
   application?: {
     requestId?: string
@@ -186,7 +189,10 @@ export const memberApi = {
   applyCertification(data: CertificationApplicationInput, showError = false) {
     return request<CertificationOverview>('/user/certification-requests', { method: 'POST', data, showError })
   },
-  uploadCertificationMaterial(data: { kind: MemberCertificationKind; mimeType: CertificationMaterialMime; contentBase64: string }, showError = false) {
+  stagingCertificationMaterials(kind: MemberCertificationKind, showError = false) {
+    return request<{ materials: CertificationMaterial[] }>('/user/certification-materials', { data: { kind }, showError })
+  },
+  uploadCertificationMaterial(data: { kind: MemberCertificationKind; mimeType: CertificationMaterialMime; contentBase64: string; clientRequestId: string }, showError = false) {
     return request<{ material: CertificationMaterial }>('/user/certification-materials', { method: 'POST', data, showError })
   },
   removeCertificationMaterial(id: string, showError = false) {

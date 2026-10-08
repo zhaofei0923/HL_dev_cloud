@@ -79,7 +79,7 @@ function normalizeMember(row) {
     const city = String(member.cityText || row.city || row.province || '').trim();
     const educationVerified = row.educationVerified === true;
     const assetVerified = row.assetVerified === true;
-    const education = String(educationVerified && row.verifiedEducation || row.education || '').trim();
+    const education = String(member.education || '').trim();
     const occupation = String(row.occupation || '').trim();
     const primaryMeta = uniqueLocationParts(city, String(row.nativePlace || '')).join(' · ') || member.metaText;
     const profileLine = compactList([heightText, education, occupation]).join(' · ') || member.workText;
@@ -307,7 +307,7 @@ Page({
                     return;
                 // Refresh the previously browsed pages so a category keeps its position after qualification changes.
                 if (!cached) {
-                    for (let page = 2; page <= retainedPage && snapshot.result.list.length < snapshot.result.total; page += 1) {
+                    for (let page = 2; page <= retainedPage && snapshot.result.hasMore; page += 1) {
                         const nextQuery = { ...query, page };
                         const incoming = await (0, showcase_cache_1.requestShowcase)(scope, nextQuery, () => member_1.memberApi.showcase(nextQuery), true, isCurrent);
                         if (!isCurrent())
@@ -341,7 +341,7 @@ Page({
                     ...selected,
                     total: snapshot.result.total,
                     showcasePage: snapshot.result.page,
-                    hasMore: list.length < snapshot.result.total,
+                    hasMore: snapshot.result.hasMore,
                     countText: countText(snapshot.result.total),
                     favoriteQuota: snapshot.result.favoriteQuota,
                     ...categoryEmptyState(this.data.category, this.hasFilters())
@@ -409,8 +409,11 @@ Page({
             try {
                 let appended = 0;
                 do {
-                    // Refilling an offset page after a hide avoids skipping its shifted boundary member.
-                    const page = Math.floor(this.data.list.length / SHOWCASE_PAGE_SIZE) + 1;
+                    const retained = (0, showcase_cache_1.readShowcaseCache)(scope, query);
+                    if (!retained)
+                        return;
+                    // Server progress is independent of deduplication and only rewinds for local hides.
+                    const page = Math.floor(retained.result.nextOffset / SHOWCASE_PAGE_SIZE) + 1;
                     const nextQuery = { ...query, page };
                     const incoming = await (0, showcase_cache_1.requestShowcase)(scope, nextQuery, () => member_1.memberApi.showcase(nextQuery), true, isCurrent);
                     if (!isCurrent())
@@ -432,13 +435,13 @@ Page({
                         index += 1;
                         this._advanceAfterMore = false;
                     }
-                    const hasMore = incoming.result.list.length > 0 && list.length < snapshot.result.total;
+                    const hasMore = snapshot.result.hasMore;
                     this.setData({ list, ...selectionState(list, index), total: snapshot.result.total,
                         countText: countText(snapshot.result.total), showcasePage: snapshot.result.page,
                         hasMore, favoriteQuota: snapshot.result.favoriteQuota });
                     this.rememberSelection();
                     appended = list.length - initialLength;
-                    if (list.length === previousLength || !hasMore)
+                    if (!hasMore)
                         break;
                 } while (appended < SHOWCASE_PAGE_SIZE);
                 if (isCurrent() && this._advanceAfterMore && !this.data.hasMore
@@ -767,7 +770,7 @@ Page({
             const list = this.data.list.filter(item => Number(item.userId) !== target.targetUserId);
             const removed = this.data.list.length - list.length;
             const total = Math.max(Number(this.data.total || this.data.list.length) - removed, 0);
-            const hasMore = list.length < total;
+            const hasMore = this.data.hasMore;
             const waitingForMore = currentIndex >= list.length && hasMore;
             const index = waitingForMore ? Math.max(list.length - 1, 0) : currentIndex;
             this.rememberActionSelection(list, index);

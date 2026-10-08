@@ -142,7 +142,6 @@
           aria-label="不再推荐，可撤销" disabled="{{loading || hideLoading || favoriteLoading || sendingGiftId !== '' || actionAnimating || giftPanelOpen || filterOpen}}"
           bindtap="hideCurrent">
           <view class="action-icon action-hide"><view class="x-shape"><view class="x-line x-left"></view><view class="x-line x-right"></view></view></view>
-          <text class="quick-action-label">不再推荐</text>
         </button>
       </view>
       </view>

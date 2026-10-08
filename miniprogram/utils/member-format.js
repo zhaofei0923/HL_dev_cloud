@@ -130,7 +130,8 @@ function normalizeMemberProfile(row, internal = false) {
     const city = row.city || row.province || '城市待确认';
     const age = valueWithUnit(row.age, '岁', '年龄保密');
     const height = valueWithUnit(row.height, 'cm', '身高保密');
-    const education = row.education || '学历保密';
+    const educationValue = String(!internal && row.educationVerified === true && row.verifiedEducation || row.education || '').trim();
+    const education = educationValue || '学历保密';
     const occupation = row.occupation || '职业保密';
     const income = row.incomeRange || '收入保密';
     const displayName = row.realName || row.nickname || '优质会员';
@@ -170,6 +171,7 @@ function normalizeMemberProfile(row, internal = false) {
     }
     return {
         ...row,
+        education: educationValue,
         avatarUrl,
         photos,
         hasUploadedPhotos: memberPhotos.length > 0,

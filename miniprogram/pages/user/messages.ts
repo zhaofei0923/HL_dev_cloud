@@ -56,6 +56,7 @@ type RelationshipLoadOptions = {
   append?: boolean
   allowAutoSelect?: boolean
   force?: boolean
+  preserveLoadedPages?: boolean
 }
 
 type ConversationLoadOptions = {
@@ -366,7 +367,9 @@ Page({
     const append = options.append === true
     const page = append ? this.data.relationshipPage + 1 : 1
     const pageSize = expanded ? 12 : 2
-    const key = `${type}:${page}:${pageSize}`
+    const refreshPages = options.preserveLoadedPages && expanded && !append && type === this.data.relationshipType
+      ? Math.max(1, this.data.relationshipPage) : 1
+    const key = `${type}:${page}:${pageSize}${refreshPages > 1 ? `:through:${refreshPages}` : ''}`
     if (this._relationshipPromise && this._relationshipPendingKey === key) return this._relationshipPromise
     if (!options.force && !append && !this.data.relationshipOpen
       && this.data.relationshipInitialized && this._relationshipLoadedKey === key
@@ -383,9 +386,20 @@ Page({
     const promise = (async () => {
       await Promise.resolve()
       try {
-        const result: RelationshipResult = await memberApi.relationships({ type, page, pageSize })
+        let result: RelationshipResult = await memberApi.relationships({ type, page, pageSize })
         if (!this.isMessageSessionCurrent(scope) || !this._messagesVisible
           || requestId !== this._relationshipRequestSerial) return
+        // Revalidate every loaded page before publishing any private rows. A
+        // later-page click must not lose its target to a page-one-only refresh.
+        for (let nextPage = 2; result.isPremiumMember === true && nextPage <= refreshPages
+          && (nextPage - 1) * pageSize < Number(result.total || 0); nextPage += 1) {
+          const next: RelationshipResult = await memberApi.relationships({ type, page: nextPage, pageSize })
+          if (!this.isMessageSessionCurrent(scope) || !this._messagesVisible
+            || requestId !== this._relationshipRequestSerial) return
+          result = next.isPremiumMember === true
+            ? { ...next, page: next.page || nextPage, list: [...(result.list || []), ...(next.list || [])] }
+            : next
+        }
         const counts = result.counts || { ...EMPTY_COUNTS }
         if (options.allowAutoSelect && type === 'incoming' && counts.incoming === 0 && counts.mutual > 0) {
           this.setData({ relationshipCounts: counts, relationshipInitialized: true, relationshipLoading: false })
@@ -525,7 +539,8 @@ Page({
     if (!scope || this.data.relationshipLoading || !this._messagesVisible || !this.findRelationship(id)) return null
     await this.loadRelationships(this.data.relationshipType, {
       expanded: this.data.relationshipExpanded,
-      force: true
+      force: true,
+      preserveLoadedPages: true
     })
     if (!this.isMessageSessionCurrent(scope) || !this._messagesVisible
       || !this.data.relationshipPermissionVerified || this.data.relationshipError) return null

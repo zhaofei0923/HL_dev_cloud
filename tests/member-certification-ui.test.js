@@ -27,6 +27,8 @@ function overview(changes = {}) {
 }
 
 function certificationRuntime(kind = 'education', overrides = {}) {
+  const staged = new Map();
+  const materialOverrides = overrides.memberApi || {};
   const instance = runtime('pages/user/certification.js', {
     ...overrides,
     memberApi: {
@@ -35,7 +37,13 @@ function certificationRuntime(kind = 'education', overrides = {}) {
         status: 'pending', application: { status: 'pending', ...data }
       } }),
       removeCertificationMaterial: async () => ({ removed: true }),
-      ...overrides.memberApi
+      stagingCertificationMaterials: async () => ({ materials: [...staged.values()] }),
+      ...materialOverrides,
+      ...(materialOverrides.uploadCertificationMaterial ? { uploadCertificationMaterial: async data => {
+        const result = await materialOverrides.uploadCertificationMaterial(data);
+        if (result.material) staged.set(result.material.id, { ...result.material, clientRequestId: data.clientRequestId });
+        return result;
+      } } : {})
     }
   });
   instance.page.onLoad({ kind });
@@ -220,6 +228,7 @@ test('certification failures block submission until a successful status retry', 
   await page.retryLoad();
   seedMaterial(page);
   page.onAssetRangeChange(picker(2));
+  page.onConsentChange(consent(true));
   await page.submitApplication();
   assert.equal(writes, 1);
   assert.equal(page.data.verified, false);
@@ -274,15 +283,16 @@ test('return refresh supersedes an older read while retaining educational draft 
   const older = deferred();
   let reads = 0;
   const { page } = certificationRuntime('education', { memberApi: {
-    certifications: () => ++reads === 1 ? older.promise : Promise.resolve(overview({ education: {
+    certifications: () => ++reads === 1 ? Promise.resolve(overview()) : reads === 2 ? older.promise : Promise.resolve(overview({ education: {
       status: 'rejected', feedback: '请补充可查验报告', application: { status: 'rejected', educationLevel: '本科', source: 'chsi' }
     } }))
   } });
-  const first = page.onShow();
-  await flush();
+  await page.onShow();
   page.onEducationSourceChange(picker(1));
   page.onEducationLevelChange(picker(2));
   page.onInstitutionInput({ detail: { value: '尚未提交的学校' } });
+  const first = page.onShow();
+  await flush();
   await page.onShow();
   older.resolve(overview({ education: { status: 'approved', verified: true, verifiedEducation: '本科' } }));
   await first;
@@ -357,7 +367,8 @@ test('large images are compressed before upload through the private material API
   await page.onShow();
   await page.uploadMaterials([{ path: 'wxfile://original.jpg', size: 900000, isPdf: false }]);
   assert.deepEqual(compressed, [80, 60]);
-  assert.deepEqual(uploaded, [{ kind: 'identity', mimeType: 'image/jpeg', contentBase64: '/9j/AA-test-jpeg-content' }]);
+  assert.deepEqual(uploaded.map(({ clientRequestId, ...data }) => data), [{ kind: 'identity', mimeType: 'image/jpeg', contentBase64: '/9j/AA-test-jpeg-content' }]);
+  assert.match(uploaded[0].clientRequestId, /^[a-zA-Z0-9_-]{16,80}$/);
   assert.equal(page.data.uploadedMaterials[0].id, 'encrypted-jpeg-1');
   assert.equal(page.data.uploadedMaterials[0].previewPath, 'wxfile://compressed-60.jpg');
   assert.equal(page.data.uploading, false);
@@ -418,14 +429,147 @@ test('unsubmitted uploaded material is deleted through the private API, with fai
   assert.deepEqual(removals, ['encrypted-material-1', 'encrypted-material-1']);
 });
 
-test('leaving an unsubmitted upload cleans staging but a successful application keeps attached materials', async () => {
+test('a deletion retry reconciles a missing owned handle after the successful deletion response was lost', async () => {
+  let attempts = 0;
+  const { page } = certificationRuntime('property', { memberApi: {
+    removeCertificationMaterial: async () => { if (++attempts === 1) throw new Error('response lost'); throw { code: 40400 }; }
+  } });
+  await page.onShow(); seedMaterial(page);
+  await page.removeMaterial(clickMaterial('encrypted-material-1'));
+  assert.equal(page.data.uploadedMaterials.length, 1);
+  await page.removeMaterial(clickMaterial('encrypted-material-1'));
+  assert.equal(page.data.uploadedMaterials.length, 0); assert.equal(page.data.uploadError, '');
+});
+
+test('reopening restores uploaded evidence for preview, explicit removal and submission without local file handles', async () => {
+  const material = id => ({ id, kind: 'property', mimeType: 'application/pdf', size: 100, createdAt: '2026-10-08T00:00:00Z', expiresAt: '2026-10-09T00:00:00Z' });
+  let staged = [material('restored-one'), material('restored-two')];
+  const previews = [], cleared = [], written = [], submissions = [];
+  const { page } = certificationRuntime('property', { wx: {
+    env: { USER_DATA_PATH: 'wxfile://private' },
+    getFileSystemManager: () => ({
+      writeFile: options => { written.push(options); options.success(); },
+      unlink: options => cleared.push(options.filePath)
+    }),
+    openDocument: options => { previews.push(options); options.success(); }
+  }, memberApi: {
+    stagingCertificationMaterials: async () => ({ materials: staged }),
+    certificationMaterial: async id => ({ material: material(id), contentBase64: 'JVBERi0xLjc-test-pdf' }),
+    removeCertificationMaterial: async id => { staged = staged.filter(item => item.id !== id); return { removed: true }; },
+    applyCertification: async data => { submissions.push(plain(data)); return overview({ property: { status: 'pending', application: { status: 'pending', materialIds: data.materialIds } } }); }
+  } });
+  await page.onShow();
+  assert.deepEqual(plain(page.data.uploadedMaterials.map(item => [item.id, item.status, item.previewPath])), [
+    ['restored-one', 'uploaded', ''], ['restored-two', 'uploaded', '']]);
+  await page.previewMaterial(clickMaterial('restored-one'));
+  assert.equal(previews.length, 1); assert.equal(previews[0].showMenu, false);
+  assert.equal(written[0].encoding, 'base64');
+  await page.onShow();
+  assert.deepEqual(cleared, [written[0].filePath], 'preview plaintext is removed after returning');
+  await page.removeMaterial(clickMaterial('restored-two'));
+  page.onConsentChange(consent(true));
+  await page.submitApplication();
+  assert.deepEqual(submissions, [{ kind: 'property', consentConfirmed: true, materialIds: ['restored-one'] }]);
+});
+
+test('reopening cleans only dedicated orphaned preview files left by process termination', async () => {
+  const cleared = [];
+  const { page } = certificationRuntime('identity', { wx: {
+    env: { USER_DATA_PATH: 'wxfile://private' },
+    getFileSystemManager: () => ({
+      readdir: options => options.success({ files: ['certification-preview-123-4.jpg', 'profile-avatar.jpg', 'certification-preview-unrelated.pdf'] }),
+      unlink: options => cleared.push(options.filePath)
+    })
+  } });
+  await page.onShow();
+  assert.ok(cleared.length > 0);
+  assert.ok(cleared.every(filePath => filePath === 'wxfile://private/certification-preview-123-4.jpg'));
+});
+
+test('late staging recovery from the previous account cannot repopulate private material handles', async () => {
+  const first = deferred();
+  let reads = 0;
+  const { page, session } = certificationRuntime('identity', { memberApi: {
+    stagingCertificationMaterials: async () => ++reads === 1 ? first.promise : { materials: [] }
+  } });
+  const older = page.onShow(); await flush();
+  session.token = 'new-certification-owner'; session.user = { id: 2 };
+  await page.onShow();
+  first.resolve({ materials: [{ id: 'previous-owner-private-file', kind: 'identity', mimeType: 'image/jpeg', size: 100 }] });
+  await older;
+  assert.equal(page.data.uploadedMaterials.length, 0);
+});
+
+test('lost upload response is reconciled to the original staged handle before the user can retry or remove', async () => {
+  let staged = [], calls = 0;
+  const { page } = certificationRuntime('identity', {
+    wx: { getFileSystemManager: () => ({ readFile: options => options.success({ data: '/9j/test-private-image' }) }) },
+    memberApi: {
+      stagingCertificationMaterials: async () => ({ materials: staged }),
+      uploadCertificationMaterial: async data => {
+        calls += 1;
+        staged = [{ id: 'committed-before-network-loss', kind: data.kind, mimeType: data.mimeType, size: 100, clientRequestId: data.clientRequestId }];
+        throw new Error('network response lost');
+      }
+    }
+  });
+  await page.onShow();
+  await page.uploadMaterials([{ path: 'wxfile://identity.jpg', size: 100, isPdf: false }]);
+  assert.equal(page.data.uploadedMaterials.length, 1);
+  assert.equal(page.data.uploadedMaterials[0].id, 'committed-before-network-loss');
+  assert.equal(page.data.uploadedMaterials[0].status, 'uploaded');
+  await page.retryMaterial({ currentTarget: { dataset: { localId: page.data.uploadedMaterials[0].localId } } });
+  assert.equal(calls, 1);
+});
+
+test('failed staging recovery blocks extra uploads and consent until recovery succeeds', async () => {
+  let reads = 0, choices = 0;
+  const { page } = certificationRuntime('assets', {
+    wx: { showActionSheet: () => { choices += 1; } },
+    memberApi: { stagingCertificationMaterials: async () => { if (++reads === 1) throw new Error('offline'); return { materials: [] }; } }
+  });
+  await page.onShow();
+  assert.match(page.data.loadError, /暂存材料读取失败/);
+  page.chooseMaterials(); page.onConsentChange(consent(true));
+  assert.equal(choices, 0); assert.equal(page.data.consentConfirmed, false);
+  await page.retryLoad();
+  page.chooseMaterials(); assert.equal(choices, 1);
+});
+
+test('upload retry reuses its request identity and stable prepared file rather than consuming another slot', async () => {
+  const requests = [];
+  const { page } = certificationRuntime('identity', {
+    wx: { getFileSystemManager: () => ({ readFile: options => options.success({ data: '/9j/retry-evidence' }) }) },
+    memberApi: { uploadCertificationMaterial: async data => {
+      requests.push(plain(data)); if (requests.length === 1) throw new Error('offline');
+      return { material: { id: 'retried', kind: data.kind, mimeType: data.mimeType, size: 100 } };
+    } }
+  });
+  await page.onShow();
+  await page.uploadMaterials([{ path: 'wxfile://identity.jpg', size: 100, isPdf: false }]);
+  await page.retryMaterial({ currentTarget: { dataset: { localId: page.data.uploadedMaterials[0].localId } } });
+  assert.deepEqual(requests[0], requests[1]);
+  assert.equal(page.data.uploadedMaterials.length, 1); assert.equal(page.data.uploadedMaterials[0].id, 'retried');
+});
+
+test('expired assets display their deadline and allow a fresh verification request', async () => {
+  const { page } = certificationRuntime('assets', { memberApi: { certifications: async () => overview({ assets: {
+    status: 'expired', verified: false, expiresAt: '2026-10-05T00:00:00Z', reviewedAt: '2026-04-05T00:00:00Z'
+  } }) } });
+  await page.onShow();
+  assert.equal(page.data.verified, false); assert.equal(page.data.pending, false);
+  assert.ok(page.data.expiresAtText); assert.equal(page.data.actionText, '重新提交申请');
+  assert.equal(page.editingBlocked(), false);
+});
+
+test('leaving retains recoverable encrypted staging and successful submission retains attached materials', async () => {
   const removals = [];
   const first = certificationRuntime('property', { memberApi: { removeCertificationMaterial: async id => { removals.push(id); return { removed: true }; } } });
   await first.page.onShow();
   seedMaterial(first.page, 'unsubmitted-material');
   first.page.onUnload();
   await flush();
-  assert.deepEqual(removals, ['unsubmitted-material']);
+  assert.deepEqual(removals, []);
   const submitted = certificationRuntime('property', { memberApi: {
     removeCertificationMaterial: async id => { removals.push(id); return { removed: true }; },
     applyCertification: async data => overview({ property: { status: 'pending', application: { status: 'pending', materialIds: data.materialIds } } })
@@ -437,10 +581,10 @@ test('leaving an unsubmitted upload cleans staging but a successful application 
   assert.equal(submitted.page.data.receivedMaterialCount, 1);
   submitted.page.onUnload();
   await flush();
-  assert.deepEqual(removals, ['unsubmitted-material']);
+  assert.deepEqual(removals, []);
 });
 
-test('a late upload after leaving cleans its staging and cannot update a disposed page', async () => {
+test('a late upload after leaving remains recoverable and cannot update a disposed page', async () => {
   const upload = deferred();
   const removals = [];
   const { page } = certificationRuntime('identity', {
@@ -458,7 +602,7 @@ test('a late upload after leaving cleans its staging and cannot update a dispose
   await loading;
   await flush();
   assert.equal(page.data.uploadedMaterials.length, 0);
-  assert.deepEqual(removals, ['late-staging']);
+  assert.deepEqual(removals, []);
 });
 
 test('native file selection from an old account cannot start uploads for the new account', async () => {

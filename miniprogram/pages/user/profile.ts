@@ -316,6 +316,7 @@ Page({
     user: null as any,
     loading: false,
     profileReady: false,
+    profileError: '',
     saving: false,
     uploadingPhotos: false,
     completionText: '0%',
@@ -396,7 +397,7 @@ Page({
         ...matchmakerEntryView(null),
         completionText: completion.text,
         completionNote: completion.note,
-        loading: false, profileReady: false, saving: false, uploadingPhotos: false, referralLoading: false,
+        loading: false, profileReady: false, profileError: '', saving: false, uploadingPhotos: false, referralLoading: false,
         referralCard: { canShare: false }, matchmakerCode: '',
         editingProfile: false, previewOpen: false,
         formDirty: false, saveState: 'idle', saveStatus: '资料已同步',
@@ -423,7 +424,7 @@ Page({
     const generation = ++this._profileGeneration
     const formRevision = this._formRevision
     const isCurrent = () => generation === this._profileGeneration && pageSessionScope() === scope
-    this.setData({ loading: !this._profileInitialized })
+    this.setData({ loading: !this._profileInitialized, profileError: '' })
     if (force) this._panelLoadedAt = 0
     if (this.data.matchmakerPanelOpen) void this.loadMatchmakerPanel(force)
     const promise = Promise.resolve().then(async () => {
@@ -433,15 +434,17 @@ Page({
         const user = currentUser() || result
         const form = await prepareProfileForm(result.profile || {}, user)
         if (!isCurrent()) return
-        // A tab return/background refresh must not overwrite unsaved edits.
-        if (!this._formDirty && this._formRevision === formRevision && !this.data.saving) {
+        // Establish the first complete baseline before editing is enabled. Later
+        // tab returns/background refreshes must not overwrite unsaved edits.
+        if (!this._profileInitialized || (!this._formDirty && this._formRevision === formRevision && !this.data.saving)) {
           this._savedForm = form
+          this._formDirty = false
           const completion = completionFor(form)
           this.setData({
             user, form, preview: previewFor(form), photoCount: photoCountFor(form),
             ...selectorTextFor(form),
             completionText: completion.text, completionNote: completion.note,
-            saveState: 'saved', saveStatus: '资料已同步'
+            formDirty: false, saveState: 'saved', saveStatus: '资料已同步'
           })
         } else {
           this.setData({ user })
@@ -453,6 +456,7 @@ Page({
         if (!isCurrent()) return
         console.warn('load user profile failed', err)
         this._profileLoadedAt = 0
+        this.setData({ profileError: '资料读取失败，请重试后再编辑。' })
       } finally {
         if (isCurrent()) {
           this._profileLoadPromise = null
@@ -466,6 +470,10 @@ Page({
 
   onPullDownRefresh() {
     return Promise.all([this.loadProfile(true), this.loadCertifications(true)]).then(() => undefined).finally(() => wx.stopPullDownRefresh())
+  },
+
+  retryProfile() {
+    return this.loadProfile(true)
   },
 
   onUnload() {
@@ -621,6 +629,7 @@ Page({
   },
 
   setForm(form: ProfileForm) {
+    if (!this.canEditProfile()) return
     this._formRevision += 1
     this.renderForm(form)
   },
@@ -629,7 +638,13 @@ Page({
     this.setForm({ ...this.data.form, [field]: value })
   },
 
+  canEditProfile() {
+    return this._profileInitialized && this.data.profileReady
+      && !!this._profileScope && pageSessionScope() === this._profileScope
+  },
+
   openProfileEditor() {
+    if (!this.canEditProfile()) return
     wx.setNavigationBarTitle({ title: '编辑资料' })
     this.setData({ editingProfile: true, previewOpen: false }, () => {
       wx.pageScrollTo({ scrollTop: 0, duration: 0 })
@@ -731,7 +746,7 @@ Page({
   },
 
   async choosePhotos() {
-    if (this.data.saving || this.data.loading || this._choosingPhotos) return
+    if (!this.canEditProfile() || this.data.saving || this.data.loading || this._choosingPhotos) return
     const scope = this._profileScope
     this._choosingPhotos = true
     this.setData({ uploadingPhotos: true })
@@ -763,7 +778,7 @@ Page({
   },
 
   deletePhoto(e: WechatMiniprogram.TouchEvent) {
-    if (this.data.saving || this.data.loading || this._choosingPhotos) return
+    if (!this.canEditProfile() || this.data.saving || this.data.loading || this._choosingPhotos) return
     const index = Number(e.currentTarget.dataset.index)
     const photos = photosFromText(String(this.data.form.photoText || ''))
     if (!Number.isInteger(index) || index < 0 || index >= photos.length) return
@@ -878,7 +893,7 @@ Page({
   },
 
   async save() {
-    if (this.data.saving || this.data.loading || this._choosingPhotos) return false
+    if (!this.canEditProfile() || this.data.saving || this.data.loading || this._choosingPhotos) return false
     const scope = pageSessionScope()
     if (!scope || scope !== this._profileScope) return false
     const submitted = { ...this.data.form }

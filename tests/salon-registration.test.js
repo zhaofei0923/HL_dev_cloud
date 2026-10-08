@@ -362,6 +362,26 @@ test('activity shares and old invite acceptance register without changing anothe
   assert.equal(r.fixtures.hl_users[2].nickname, existingName);
 });
 
+test('cancelled public activities have readable details while participation and private access remain blocked', async () => {
+  const input = fixture();
+  input.hl_salon_events[0].status = 'cancelled';
+  input.hl_registrations.push(registration(2));
+  const r = runtime(input);
+  const listed = await r.hooks.salon.listEvents({ period: 'past' }, 3);
+  assert.equal(listed.list[0].id, 1);
+  const detail = await r.hooks.salon.getEventDetail(1, 3);
+  assert.equal(detail.status, 'cancelled');
+  assert.equal(detail.canRegister, false);
+  await assert.rejects(r.hooks.salon.register(1, 3), /取消|cancelled|开放/);
+  const participants = await r.hooks.salon.participants(1, 3, {});
+  assert.equal(participants.canViewProfiles, false);
+  assert.ok(participants.list.every(row => row.canViewProfile === false));
+  for (const status of ['pending', 'rejected']) {
+    r.fixtures.hl_salon_events[0].status = status;
+    await assert.rejects(r.hooks.salon.getEventDetail(1, 3), /尚未公开/);
+  }
+});
+
 test('activity period is filtered before pagination and past view excludes unpublished events', async () => {
   const input = fixture();
   const base = input.hl_salon_events[0];

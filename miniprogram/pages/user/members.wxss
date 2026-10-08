@@ -24,13 +24,14 @@
 .recommend-categories {
   display: flex;
   align-items: center;
-  gap: 28rpx;
 }
 
 .recommend-category {
   position: relative;
-  flex: 0 0 auto;
+  flex: 1;
+  min-width: 0;
   padding: 16rpx 0;
+  text-align: center;
   color: #736256;
   font-size: 32rpx;
   font-weight: 800;
@@ -74,6 +75,7 @@
 
 .topbar-actions {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 18rpx;
 }
@@ -315,7 +317,6 @@
 .applied-filters { display: flex; flex-wrap: wrap; gap: 10rpx; margin: 8rpx 0 16rpx; }
 .recommend-page .filter-chip { margin: 0; padding: 10rpx 18rpx; min-height: 64rpx; background: #fffdf9; color: #79634e; font-size: 23rpx; line-height: 44rpx; border-radius: 32rpx; }
 .recommend-page .hidden-entry { margin: 20rpx 0 0; padding: 12rpx; background: transparent; color: #79634e; font-size: 24rpx; }
-.quick-action-label { margin-top: 10rpx; color: #fffdf9; font-size: 22rpx; line-height: 1.3; text-shadow: 0 1rpx 6rpx #29241f; }
 .undo-banner { position: fixed; left: 28rpx; right: 28rpx; bottom: calc(126rpx + env(safe-area-inset-bottom)); z-index: 12; display: flex; align-items: center; justify-content: space-between; gap: 20rpx; padding: 12rpx 22rpx; background: #fffdf9; color: #29241f; border: 1rpx solid #decdbb; border-radius: 20rpx; box-shadow: 0 8rpx 28rpx rgba(41,36,31,.14); font-size: 25rpx; }
 .undo-banner text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .undo-banner button, .hidden-member-row button, .hidden-close { flex-shrink: 0; margin: 0; padding: 10rpx 20rpx; min-height: 72rpx; color: #a45d43; background: transparent; font-size: 25rpx; line-height: 52rpx; }
@@ -403,6 +404,7 @@
 .action-icon {
   box-sizing: border-box;
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 96rpx;

@@ -48,7 +48,30 @@ function assetPreferencePatch(data = {}) {
   return patch;
 }
 
-function certificationState(profile = {}) {
+function assetCertificationExpiresAt(review = {}) {
+  const reviewedAt = new Date(review.reviewedAt || '').getTime();
+  if (!Number.isFinite(reviewedAt)) return '';
+  const expiry = new Date(reviewedAt);
+  const day = expiry.getUTCDate();
+  expiry.setUTCDate(1);
+  expiry.setUTCMonth(expiry.getUTCMonth() + 6);
+  const lastDay = new Date(Date.UTC(expiry.getUTCFullYear(), expiry.getUTCMonth() + 1, 0)).getUTCDate();
+  expiry.setUTCDate(Math.min(day, lastDay));
+  // A stored earlier deadline is binding; malformed or missing review dates never renew a legacy result.
+  if (review.expiresAt) {
+    const explicitExpiry = new Date(review.expiresAt).getTime();
+    if (!Number.isFinite(explicitExpiry)) return '';
+    return new Date(Math.min(expiry.getTime(), explicitExpiry)).toISOString();
+  }
+  return expiry.toISOString();
+}
+
+function assetCertificationCurrent(review, now = Date.now()) {
+  const expiresAt = assetCertificationExpiresAt(review);
+  return !!expiresAt && new Date(review.reviewedAt).getTime() <= now && new Date(expiresAt).getTime() > now;
+}
+
+function certificationState(profile = {}, now = Date.now()) {
   const summary = profile.showcaseCertification || {};
   if (summary.policyVersion !== 1) return { education: null, assets: null, identity: null, vehicle: null, property: null };
   const education = summary.education;
@@ -56,7 +79,7 @@ function certificationState(profile = {}) {
   return {
     education: education && education.status === 'approved' && EDUCATION_SOURCES.has(education.source)
       && Object.prototype.hasOwnProperty.call(EDUCATION_RANK, education.level) ? education : null,
-    assets: assets && assets.status === 'approved' && ASSET_SOURCES.has(assets.source)
+    assets: assets && assets.status === 'approved' && ASSET_SOURCES.has(assets.source) && assetCertificationCurrent(assets, now)
       && Object.prototype.hasOwnProperty.call(FINANCIAL_ASSET_RANK, assets.financialAssetRange) ? assets : null,
     ...Object.fromEntries(['identity', 'vehicle', 'property'].map(kind => {
       const review = summary[kind];
@@ -65,8 +88,8 @@ function certificationState(profile = {}) {
   };
 }
 
-function publicCertificationFields(profile = {}) {
-  const state = certificationState(profile);
+function publicCertificationFields(profile = {}, now = Date.now()) {
+  const state = certificationState(profile, now);
   return {
     identityVerified: !!state.identity,
     vehicleVerified: !!state.vehicle,
@@ -85,10 +108,10 @@ function sanitizeProfileCertification(profile = {}) {
   return { ...safe, ...publicCertificationFields(profile) };
 }
 
-function categoryRank(category, profile = {}, popularityCount = 0) {
+function categoryRank(category, profile = {}, popularityCount = 0, now = Date.now()) {
   if (category === 'recommend') return 0;
   if (category === 'popularity') return popularityCount >= 101 ? popularityCount : null;
-  const state = certificationState(profile);
+  const state = certificationState(profile, now);
   if (category === 'education') return state.education ? EDUCATION_RANK[state.education.level] : null;
   if (category === 'assets') {
     const rank = state.assets ? FINANCIAL_ASSET_RANK[state.assets.financialAssetRange] : 0;
@@ -209,15 +232,18 @@ function normalizeCertificationRequest(data = {}) {
 }
 
 // Explicit owner projection: private audit/evidence fields never enter this DTO.
-function ownCertificationOverview(record = {}) {
+function ownCertificationOverview(record = {}, now = Date.now()) {
   const current = record.current || {};
   const applications = record.applications || {};
-  const state = certificationState({ showcaseCertification: { ...current, policyVersion: 1 } });
+  const state = certificationState({ showcaseCertification: { ...current, policyVersion: 1 } }, now);
   return { entries: CERTIFICATION_KINDS.map(kind => {
     const review = current[kind] || {};
     const application = applications[kind];
     const pending = application && application.status === 'pending';
-    const status = pending ? 'pending' : CERTIFICATION_STATUSES.has(review.status) ? review.status : 'unsubmitted';
+    const expired = kind === 'assets' && review.status === 'approved' && !assetCertificationCurrent(review, now);
+    const status = pending ? 'pending' : expired ? 'expired' : application?.status === 'rejected' && review.status !== 'revoked'
+      ? 'rejected' : CERTIFICATION_STATUSES.has(review.status) ? review.status : 'unsubmitted';
+    const feedbackReview = application?.status === 'rejected' && review.status !== 'revoked' ? application : review;
     const verified = !!state[kind];
     const source = pending ? application.source : review.source;
     const applicationLevel = application && (APPLICATION_EDUCATION_LEVELS.has(application.educationLevel)
@@ -230,8 +256,10 @@ function ownCertificationOverview(record = {}) {
       ...(source && validSource(source) ? { source } : {}),
       ...(application && typeof application.submittedAt === 'string' ? { submittedAt: application.submittedAt } : {}),
       ...(typeof review.reviewedAt === 'string' ? { reviewedAt: review.reviewedAt } : {}),
-      ...(!pending && typeof review.feedback === 'string' && review.feedback.trim() && review.feedback.trim().length <= 500
-        ? { feedback: review.feedback.trim() } : {}),
+      ...(kind === 'assets' && review.status === 'approved' && assetCertificationExpiresAt(review)
+        ? { expiresAt: assetCertificationExpiresAt(review) } : {}),
+      ...(!pending && typeof feedbackReview.feedback === 'string' && feedbackReview.feedback.trim() && feedbackReview.feedback.trim().length <= 500
+        ? { feedback: feedbackReview.feedback.trim() } : {}),
       ...(application ? { application: {
         status: ['pending', ...CERTIFICATION_STATUSES].includes(application.status) ? application.status : 'unsubmitted',
         ...(validSource(application.source) ? { source: application.source } : {}),
@@ -246,6 +274,7 @@ function ownCertificationOverview(record = {}) {
 }
 
 module.exports = {
+  assetCertificationExpiresAt,
   assetPreferencePatch, categoryRank, normalizeCertificationReview, normalizeCertificationRequest, normalizeShowcaseCategory,
   ownCertificationOverview,
   popularityCounts, publicCertificationFields, sanitizeProfileCertification

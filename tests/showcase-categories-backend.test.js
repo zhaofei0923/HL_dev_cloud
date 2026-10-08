@@ -49,8 +49,19 @@ function runtime(input, beforeRead = () => {}) {
         });
         rows = rows.slice(state.offset, state.offset + state.limit);
         reads.push({ name, ...plain(state), returned: rows.length });
-        if (state.fields) rows = rows.map(row => Object.fromEntries(Object.keys(state.fields)
-          .filter(key => state.fields[key] && key in row).map(key => [key, row[key]])));
+        if (state.fields) rows = rows.map(row => {
+          const projected = {};
+          for (const [field, enabled] of Object.entries(state.fields)) {
+            if (!enabled) continue;
+            const parts = field.split('.');
+            const value = parts.reduce((source, key) => source?.[key], row);
+            if (value === undefined) continue;
+            let target = projected;
+            for (const key of parts.slice(0, -1)) target = target[key] ||= {};
+            target[parts.at(-1)] = value;
+          }
+          return projected;
+        });
         return { data: structuredClone(rows) };
       },
       doc(id) {
@@ -142,7 +153,7 @@ function fixture(count = 7) {
 }
 
 function education(level, source = 'chsi') { return { policyVersion: 1, education: { status: 'approved', level, source } }; }
-function assets(range) { return { policyVersion: 1, assets: { status: 'approved', financialAssetRange: range, source: 'bank_statement' } }; }
+function assets(range) { return { policyVersion: 1, assets: { status: 'approved', financialAssetRange: range, source: 'bank_statement', reviewedAt: new Date(Date.now() - 1000).toISOString() } }; }
 function favorite(id, senderId, targetId, extra = {}) {
   return { _id: `heart-${id}`, id, userId: senderId, targetUserId: targetId,
     actionType: 'favorite', active: true, status: 'active', updatedAt: '2026-01-01T00:00:00Z', ...extra };
@@ -154,6 +165,102 @@ function addPopularity(f, targetId, count, start = 1000) {
     f.hl_member_interactions.push(favorite(f.hl_member_interactions.length + 1, senderId, targetId));
   }
 }
+
+function addLegacyAssetReview(input, userId, overrides = {}) {
+  const summary = { status: 'approved', source: 'bank_statement', financialAssetRange: '2m_5m' };
+  Object.assign(input.hl_profiles.find(row => row.userId === userId), {
+    showcaseCertification: { policyVersion: 1, assets: summary }, assetCategoryConsent: true, assetRangeDisclosure: true
+  });
+  input.hl_member_certifications.push({ _id: `user_${userId}`, userId, current: { assets: {
+    ...summary, reviewedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+    evidenceReference: 'PRIVATE_LEGACY_EVIDENCE', reviewedBy: { account: 'PRIVATE_REVIEWER' }, ...overrides
+  } }, materials: { secret: { fileID: 'PRIVATE_CIPHERTEXT' } }, applications: { assets: {
+    status: 'rejected', reviewedAt: new Date().toISOString(), feedback: '新申请需补材料'
+  } } });
+}
+
+test('legacy asset review dates consistently restore categories, both detail identities, relationships and owner profile without writes', async () => {
+  const input = fixture();
+  addLegacyAssetReview(input, 2); addLegacyAssetReview(input, 3);
+  input.hl_members.push({ _id: 'm-1', id: 201, userId: 1, status: 1, memberType: 'vip', expireAt: '2099-01-01' },
+    { _id: 'm-2', id: 202, userId: 2, status: 1, matchmakerId: 9 });
+  input.hl_member_interactions.push(favorite(1, 2, 1), favorite(2, 3, 1));
+  const r = runtime(input);
+  const category = await r.hooks.publicShowcasePage(1, { category: 'assets' });
+  assert.deepEqual(plain(category.list.map(row => row.userId)).sort(), [2, 3]);
+  const memberDetail = await r.hooks.member.showcaseDetail(1, '202');
+  const profileDetail = await r.hooks.member.showcaseDetail(1, 'profile_103');
+  const relation = await r.hooks.member.relationships(1, { type: 'incoming' });
+  const own = await r.call('/user/profile', 'GET', {}, r.accessToken(2));
+  const overview = await r.call('/user/certifications', 'GET', {}, r.accessToken(2));
+  assert.equal(memberDetail.assetVerified, true);
+  assert.equal(profileDetail.assetVerified, true);
+  assert.ok(relation.list.every(row => row.assetVerified));
+  assert.equal(relation.list.length, 2);
+  assert.equal(own.data.profile.assetVerified, true);
+  assert.equal(overview.data.entries.find(row => row.kind === 'assets').verified, true);
+  assert.doesNotMatch(JSON.stringify([category, memberDetail, profileDetail, relation, own]), /PRIVATE_|reviewedBy|showcaseCertification/);
+  assert.deepEqual(r.writes, []);
+  assert.equal('reviewedAt' in r.fixtures.hl_profiles[1].showcaseCertification.assets, false, 'read compatibility must not migrate stored data');
+});
+
+test('legacy asset metadata uses batched whitelist reads for index and hydration without per-card queries', async () => {
+  const input = fixture(30);
+  for (let userId = 2; userId <= 30; userId++) addLegacyAssetReview(input, userId);
+  const r = runtime(input);
+  const category = await r.hooks.publicShowcasePage(1, { category: 'assets', page: 1, pageSize: 12 });
+  assert.equal(category.total, 29); assert.equal(category.list.length, 12);
+  const reads = r.reads.filter(read => read.name === 'hl_member_certifications');
+  assert.equal(reads.length, 2, 'one index batch and one fresh hydration batch');
+  for (const read of reads) {
+    assert.deepEqual(Object.keys(read.fields).sort(), ['_id', 'userId',
+      'current.assets.status', 'current.assets.source', 'current.assets.financialAssetRange',
+      'current.assets.reviewedAt', 'current.assets.expiresAt'].sort());
+    assert.ok(read.query._id.values.every(id => /^user_\d+$/.test(id)));
+  }
+  r.reads.length = 0;
+  assert.equal((await r.hooks.publicShowcaseRows({ keepUserId: true })).filter(row => row.assetVerified).length, 29);
+  assert.equal(r.reads.filter(read => read.name === 'hl_member_certifications').length, 1);
+});
+
+test('legacy asset dates never renew an expired review or restore mismatched, revoked or wrong-owner records', async () => {
+  for (const overrides of [
+    { reviewedAt: '2020-01-01T00:00:00Z' }, { reviewedAt: 'invalid' }, { status: 'revoked' },
+    { source: 'combined_financial_statement' }, { financialAssetRange: 'over_10m' },
+    { expiresAt: '2020-01-01T00:00:00Z' }
+  ]) {
+    const input = fixture(); addLegacyAssetReview(input, 2, overrides);
+    const r = runtime(input);
+    assert.equal((await r.hooks.publicShowcasePage(1, { category: 'assets' })).total, 0);
+    assert.equal((await r.hooks.member.showcaseDetail(1, 'profile_102')).assetVerified, false);
+  }
+  const input = fixture(); addLegacyAssetReview(input, 2);
+  input.hl_member_certifications[0].userId = 3;
+  const r = runtime(input);
+  assert.equal((await r.hooks.publicShowcasePage(1, { category: 'assets' })).total, 0);
+  assert.equal((await r.call('/user/profile', 'GET', {}, r.accessToken(2))).data.profile.assetVerified, false);
+});
+
+test('legacy asset hydration rechecks private review revocation after index selection', async () => {
+  const input = fixture(); addLegacyAssetReview(input, 2);
+  const r = runtime(input, (name, state, rows) => {
+    if (name === 'hl_profiles' && state.fields?.photos) rows.hl_member_certifications[0].current.assets.status = 'revoked';
+  });
+  const category = await r.hooks.publicShowcasePage(1, { category: 'assets' });
+  assert.equal(category.list.length, 0);
+});
+
+test('dated asset summaries require no private review reads and invalid explicit dates stay invalid', async () => {
+  const input = fixture(); addLegacyAssetReview(input, 2);
+  input.hl_profiles[1].showcaseCertification.assets.reviewedAt = input.hl_member_certifications[0].current.assets.reviewedAt;
+  const r = runtime(input);
+  assert.equal((await r.hooks.publicShowcasePage(1, { category: 'assets' })).total, 1);
+  assert.equal((await r.hooks.member.showcaseDetail(1, 'profile_102')).assetVerified, true);
+  assert.ok(r.reads.every(read => read.name !== 'hl_member_certifications'));
+  r.fixtures.hl_profiles[1].showcaseCertification.assets.reviewedAt = 'invalid';
+  assert.equal((await r.hooks.publicShowcasePage(1, { category: 'assets' })).total, 0);
+  assert.ok(r.reads.every(read => read.name !== 'hl_member_certifications'));
+});
 
 test('recommend retains normal ordering; specialized categories never use a threshold fallback', async () => {
   const r = runtime(fixture());
@@ -257,6 +364,46 @@ test('owner patch rejects fake certifications and strict boolean consent; princi
   assert.equal(response.data.profile.educationVerified, false);
   assert.equal('showcaseCertification' in response.data.profile, false);
   assert.equal('financialAssetRange' in response.data.profile, false);
+});
+
+test('public education filters follow the verified level instead of a conflicting self-report', async () => {
+  const input = fixture();
+  input.hl_profiles[1].education = '博士';
+  input.hl_profiles[1].showcaseCertification = education('本科');
+  const r = runtime(input);
+  for (const category of ['recommend', 'education']) {
+    const bachelors = await r.hooks.member.showcase(1, { category, education: '本科' });
+    const doctors = await r.hooks.member.showcase(1, { category, education: '博士' });
+    assert.ok(bachelors.list.some(row => row.userId === 2));
+    assert.ok(!doctors.list.some(row => row.userId === 2));
+  }
+});
+
+test('rejected renewal preserves the old conclusion and deadline, explicit revocation removes it', async () => {
+  const input = fixture();
+  const r = runtime(input), token = r.adminToken();
+  const approved = await r.call('/admin/member-certifications/2', 'PUT', {
+    kind: 'assets', status: 'approved', source: 'bank_statement', financialAssetRange: '2m_5m', evidenceReference: 'restricted-proof'
+  }, token);
+  assert.equal(approved.code, 0);
+  const record = r.fixtures.hl_member_certifications.find(row => row.userId === 2);
+  const storedProfile = r.fixtures.hl_profiles.find(row => row.userId === 2);
+  const original = structuredClone(record.current.assets);
+  const originalSummary = structuredClone(storedProfile.showcaseCertification.assets);
+  assert.equal(original.expiresAt, policy.assetCertificationExpiresAt(original));
+  record.applications = { assets: { requestId: 'renewal-2', status: 'pending' } };
+  const rejected = await r.call('/admin/member-certifications/2', 'PUT', {
+    kind: 'assets', status: 'rejected', applicationId: 'renewal-2', feedback: '请补充材料'
+  }, token);
+  assert.equal(rejected.code, 0); assert.equal(rejected.data.assetVerified, true);
+  const updated = r.fixtures.hl_member_certifications.find(row => row.userId === 2);
+  assert.deepEqual(plain(updated.current.assets), plain(original));
+  assert.deepEqual(plain(storedProfile.showcaseCertification.assets), plain(originalSummary));
+  const own = policy.ownCertificationOverview(updated).entries.find(row => row.kind === 'assets');
+  assert.equal(own.status, 'rejected'); assert.equal(own.verified, true); assert.equal(own.feedback, '请补充材料');
+  assert.equal(own.expiresAt, original.expiresAt);
+  const revoked = await r.call('/admin/member-certifications/2', 'PUT', { kind: 'assets', status: 'revoked' }, token);
+  assert.equal(revoked.code, 0); assert.equal(revoked.data.assetVerified, false);
 });
 
 test('admin certification writes private review history, trusts only approved results and protects intake/preferences', async () => {

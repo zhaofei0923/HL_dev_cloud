@@ -6,7 +6,7 @@ exports.CERTIFICATION_DEFINITIONS = [
     { kind: 'education', title: '学历认证', note: '支持国内、海外及港澳台学历', materials: '国内学历依据学信网可查验的验证或认证报告审核；海外及港澳台学历，以及中外合作办学取得的境外学历学位，依据教育部留学服务中心的认证结果审核。' },
     { kind: 'vehicle', title: '车辆认证', note: '核验本人名下车辆', materials: '请上传本人名下车辆的有效权属证明，由后台核验。' },
     { kind: 'property', title: '房产认证', note: '核验本人名下房产', materials: '请上传本人名下房产的有效权属证明，由后台核验。' },
-    { kind: 'assets', title: '资产认证', note: '核验金融资产，与分类参与和区间公开分开设置', materials: '请上传银行等机构出具的有效金融资产证明。核验采用金融资产口径，房产数量、车辆数量和年收入不直接换算为总资产。' }
+    { kind: 'assets', title: '资产认证', note: '核验通过后有效期6个月', materials: '请上传银行等机构出具的有效金融资产证明。核验通过后有效期6个月，到期需重新核验。核验采用金融资产口径，房产数量、车辆数量和年收入不直接换算为总资产。' }
 ];
 exports.EDUCATION_SOURCE_OPTIONS = ['国内学历 · 学信网', '海外及港澳台学历 · 留服中心'];
 exports.EDUCATION_SOURCES = ['chsi', 'cscse'];
@@ -53,7 +53,7 @@ function isApprovedCertification(entry) {
 }
 exports.isApprovedCertification = isApprovedCertification;
 function certificationStateText(entry) {
-    const states = { unsubmitted: '未认证', pending: '待审核', approved: '已认证', rejected: '未通过', revoked: '已撤销' };
+    const states = { unsubmitted: '未认证', pending: '待审核', approved: '已认证', rejected: '未通过', revoked: '已撤销', expired: '已到期 · 请重新核验' };
     const verified = isApprovedCertification(entry);
     if (hasPendingCertification(entry))
         return verified ? '已认证 · 更新待审核' : '待审核';
@@ -83,7 +83,7 @@ function validCertificationOverview(value) {
         if (!entry || typeof entry !== 'object' || !('kind' in entry) || !('status' in entry) || !('verified' in entry))
             return false;
         return entry.kind === item.kind && typeof entry.verified === 'boolean'
-            && ['unsubmitted', 'pending', 'approved', 'rejected', 'revoked'].includes(String(entry.status));
+            && ['unsubmitted', 'pending', 'approved', 'rejected', 'revoked', 'expired'].includes(String(entry.status));
     }));
 }
 exports.validCertificationOverview = validCertificationOverview;

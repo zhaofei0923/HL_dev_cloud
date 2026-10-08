@@ -296,7 +296,7 @@ test('showcase and gift catalog initialize only their read dependencies', () => 
   const { hooks } = backendRuntime({});
   assert.deepEqual(Array.from(hooks.collectionsForPath('/member/gifts')).sort(), ['hl_users']);
   assert.deepEqual(Array.from(hooks.collectionsForPath('/member/showcase')).sort(), [
-    'hl_match_records', 'hl_member_interactions', 'hl_members', 'hl_profiles', 'hl_users'
+    'hl_match_records', 'hl_member_certifications', 'hl_member_interactions', 'hl_members', 'hl_profiles', 'hl_users'
   ]);
   for (const route of ['/member/interactions', '/member/gifts/send']) {
     assert.ok(!hooks.collectionsForPath(route).includes('hl_member_private_archives'));

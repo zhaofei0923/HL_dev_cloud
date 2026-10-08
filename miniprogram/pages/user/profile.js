@@ -281,6 +281,7 @@ Page({
         user: null,
         loading: false,
         profileReady: false,
+        profileError: '',
         saving: false,
         uploadingPhotos: false,
         completionText: '0%',
@@ -360,7 +361,7 @@ Page({
                 ...matchmakerEntryView(null),
                 completionText: completion.text,
                 completionNote: completion.note,
-                loading: false, profileReady: false, saving: false, uploadingPhotos: false, referralLoading: false,
+                loading: false, profileReady: false, profileError: '', saving: false, uploadingPhotos: false, referralLoading: false,
                 referralCard: { canShare: false }, matchmakerCode: '',
                 editingProfile: false, previewOpen: false,
                 formDirty: false, saveState: 'idle', saveStatus: '资料已同步',
@@ -390,7 +391,7 @@ Page({
         const generation = ++this._profileGeneration;
         const formRevision = this._formRevision;
         const isCurrent = () => generation === this._profileGeneration && (0, page_session_1.pageSessionScope)() === scope;
-        this.setData({ loading: !this._profileInitialized });
+        this.setData({ loading: !this._profileInitialized, profileError: '' });
         if (force)
             this._panelLoadedAt = 0;
         if (this.data.matchmakerPanelOpen)
@@ -404,15 +405,17 @@ Page({
                 const form = await prepareProfileForm(result.profile || {}, user);
                 if (!isCurrent())
                     return;
-                // A tab return/background refresh must not overwrite unsaved edits.
-                if (!this._formDirty && this._formRevision === formRevision && !this.data.saving) {
+                // Establish the first complete baseline before editing is enabled. Later
+                // tab returns/background refreshes must not overwrite unsaved edits.
+                if (!this._profileInitialized || (!this._formDirty && this._formRevision === formRevision && !this.data.saving)) {
                     this._savedForm = form;
+                    this._formDirty = false;
                     const completion = completionFor(form);
                     this.setData({
                         user, form, preview: previewFor(form), photoCount: photoCountFor(form),
                         ...selectorTextFor(form),
                         completionText: completion.text, completionNote: completion.note,
-                        saveState: 'saved', saveStatus: '资料已同步'
+                        formDirty: false, saveState: 'saved', saveStatus: '资料已同步'
                     });
                 }
                 else {
@@ -427,6 +430,7 @@ Page({
                     return;
                 console.warn('load user profile failed', err);
                 this._profileLoadedAt = 0;
+                this.setData({ profileError: '资料读取失败，请重试后再编辑。' });
             }
             finally {
                 if (isCurrent()) {
@@ -440,6 +444,9 @@ Page({
     },
     onPullDownRefresh() {
         return Promise.all([this.loadProfile(true), this.loadCertifications(true)]).then(() => undefined).finally(() => wx.stopPullDownRefresh());
+    },
+    retryProfile() {
+        return this.loadProfile(true);
     },
     onUnload() {
         this._profileVisible = false;
@@ -606,13 +613,21 @@ Page({
         this.syncLeaveGuard();
     },
     setForm(form) {
+        if (!this.canEditProfile())
+            return;
         this._formRevision += 1;
         this.renderForm(form);
     },
     updateForm(field, value) {
         this.setForm({ ...this.data.form, [field]: value });
     },
+    canEditProfile() {
+        return this._profileInitialized && this.data.profileReady
+            && !!this._profileScope && (0, page_session_1.pageSessionScope)() === this._profileScope;
+    },
     openProfileEditor() {
+        if (!this.canEditProfile())
+            return;
         wx.setNavigationBarTitle({ title: '编辑资料' });
         this.setData({ editingProfile: true, previewOpen: false }, () => {
             wx.pageScrollTo({ scrollTop: 0, duration: 0 });
@@ -708,7 +723,7 @@ Page({
         });
     },
     async choosePhotos() {
-        if (this.data.saving || this.data.loading || this._choosingPhotos)
+        if (!this.canEditProfile() || this.data.saving || this.data.loading || this._choosingPhotos)
             return;
         const scope = this._profileScope;
         this._choosingPhotos = true;
@@ -742,7 +757,7 @@ Page({
         }
     },
     deletePhoto(e) {
-        if (this.data.saving || this.data.loading || this._choosingPhotos)
+        if (!this.canEditProfile() || this.data.saving || this.data.loading || this._choosingPhotos)
             return;
         const index = Number(e.currentTarget.dataset.index);
         const photos = (0, member_format_1.photosFromText)(String(this.data.form.photoText || ''));
@@ -856,7 +871,7 @@ Page({
         }
     },
     async save() {
-        if (this.data.saving || this.data.loading || this._choosingPhotos)
+        if (!this.canEditProfile() || this.data.saving || this.data.loading || this._choosingPhotos)
             return false;
         const scope = (0, page_session_1.pageSessionScope)();
         if (!scope || scope !== this._profileScope)
