@@ -2,6 +2,13 @@
 
 const ACTIVE_MEMBER_TYPES = new Set(['paid', 'vip']);
 const DAY_MS = 24 * 60 * 60 * 1000;
+const merchantConfig = require('./payment-merchant-config.json');
+
+function paymentOrderIdentity(order = {}) {
+  return Object.fromEntries(['merchantId', 'appId', 'currency'].map(field => [field,
+    Object.prototype.hasOwnProperty.call(order, field) ? String(order[field]) : String(merchantConfig[field])
+  ]));
+}
 
 function validationError(message) {
   const error = new Error(message);
@@ -43,13 +50,18 @@ function paymentIntegrationConfig(env = {}) {
   const ready = String(env.PAYMENT_INTEGRATION_READY || '').toLowerCase() === 'true';
   const functionName = String(env.PAYMENT_FUNCTION_NAME || '').trim();
   const createPath = String(env.PAYMENT_CREATE_PATH || '').trim();
+  const queryPath = String(env.PAYMENT_QUERY_PATH || '').trim();
   const callbackToken = String(env.PAYMENT_CALLBACK_TOKEN || '').trim();
-  const available = ready && !!functionName && createPath.startsWith('/') && callbackToken.length >= 32;
+  const configured = !!functionName && createPath.startsWith('/') && queryPath.startsWith('/')
+    && callbackToken.length >= 32;
+  const available = ready && configured;
   return {
+    ...paymentOrderIdentity(),
     available,
     reason: available ? '' : (ready ? 'integration_incomplete' : 'merchant_not_configured'),
-    functionName: available ? functionName : '',
-    createPath: available ? createPath : ''
+    functionName: configured ? functionName : '',
+    createPath: available ? createPath : '',
+    queryPath: configured ? queryPath : ''
   };
 }
 
@@ -74,6 +86,7 @@ function createPendingPaymentOrder({
     userId: Number(userId),
     memberRecordId: Number(memberRecordId),
     payerOpenid: openid,
+    ...paymentOrderIdentity(),
     planCode: trustedPlan.planCode,
     planTitle: trustedPlan.title,
     amountFen: trustedPlan.amountFen,
@@ -127,10 +140,20 @@ function buildMembershipFulfillment({ member = {}, durationDays, now = new Date(
   };
 }
 
-function paymentConfirmationMatches(order = {}, confirmation = {}) {
-  return String(order.outTradeNo || '') === String(confirmation.outTradeNo || '')
+function paymentDetailsMatch(order = {}, confirmation = {}) {
+  const identity = paymentOrderIdentity(order);
+  const registered = paymentOrderIdentity();
+  return Object.keys(registered).every(field => identity[field] === registered[field]
+      && typeof confirmation[field] === 'string' && confirmation[field] === registered[field])
+    && !!String(order.outTradeNo || '') && !!String(order.payerOpenid || '')
+    && String(order.outTradeNo || '') === String(confirmation.outTradeNo || '')
     && String(order.payerOpenid || '') === String(confirmation.payerOpenid || '')
-    && Number(order.amountFen) === Number(confirmation.amountFen)
+    && Number.isSafeInteger(Number(confirmation.amountFen)) && Number(confirmation.amountFen) > 0
+    && Number(order.amountFen) === Number(confirmation.amountFen);
+}
+
+function paymentConfirmationMatches(order = {}, confirmation = {}) {
+  return paymentDetailsMatch(order, confirmation)
     && String(confirmation.tradeState || '').toUpperCase() === 'SUCCESS';
 }
 
@@ -139,6 +162,8 @@ module.exports = {
   createPendingPaymentOrder,
   isReusablePaymentOrder,
   normalizeMembershipPlan,
+  paymentOrderIdentity,
+  paymentDetailsMatch,
   paymentConfirmationMatches,
   paymentIntegrationConfig
 };

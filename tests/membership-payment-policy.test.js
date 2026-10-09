@@ -9,6 +9,8 @@ const {
   paymentConfirmationMatches,
   paymentIntegrationConfig
 } = require('../cloudfunctions/hlApi/membership-payment-policy');
+const merchant = require('../cloudfunctions/hlApi/payment-merchant-config.json');
+const identity = { merchantId: merchant.merchantId, appId: merchant.appId, currency: merchant.currency };
 
 const now = '2026-07-18T00:00:00.000Z';
 
@@ -35,6 +37,7 @@ test('membership plan owns the trusted amount and duration', () => {
   assert.equal(order.durationDays, 90);
   assert.equal(order.planCode, 'paid_90d');
   assert.equal(order.status, 'pending');
+  for (const [field, value] of Object.entries(identity)) assert.equal(order[field], value);
   assert.equal(Object.hasOwn(order, 'clientAmountFen'), false);
 });
 
@@ -57,21 +60,26 @@ test('invalid or inactive plans cannot create a checkout', () => {
 
 test('payment integration stays disabled until every external setting exists', () => {
   assert.deepEqual(paymentIntegrationConfig({}), {
+    ...identity,
     available: false,
     reason: 'merchant_not_configured',
     functionName: '',
-    createPath: ''
+    createPath: '',
+    queryPath: ''
   });
   assert.deepEqual(paymentIntegrationConfig({
     PAYMENT_INTEGRATION_READY: 'true',
     PAYMENT_FUNCTION_NAME: 'generated-payment-function',
     PAYMENT_CREATE_PATH: '/member-pay/create',
+    PAYMENT_QUERY_PATH: '/member-pay/query',
     PAYMENT_CALLBACK_TOKEN: 'x'.repeat(32)
   }), {
+    ...identity,
     available: true,
     reason: '',
     functionName: 'generated-payment-function',
-    createPath: '/member-pay/create'
+    createPath: '/member-pay/create',
+    queryPath: '/member-pay/query'
   });
   assert.equal(paymentIntegrationConfig({
     PAYMENT_INTEGRATION_READY: 'true',
@@ -79,6 +87,29 @@ test('payment integration stays disabled until every external setting exists', (
     PAYMENT_CREATE_PATH: '/member-pay/create',
     PAYMENT_CALLBACK_TOKEN: 'too-short'
   }).available, false);
+  assert.equal(paymentIntegrationConfig({
+    PAYMENT_INTEGRATION_READY: 'true', PAYMENT_FUNCTION_NAME: 'generated-payment-function',
+    PAYMENT_CREATE_PATH: '/member-pay/create', PAYMENT_CALLBACK_TOKEN: 'x'.repeat(32)
+  }).available, false, 'a missing trusted query route must keep payments unavailable');
+});
+
+test('maintenance disables new checkouts but preserves the configured route for existing-order queries', () => {
+  const env = {
+    PAYMENT_INTEGRATION_READY: 'false', PAYMENT_FUNCTION_NAME: 'generated-payment-function',
+    PAYMENT_CREATE_PATH: '/member-pay/create', PAYMENT_QUERY_PATH: '/member-pay/query',
+    PAYMENT_CALLBACK_TOKEN: 'x'.repeat(32)
+  };
+  assert.deepEqual(paymentIntegrationConfig(env), {
+    ...identity, available: false, reason: 'merchant_not_configured',
+    functionName: 'generated-payment-function', createPath: '', queryPath: '/member-pay/query'
+  });
+  for (const field of ['PAYMENT_FUNCTION_NAME', 'PAYMENT_CREATE_PATH', 'PAYMENT_QUERY_PATH', 'PAYMENT_CALLBACK_TOKEN']) {
+    const config = paymentIntegrationConfig({ ...env, [field]: '' });
+    assert.equal(config.available, false);
+    assert.equal(config.functionName, '');
+    assert.equal(config.createPath, '');
+    assert.equal(config.queryPath, '');
+  }
 });
 
 test('renewal extends a future expiry and never shortens lifetime memberships', () => {
@@ -120,23 +151,41 @@ test('payment confirmation must match order, user identity, amount, and success 
     amountFen: 29900
   };
   assert.equal(paymentConfirmationMatches(order, {
+    ...identity,
     outTradeNo: 'HL202607180001',
     payerOpenid: 'openid-9',
     amountFen: 29900,
     tradeState: 'SUCCESS'
   }), true);
   assert.equal(paymentConfirmationMatches(order, {
+    ...identity,
     outTradeNo: 'HL202607180001',
     payerOpenid: 'openid-9',
     amountFen: 1,
     tradeState: 'SUCCESS'
   }), false);
   assert.equal(paymentConfirmationMatches(order, {
+    ...identity,
     outTradeNo: 'HL202607180001',
     payerOpenid: 'openid-9',
     amountFen: 29900,
     tradeState: 'NOTPAY'
   }), false);
+});
+
+test('confirmation requires every registered identity field and rejects conflicting order snapshots', () => {
+  const order = { outTradeNo: 'HL202607180001', payerOpenid: 'openid-9', amountFen: 29900 };
+  const confirmation = { ...order, ...identity, tradeState: 'SUCCESS' };
+  for (const field of Object.keys(identity)) {
+    const missing = { ...confirmation }; delete missing[field];
+    assert.equal(paymentConfirmationMatches(order, missing), false);
+    for (const invalid of ['', null, 'different-value']) {
+      assert.equal(paymentConfirmationMatches(order, { ...confirmation, [field]: invalid }), false);
+      assert.equal(paymentConfirmationMatches({ ...order, [field]: invalid }, confirmation), false);
+    }
+  }
+  assert.equal(paymentConfirmationMatches({ ...order, ...identity }, confirmation), true);
+  assert.equal(paymentConfirmationMatches(order, confirmation), true, 'only legacy missing snapshot fields use registered identity');
 });
 
 test('recent matching pending orders can be reused without duplicating checkout records', () => {

@@ -158,6 +158,8 @@ const request = (kind, extra = {}) => ({ kind, consentConfirmed: true, materialI
 const educationRequest = (source = 'chsi') => request('education', { source, educationLevel: 'master', institutionName: ' 学校名称 ',
   ...(source === 'cscse' ? { method: 'cscse_number', certificateNumber: 'PRIVATE_CSCSE_CERTIFICATE_NUMBER' }
     : { method: 'chsi_code', verificationCode: 'A123456789012345' }) });
+const cscsePhotoRequest = (extra = {}) => request('education', { source: 'cscse', method: 'cscse_photo',
+  educationLevel: 'master', institutionName: '境外学校', materialIds: ['fixture-education'], ...extra });
 const upload = (r, kind, userId = 1, data = {}) => r.call('/user/certification-materials', 'POST',
   { kind, mimeType: 'image/jpeg', contentBase64: JPEG.toString('base64'), ...data }, r.token(userId));
 
@@ -564,6 +566,100 @@ test('education method validation requires school, correct source and conditiona
     assert.equal(entry(result, 'education').verified, false);
   }
   assert.equal(r.writes.length, 0);
+});
+
+test('CSCSE certificate photos accept one through three own education materials and remain pending until reviewed', async () => {
+  for (const count of [1, 2, 3]) {
+    const r = runtime(fixture(false)), token = r.token(1), materialIds = [];
+    for (let index = 0; index < count; index++) {
+      const uploaded = await upload(r, 'education');
+      assert.equal(uploaded.code, 0);
+      materialIds.push(uploaded.data.material.id);
+    }
+    const beforeProfiles = plain(r.fixtures.hl_profiles);
+    const result = await r.call('/user/certification-requests', 'POST', cscsePhotoRequest({ materialIds }), token);
+    assert.equal(result.code, 0);
+    const overview = entry(result, 'education');
+    assert.equal(overview.status, 'pending'); assert.equal(overview.verified, false);
+    assert.equal(overview.application.method, 'cscse_photo'); assert.equal(overview.application.source, 'cscse');
+    assert.deepEqual(plain(overview.application.materialIds), materialIds);
+    assert.deepEqual(plain(r.fixtures.hl_profiles), beforeProfiles);
+    const record = r.fixtures.hl_member_certifications.find(row => row.userId === 1);
+    assert.deepEqual(plain(record.current), {});
+    assert.equal(record.applications.education.status, 'pending');
+    assert.equal('sealedVerification' in record.applications.education, false);
+    for (const id of materialIds) {
+      assert.equal(record.materials[id].status, 'bound');
+      assert.equal(record.materials[id].applicationId, record.applications.education.requestId);
+    }
+    const reopened = await r.call('/user/certifications', 'GET', {}, token);
+    assert.equal(entry(reopened, 'education').application.method, 'cscse_photo');
+    assert.equal(entry(reopened, 'education').verified, false);
+    assert.equal((await r.call('/user/certifications', 'GET', {}, r.token(2))).data.entries.find(row => row.kind === 'education').status, 'unsubmitted');
+    assert.doesNotMatch(JSON.stringify(result), /fileID|cloud:\/\/|sealedVerification/);
+  }
+});
+
+test('CSCSE photo requests reject wrong sources, missing or excessive photos, invalid levels and private code fields without writing', async () => {
+  const r = runtime(), token = r.token(1);
+  for (const extra of [
+    { source: 'chsi' }, { source: 'school_upload' }, { materialIds: [] },
+    { materialIds: ['a', 'b', 'c', 'd'] }, { materialIds: ['fixture-education', 'fixture-education'] },
+    { educationLevel: '硕士' }, { educationLevel: '__proto__' }, { institutionName: '' },
+    { verificationCode: 'PRIVATE_CODE' }, { verificationCode: '' }, { verificationCode: null }, { verificationCode: undefined },
+    { certificateNumber: 'PRIVATE_NUMBER' }, { certificateNumber: '' }, { certificateNumber: null }, { certificateNumber: undefined },
+    { status: 'approved' }, { educationVerified: true }
+  ]) {
+    const result = await r.call('/user/certification-requests', 'POST', cscsePhotoRequest(extra), token);
+    assert.equal(result.code, 42240, JSON.stringify(extra));
+  }
+  assert.equal(r.writes.length, 0);
+});
+
+test('CSCSE photo materials cannot cross owners, certification kinds, expiry or bound state', async () => {
+  const r = runtime(fixture(false));
+  const uploaded = await upload(r, 'education');
+  assert.equal(uploaded.code, 0);
+  const id = uploaded.data.material.id, body = cscsePhotoRequest({ materialIds: [id] });
+  const writesAfterUpload = r.writes.length;
+  assert.equal((await r.call('/user/certification-requests', 'POST', body, r.token(2))).code, 42240);
+  assert.equal(r.writes.length, writesAfterUpload);
+  for (const overrides of [{ kind: 'identity' }, { expiresAt: '2020-01-01T00:00:00Z' },
+    { status: 'bound', applicationId: 'other-application' }]) {
+    const invalid = runtime();
+    Object.assign(invalid.fixtures.hl_member_certifications[0].materials['fixture-education'], overrides);
+    assert.equal((await invalid.call('/user/certification-requests', 'POST', cscsePhotoRequest(), invalid.token(1))).code, 42240);
+    assert.equal(invalid.writes.length, 0);
+  }
+});
+
+test('insurance financial evidence requires a reviewed tier and current approval, retains the six-month expiry and category threshold', async () => {
+  const r = runtime(), token = r.token(1), admin = r.adminToken();
+  assert.equal((await r.call('/user/certification-requests', 'POST', request('assets', { declaredFinancialAssetRange: '2m_5m' }), token)).code, 0);
+  assert.equal(entry(await r.call('/user/certifications', 'GET', {}, token), 'assets').verified, false);
+  const applicationId = r.fixtures.hl_member_certifications[0].applications.assets.requestId;
+  assert.equal((await r.call('/admin/member-certifications/1', 'PUT', { kind: 'assets', source: 'insurance_statement',
+    status: 'approved', applicationId, evidenceReference: 'PRIVATE_POLICY_CASH_VALUE', financialAssetRange: '2m_5m' }, admin)).code, 0);
+  const review = r.fixtures.hl_member_certifications[0].current.assets;
+  assert.equal(review.source, 'insurance_statement');
+  assert.equal(review.expiresAt, policy.assetCertificationExpiresAt(review));
+  assert.equal(entry(await r.call('/user/certifications', 'GET', {}, token), 'assets').verified, true);
+  const profile = { showcaseCertification: { policyVersion: 1, assets: review }, assetCategoryConsent: true };
+  const beforeExpiry = Date.parse(review.expiresAt) - 1;
+  assert.equal(policy.categoryRank('assets', profile, 0, beforeExpiry), 3);
+  assert.equal(policy.categoryRank('assets', profile, 0, Date.parse(review.expiresAt)), null);
+  for (const status of ['pending', 'rejected', 'revoked']) {
+    const invalid = { ...profile, showcaseCertification: { policyVersion: 1, assets: { ...review, status } } };
+    assert.equal(policy.publicCertificationFields(invalid, beforeExpiry).assetVerified, false);
+    assert.equal(policy.categoryRank('assets', invalid, 0, beforeExpiry), null);
+  }
+  assert.equal(policy.categoryRank('assets', { ...profile, assetCategoryConsent: false }, 0, beforeExpiry), null);
+  assert.equal(policy.categoryRank('assets', { ...profile, showcaseCertification: { policyVersion: 1,
+    assets: { ...review, financialAssetRange: '500k_2m' } } }, 0, beforeExpiry), null);
+  assert.throws(() => policy.normalizeCertificationReview({ kind: 'assets', status: 'approved', source: 'insurance_statement',
+    evidenceReference: 'proof' }), /金融资产区间/);
+  assert.throws(() => policy.normalizeCertificationReview({ kind: 'education', status: 'approved', source: 'insurance_statement',
+    evidenceReference: 'proof', educationLevel: '硕士' }), /来源与审核类型不匹配/);
 });
 
 test('codes, certificate numbers and declared assets are encrypted at rest and available only to authorized admin evidence reads', async () => {

@@ -8,6 +8,13 @@ const certification_form_1 = require("../../utils/certification-form");
 function safeEducationSource(value) {
     return value === 'chsi' || value === 'cscse' ? value : '';
 }
+function educationSourceForMethod(method, value) {
+    if (method === 'chsi_code')
+        return 'chsi';
+    if (method === 'cscse_number' || method === 'cscse_photo')
+        return 'cscse';
+    return safeEducationSource(value);
+}
 function safeEducationLevel(value) {
     if (value === 'bachelors')
         return '本科';
@@ -77,7 +84,7 @@ Page({
     _materialSequence: 0, _leaveGuardEnabled: false,
     _previewPaths: [],
     data: {
-        kind: '', title: '资料认证', materials: '',
+        kind: '', title: '资料认证', materials: '', materialGuidelines: [],
         loading: false, loadError: '', unsupportedKind: false, submitting: false, submissionError: '',
         entry: null, statusText: '读取中', verified: false, pending: false,
         verifiedDetail: '', submittedAtText: '', reviewedAtText: '', expiresAtText: '', feedback: '', actionText: '提交认证申请',
@@ -98,7 +105,7 @@ Page({
             this.setData({ unsupportedKind: true, loadError: '认证项目不存在，请返回我的资料重新选择' });
             return;
         }
-        this.setData({ kind: definition.kind, title: definition.title, materials: definition.materials,
+        this.setData({ kind: definition.kind, title: definition.title, materials: definition.materials, materialGuidelines: definition.materialGuidelines || [],
             requiresMaterials: (0, certification_form_1.methodRequiresMaterials)(definition.kind, '') });
         wx.setNavigationBarTitle({ title: definition.title });
     },
@@ -188,13 +195,13 @@ Page({
         }
         if (!this._draftEdited && entry.kind === 'education') {
             const application = entry.application;
-            const source = safeEducationSource(application && application.source || entry.source);
             const method = (0, certification_form_1.safeEducationMethod)(application && application.method);
+            const source = educationSourceForMethod(method, application && application.source || entry.source);
             const methodOption = certification_form_1.EDUCATION_CERTIFICATION_METHODS.find(item => item.value === method);
             this.setData({ educationSource: source, educationSourceText: sourceText(source),
                 educationLevel: safeEducationLevel(application && application.educationLevel || entry.verifiedEducation),
                 institutionName: application && typeof application.institutionName === 'string' ? application.institutionName : '',
-                method, methodText: methodOption ? methodOption.title : '请选择认证方式',
+                method, methodText: methodOption ? methodOption.title : '请选择认证方式', verificationCode: '', certificateNumber: '',
                 requiresMaterials: (0, certification_form_1.methodRequiresMaterials)(entry.kind, method) });
         }
         this.updateLeaveGuard();
@@ -309,14 +316,14 @@ Page({
         if (!method || !this.data.kind)
             return;
         const option = certification_form_1.EDUCATION_CERTIFICATION_METHODS.find(item => item.value === method);
-        const source = method === 'chsi_code' ? 'chsi' : method === 'cscse_number' ? 'cscse' : this.data.educationSource;
+        const source = educationSourceForMethod(method, this.data.educationSource);
         this.markDraftEdited();
         this.setData({ method, methodText: option ? option.title : '', methodPickerOpen: false,
             verificationCode: '', certificateNumber: '', educationSource: source, educationSourceText: sourceText(source),
             requiresMaterials: (0, certification_form_1.methodRequiresMaterials)(this.data.kind, method), submissionError: '' });
     },
     onEducationSourceChange(e) {
-        if (this.editingBlocked() || this.data.method === 'chsi_code' || this.data.method === 'cscse_number')
+        if (this.editingBlocked() || this.data.method === 'chsi_code' || this.data.method === 'cscse_number' || this.data.method === 'cscse_photo')
             return;
         const source = certification_form_1.EDUCATION_SOURCES[Number(e.detail.value)];
         if (!source)
@@ -547,11 +554,12 @@ Page({
                 this.setData({ submissionError: '请选择学历认证方式' });
                 return;
             }
-            if (!this.data.educationSource || !this.data.educationLevel || !this.data.institutionName.trim()) {
+            const source = educationSourceForMethod(this.data.method, this.data.educationSource);
+            if (!source || !this.data.educationLevel || !this.data.institutionName.trim()) {
                 this.setData({ submissionError: '请填写学校全称，并选择学历来源和最高已取得学历' });
                 return;
             }
-            data.source = this.data.educationSource;
+            data.source = source;
             data.educationLevel = certification_form_1.CERTIFICATION_EDUCATION_VALUES[certification_form_1.CERTIFICATION_EDUCATION_OPTIONS.indexOf(this.data.educationLevel)];
             data.institutionName = this.data.institutionName.trim();
             data.method = this.data.method;

@@ -155,6 +155,89 @@ test('overseas education application submits only claim fields and remains pendi
   assert.equal(writes.length, 1, 'pending applications cannot be submitted again');
 });
 
+test('CSCSE certificate photos require materials, lock the overseas source and submit without sensitive references', async () => {
+  const writes = [];
+  const { page, calls } = certificationRuntime('education', { memberApi: {
+    applyCertification: async data => {
+      writes.push(plain(data));
+      return overview({ education: { status: 'pending', verified: false, application: { status: 'pending', ...data } } });
+    }
+  } });
+  await page.onShow();
+  fillEducation(page, 'chsi_code', 1, '海外示例大学');
+  page.chooseMethod(clickMethod('cscse_photo'));
+  assert.equal(page.data.methodText, '教留服认证证书照片');
+  assert.equal(page.data.educationSource, 'cscse');
+  assert.equal(page.data.requiresMaterials, true);
+  assert.equal(page.data.verificationCode, '');
+  assert.equal(page.data.certificateNumber, '');
+  page.onEducationSourceChange(picker(0));
+  assert.equal(page.data.educationSource, 'cscse', 'photo certification cannot change to CHSI');
+  page.onVerificationInput({ detail: { value: 'unexpected-reference' } });
+  assert.equal(page.data.verificationCode, '');
+  assert.equal(page.data.certificateNumber, '');
+  page.onConsentChange(consent(true));
+  await page.submitApplication();
+  assert.equal(page.data.submissionError, '请至少上传1份核验材料');
+  assert.equal(writes.length, 0);
+  seedMaterial(page, 'encrypted-cscse-photo');
+  await page.submitApplication();
+  assert.deepEqual(writes, [{ kind: 'education', consentConfirmed: true, materialIds: ['encrypted-cscse-photo'],
+    source: 'cscse', educationLevel: 'master', institutionName: '海外示例大学', method: 'cscse_photo' }]);
+  assert.equal(page.data.statusText, '待审核');
+  assert.equal(page.data.verified, false, 'uploaded photos require staff review');
+  assert.equal(calls.storage.length, 0);
+});
+
+test('switching CSCSE photo and reference methods clears private inputs while preserving staged materials', async () => {
+  const { page } = certificationRuntime('education');
+  await page.onShow();
+  fillEducation(page);
+  seedMaterial(page);
+  page.chooseMethod(clickMethod('cscse_photo'));
+  assert.equal(page.data.certificateNumber, '');
+  assert.equal(page.data.verificationCode, '');
+  assert.equal(page.data.uploadedMaterials.length, 1);
+  page.chooseMethod(clickMethod('chsi_code'));
+  assert.equal(page.data.educationSource, 'chsi');
+  assert.equal(page.data.requiresMaterials, false);
+  assert.equal(page.data.uploadedMaterials.length, 1, 'changing methods retains recoverable staging');
+  page.onVerificationInput({ detail: { value: 'private-chsi-reference' } });
+  page.chooseMethod(clickMethod('cscse_photo'));
+  assert.equal(page.data.educationSource, 'cscse');
+  assert.equal(page.data.requiresMaterials, true);
+  assert.equal(page.data.verificationCode, '');
+});
+
+test('restored CSCSE photo applications consistently use the overseas source and keep draft edits on refresh', async () => {
+  const { page } = certificationRuntime('education', { memberApi: {
+    certifications: async () => overview({ education: { status: 'rejected', source: 'chsi', verified: false,
+      application: { status: 'rejected', method: 'cscse_photo', source: 'chsi', educationLevel: 'master', institutionName: '已提交学校' } } })
+  } });
+  await page.onShow();
+  assert.equal(page.data.educationSource, 'cscse', 'restored method determines its fixed source');
+  assert.equal(page.data.method, 'cscse_photo');
+  assert.equal(page.data.requiresMaterials, true);
+  assert.equal(page.data.institutionName, '已提交学校');
+  page.onInstitutionInput({ detail: { value: '重新申请的学校' } });
+  await page.retryLoad();
+  assert.equal(page.data.institutionName, '重新申请的学校');
+  assert.equal(page.data.educationSource, 'cscse');
+  assert.equal(page.data.method, 'cscse_photo');
+});
+
+test('financial certification provides separate guidance for institution evidence and policy cash value', () => {
+  const { page, calls } = certificationRuntime('assets');
+  assert.equal(page.data.title, '金融资产认证');
+  assert.equal(calls.titles.at(-1), '金融资产认证');
+  assert.equal(page.data.materialGuidelines.length, 4);
+  assert.ok(page.data.materialGuidelines[0].includes('银行柜台'));
+  assert.ok(page.data.materialGuidelines[0].includes('具体有效期以银行为准'));
+  assert.ok(page.data.materialGuidelines[1].includes('股票持仓截图或基金持仓截图'));
+  assert.ok(page.data.materialGuidelines[2].includes('理财持仓或余额证明'));
+  assert.ok(page.data.materialGuidelines[3].includes('按现金价值审核，不按保额'));
+});
+
 test('education submission requires consent, source and level and supports domestic CHSI', async () => {
   const writes = [];
   const { page } = certificationRuntime('education', { memberApi: {

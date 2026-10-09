@@ -20,6 +20,8 @@ const {
   createPendingPaymentOrder,
   isReusablePaymentOrder,
   normalizeMembershipPlan,
+  paymentOrderIdentity,
+  paymentDetailsMatch,
   paymentConfirmationMatches,
   paymentIntegrationConfig
 } = require('./membership-payment-policy');
@@ -3192,6 +3194,27 @@ function publicMembershipPlan(row) {
   return normalizeMembershipPlan(row);
 }
 
+function trustedPaymentOrder(row, requesterOpenid) {
+  const identity = paymentOrderIdentity(row);
+  const registered = paymentOrderIdentity();
+  if (Object.keys(registered).some(field => identity[field] !== registered[field])) {
+    throw createHttpError('支付订单商户信息不匹配', 409, 40907);
+  }
+  if (!String(requesterOpenid || '').trim() || String(row.payerOpenid || '') !== String(requesterOpenid)) {
+    throw createHttpError('支付订单不属于当前微信用户', 403, 40304);
+  }
+  return {
+    outTradeNo: row.outTradeNo,
+    description: row.planTitle,
+    amountFen: Number(row.amountFen),
+    payerOpenid: row.payerOpenid,
+    userId: Number(row.userId),
+    status: row.status,
+    order: publicPaymentOrder(row),
+    ...identity
+  };
+}
+
 async function activeMembershipPlans() {
   const plans = [];
   for (const row of await getAll(C.membershipPlans, null, 200)) {
@@ -3306,24 +3329,33 @@ const membership = {
     assertPaymentCallbackToken(data.callbackToken);
     const integration = paymentIntegrationConfig(process.env);
     if (!integration.available) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
-    let order = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
+    const order = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
     if (!order) throw createHttpError('支付订单不存在', 404, 40400);
-    if (!['pending', 'confirming'].includes(String(order.status))) {
-      throw createHttpError('支付订单状态不可下单', 409, 40905);
-    }
-    if (String(order.status) === 'pending') {
-      order = await updateRow(C.paymentOrders, order, {
-        status: 'confirming',
-        checkoutAt: nowIso()
-      });
-    }
-    return {
-      outTradeNo: order.outTradeNo,
-      description: order.planTitle,
-      amountFen: Number(order.amountFen),
-      payerOpenid: order.payerOpenid,
-      userId: Number(order.userId)
-    };
+    trustedPaymentOrder(order, data.requesterOpenid);
+    return db.runTransaction(async transaction => {
+      const orderRef = transaction.collection(C.paymentOrders).doc(order._id);
+      const snapshot = await orderRef.get();
+      const currentOrder = snapshot && snapshot.data;
+      if (!currentOrder) throw createHttpError('支付订单不存在', 404, 40400);
+      trustedPaymentOrder(currentOrder, data.requesterOpenid);
+      if (!['pending', 'confirming'].includes(String(currentOrder.status))) {
+        throw createHttpError('支付订单状态不可下单', 409, 40905);
+      }
+      if (String(currentOrder.status) === 'pending') {
+        const timestamp = nowIso();
+        const patch = { status: 'confirming', checkoutAt: timestamp, updatedAt: timestamp };
+        await orderRef.update({ data: patch });
+        return trustedPaymentOrder({ ...currentOrder, ...patch }, data.requesterOpenid);
+      }
+      return trustedPaymentOrder(currentOrder, data.requesterOpenid);
+    });
+  },
+
+  async internalQuery(data = {}) {
+    assertPaymentCallbackToken(data.callbackToken);
+    const order = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
+    if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+    return trustedPaymentOrder(order, data.requesterOpenid);
   },
 
   async confirmPayment(data = {}) {
@@ -3344,6 +3376,10 @@ const membership = {
       const currentOrder = orderSnapshot && orderSnapshot.data;
       const currentMember = memberSnapshot && memberSnapshot.data;
       if (!currentOrder || !currentMember) throw createHttpError('支付订单数据不存在', 409, 40906);
+      if (Number(currentMember.userId) !== Number(currentOrder.userId)
+        || Number(currentOrder.memberRecordId) !== Number(currentMember.id)) {
+        throw createHttpError('支付订单的会员关系已变更', 409, 40906);
+      }
       if (!paymentConfirmationMatches(currentOrder, data)) {
         throw createHttpError('支付回调与订单不匹配', 409, 40907);
       }
@@ -3394,6 +3430,34 @@ const membership = {
       },
       idempotent: result.idempotent
     };
+  },
+
+  async closePayment(data = {}) {
+    assertPaymentCallbackToken(data.callbackToken);
+    const tradeState = String(data.tradeState || '').toUpperCase();
+    if (!['CLOSED', 'PAYERROR'].includes(tradeState)) {
+      throw createHttpError('微信订单尚未确认关闭或失败', 409, 40905);
+    }
+    const existingOrder = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
+    if (!existingOrder) throw createHttpError('支付订单不存在', 404, 40400);
+    return db.runTransaction(async transaction => {
+      const orderRef = transaction.collection(C.paymentOrders).doc(existingOrder._id);
+      const snapshot = await orderRef.get();
+      const currentOrder = snapshot && snapshot.data;
+      if (!currentOrder) throw createHttpError('支付订单不存在', 404, 40400);
+      if (!paymentDetailsMatch(currentOrder, data)) {
+        throw createHttpError('微信查询结果与订单不匹配', 409, 40907);
+      }
+      const status = tradeState === 'CLOSED' ? 'closed' : 'failed';
+      if (currentOrder.status === status) return { order: publicPaymentOrder(currentOrder), idempotent: true };
+      if (!['pending', 'confirming'].includes(String(currentOrder.status))) {
+        throw createHttpError('支付订单状态不可关闭', 409, 40905);
+      }
+      const timestamp = nowIso();
+      const patch = { status, tradeState, closedAt: timestamp, updatedAt: timestamp };
+      await orderRef.update({ data: patch });
+      return { order: publicPaymentOrder({ ...currentOrder, ...patch }), idempotent: false };
+    });
   },
 
   async listPlansForAdmin(filters = {}) {
@@ -5455,8 +5519,14 @@ exports.main = async (event = {}) => {
     if (method === 'POST' && path === '/internal/payment-orders/checkout') {
       return ok(await membership.internalCheckout(data));
     }
+    if (method === 'POST' && path === '/internal/payment-orders/query') {
+      return ok(await membership.internalQuery(data));
+    }
     if (method === 'POST' && path === '/internal/payment-orders/confirm') {
       return ok(await membership.confirmPayment(data));
+    }
+    if (method === 'POST' && path === '/internal/payment-orders/close') {
+      return ok(await membership.closePayment(data));
     }
 
     if (path.startsWith('/admin/')) {

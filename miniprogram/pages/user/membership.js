@@ -3,7 +3,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const auth_1 = require("../../services/auth");
 const chat_1 = require("../../services/chat");
 const page_session_1 = require("../../utils/page-session");
+const payment_response_1 = require("../../utils/payment-response");
 const member_1 = require("../../services/member");
+function isPaymentHTTPCloud(value) {
+    return (0, payment_response_1.paymentRecord)(value) && typeof value.callHTTPFunction === 'function';
+}
 const EMPTY_OVERVIEW = {
     isPremiumMember: false,
     phoneBound: false,
@@ -15,7 +19,8 @@ const EMPTY_OVERVIEW = {
         available: false,
         reason: 'merchant_not_configured',
         functionName: '',
-        createPath: ''
+        createPath: '',
+        queryPath: ''
     }
 };
 function durationText(days) {
@@ -47,21 +52,6 @@ function paymentReasonText(reason) {
     };
     return labels[reason] || '微信支付暂不可用';
 }
-function paymentParamsFrom(result) {
-    const body = result && result.data;
-    const payload = (body && body.data) || (body && body.payment) || body || {};
-    const params = payload.payment || payload;
-    if (!params.timeStamp || !params.nonceStr || !params.package || !params.paySign) {
-        throw new Error('支付函数未返回完整的调起参数');
-    }
-    return {
-        timeStamp: String(params.timeStamp),
-        nonceStr: String(params.nonceStr),
-        package: String(params.package),
-        signType: params.signType || 'RSA',
-        paySign: String(params.paySign)
-    };
-}
 function wait(delay) {
     return new Promise(resolve => setTimeout(resolve, delay));
 }
@@ -76,6 +66,8 @@ function orderFeedback(status) {
 }
 Page({
     _membershipScope: '',
+    _membershipUnloaded: false,
+    _overviewRequestSerial: 0,
     _resumableCheckout: null,
     data: {
         loading: true,
@@ -100,27 +92,49 @@ Page({
         errorText: ''
     },
     onShow() {
-        this.loadOverview();
+        this._membershipUnloaded = false;
+        return this.loadOverview();
     },
     onPullDownRefresh() {
-        this.loadOverview({ pullDown: true });
+        return this.loadOverview({ pullDown: true });
+    },
+    onUnload() {
+        this._membershipUnloaded = true;
+        this._overviewRequestSerial += 1;
+        if (this.data.confirming)
+            wx.hideLoading();
+    },
+    isMembershipSessionCurrent(scope) {
+        return !!scope && !this._membershipUnloaded && this._membershipScope === scope && (0, page_session_1.pageSessionScope)() === scope;
+    },
+    assertMembershipSession(scope) {
+        if (!this.isMembershipSessionCurrent(scope))
+            throw new Error('会员会话已变化，请重新进入');
     },
     async loadOverview(options = {}) {
+        if (this._membershipUnloaded)
+            return;
         const scope = (0, page_session_1.pageSessionScope)();
         if (scope !== this._membershipScope) {
+            if (this.data.confirming)
+                wx.hideLoading();
             this._membershipScope = scope;
             this._resumableCheckout = null;
             this.setData({ overview: EMPTY_OVERVIEW, plans: [], onlineCheckout: false, selectedPlanCode: '',
                 lastOrderId: '', orderTitle: '', orderNote: '', orderStatus: '', orderChecking: false, orderCanResume: false,
-                orderPlanText: '', paymentStarting: false, confirming: false });
+                orderPlanText: '', paymentStarting: false, confirming: false, phoneAuthorizing: false });
         }
+        if (!scope)
+            return;
+        const requestSerial = ++this._overviewRequestSerial;
+        const isCurrent = () => this.isMembershipSessionCurrent(scope) && requestSerial === this._overviewRequestSerial;
         if (options.pullDown)
             this.setData({ refreshing: true });
         else
             this.setData({ loading: true });
         try {
             const overview = await member_1.memberApi.membershipOverview();
-            if ((0, page_session_1.pageSessionScope)() !== scope)
+            if (!isCurrent())
                 return;
             const plans = overview.plans.map(plan => ({
                 ...plan,
@@ -144,16 +158,17 @@ Page({
             });
         }
         catch (err) {
-            if ((0, page_session_1.pageSessionScope)() !== scope)
+            if (!isCurrent())
                 return;
             console.warn('load membership overview failed', err);
             this.setData({ errorText: '会员信息暂时无法加载，请稍后重试。' });
         }
         finally {
-            if ((0, page_session_1.pageSessionScope)() === scope)
+            if (isCurrent()) {
                 this.setData({ loading: false, refreshing: false });
-            if (options.pullDown)
-                wx.stopPullDownRefresh();
+                if (options.pullDown)
+                    wx.stopPullDownRefresh();
+            }
         }
     },
     selectPlan(e) {
@@ -169,10 +184,11 @@ Page({
             this.setData({ selectedPlanCode: e.detail.value });
     },
     async authorizePhone(e) {
-        if (this.data.phoneAuthorizing)
+        const scope = (0, page_session_1.pageSessionScope)();
+        if (this.data.phoneAuthorizing || !this.isMembershipSessionCurrent(scope))
             return;
         const detail = e.detail;
-        const code = String(detail.code || '');
+        const code = (0, payment_response_1.paymentRecord)(detail) && typeof detail.code === 'string' ? detail.code : '';
         if (!code) {
             wx.showToast({ title: '未授权手机号', icon: 'none' });
             return;
@@ -180,19 +196,29 @@ Page({
         this.setData({ phoneAuthorizing: true });
         try {
             await (0, auth_1.bindWechatPhone)(code);
+            if (!this.isMembershipSessionCurrent(scope))
+                return;
             wx.showToast({ title: '手机号已授权' });
             await this.loadOverview();
         }
         catch (err) {
-            console.warn('bind wechat phone failed', err);
+            if (this.isMembershipSessionCurrent(scope))
+                console.warn('bind wechat phone failed', err);
         }
         finally {
-            this.setData({ phoneAuthorizing: false });
+            if (this.isMembershipSessionCurrent(scope))
+                this.setData({ phoneAuthorizing: false });
         }
     },
     async contactMatchmaker() {
+        const scope = (0, page_session_1.pageSessionScope)();
+        const isCurrent = () => !!scope && !this._membershipUnloaded && (0, page_session_1.pageSessionScope)() === scope;
+        if (!isCurrent())
+            return;
         try {
             const conversations = await chat_1.chatApi.listConversations({ page: 1, pageSize: 100 });
+            if (!isCurrent())
+                return;
             const serviceConversation = conversations.list.find(item => item.conversationType === 'member_matchmaker');
             if (serviceConversation) {
                 wx.navigateTo({ url: `/pages/user/chat?id=${serviceConversation.id}` });
@@ -200,6 +226,8 @@ Page({
             }
         }
         catch (err) {
+            if (!isCurrent())
+                return;
             console.warn('load principal conversation failed', err);
         }
         wx.showModal({
@@ -207,29 +235,37 @@ Page({
             content: '请先在“我的”页面添加主理人，再联系主理人完成会员服务。',
             confirmText: '前往绑定',
             success: res => {
-                if (res.confirm)
+                if (res.confirm && isCurrent())
                     wx.switchTab({ url: '/pages/user/profile' });
             }
         });
     },
-    async callPaymentFunction(checkout) {
-        const payment = checkout.payment;
-        const callHTTPFunction = wx.cloud.callHTTPFunction;
-        if (typeof callHTTPFunction !== 'function')
+    async callPaymentHTTP(payment, path, outTradeNo, scope) {
+        this.assertMembershipSession(scope);
+        const cloud = wx.cloud;
+        if (!isPaymentHTTPCloud(cloud))
             throw new Error('当前微信基础库不支持支付函数调用');
+        if (!payment.functionName || !path || !path.startsWith('/') || !outTradeNo)
+            throw new Error('支付服务暂不可用');
         const result = await new Promise((resolve, reject) => {
-            callHTTPFunction({
+            cloud.callHTTPFunction({
                 name: payment.functionName,
-                path: payment.createPath,
+                path,
                 method: 'POST',
                 config: { env: getApp().globalData.env },
                 header: { 'Content-Type': 'application/json' },
-                data: { outTradeNo: checkout.order.outTradeNo },
+                data: { outTradeNo },
                 success: resolve,
                 fail: reject
             });
         });
-        return paymentParamsFrom(result);
+        this.assertMembershipSession(scope);
+        return result;
+    },
+    async callPaymentFunction(checkout, requestScope) {
+        const scope = requestScope || this._membershipScope;
+        const result = await this.callPaymentHTTP(checkout.payment, checkout.payment.createPath, checkout.order.outTradeNo, scope);
+        return (0, payment_response_1.paymentParamsFrom)(result);
     },
     requestPayment(params) {
         return new Promise((resolve, reject) => {
@@ -240,18 +276,38 @@ Page({
             });
         });
     },
-    async pollPaymentOrder(outTradeNo) {
+    async queryPaymentOrder(outTradeNo, requestScope) {
+        const scope = requestScope || this._membershipScope;
+        this.assertMembershipSession(scope);
+        const payment = this.data.overview.payment;
+        // Undefined belongs to the legacy API. An empty new query path cannot
+        // silently fall back to potentially stale local order state.
+        if (payment.queryPath !== undefined) {
+            const response = await this.callPaymentHTTP(payment, payment.queryPath, outTradeNo, scope);
+            (0, payment_response_1.assertPaymentQueryResponse)(response, outTradeNo);
+        }
+        this.assertMembershipSession(scope);
+        const order = await member_1.memberApi.membershipOrder(outTradeNo);
+        this.assertMembershipSession(scope);
+        return order;
+    },
+    async pollPaymentOrder(outTradeNo, requestScope) {
+        const scope = requestScope || this._membershipScope;
         for (let attempt = 0; attempt < 8; attempt += 1) {
-            const order = await member_1.memberApi.membershipOrder(outTradeNo);
+            const order = await this.queryPaymentOrder(outTradeNo, scope);
             if (order.status === 'paid')
                 return order;
             if (['closed', 'failed', 'refunded'].includes(order.status))
                 return order;
             await wait(1500);
+            this.assertMembershipSession(scope);
         }
-        return member_1.memberApi.membershipOrder(outTradeNo);
+        return this.queryPaymentOrder(outTradeNo, scope);
     },
-    async showOrderResult(order, modal = false) {
+    async showOrderResult(order, modal = false, requestScope) {
+        const scope = requestScope || this._membershipScope;
+        if (!this.isMembershipSessionCurrent(scope))
+            return;
         const feedback = orderFeedback(order.status);
         if (['paid', 'closed', 'failed', 'refunded'].includes(order.status)) {
             this._resumableCheckout = null;
@@ -260,29 +316,32 @@ Page({
         this.setData({ orderTitle: feedback.title, orderNote: feedback.note, orderStatus: order.status });
         if (order.status === 'paid' || order.status === 'refunded')
             await this.loadOverview();
-        if (modal)
+        if (modal && this.isMembershipSessionCurrent(scope))
             wx.showModal({ title: feedback.title, content: feedback.note, showCancel: false });
     },
     async refreshOrderStatus() {
         if (!this.data.lastOrderId || this.data.orderChecking || this.data.confirming)
             return;
         const scope = (0, page_session_1.pageSessionScope)();
+        if (!this.isMembershipSessionCurrent(scope))
+            return;
         const orderId = this.data.lastOrderId;
         this.setData({ orderChecking: true });
         try {
-            const order = await member_1.memberApi.membershipOrder(orderId);
-            if ((0, page_session_1.pageSessionScope)() !== scope || this.data.lastOrderId !== orderId)
+            const order = await this.queryPaymentOrder(orderId, scope);
+            if (!this.isMembershipSessionCurrent(scope) || this.data.lastOrderId !== orderId)
                 return;
-            await this.showOrderResult(order);
+            await this.showOrderResult(order, false, scope);
         }
         catch (error) {
-            if ((0, page_session_1.pageSessionScope)() !== scope)
+            if (!this.isMembershipSessionCurrent(scope) || this.data.lastOrderId !== orderId)
                 return;
-            this.setData({ orderNote: '暂时无法查询订单，请稍后重试。确认结果前请勿重复付款。' });
+            this.setData({ orderStatus: 'confirming', orderTitle: '付款结果确认中', orderCanResume: false,
+                orderNote: '暂时无法查询订单，请稍后重试。确认结果前请勿重复付款。' });
             console.warn('refresh membership order failed', error);
         }
         finally {
-            if ((0, page_session_1.pageSessionScope)() === scope)
+            if (this.isMembershipSessionCurrent(scope))
                 this.setData({ orderChecking: false });
         }
     },
@@ -290,9 +349,11 @@ Page({
         if (this.data.paymentStarting || this.data.confirming)
             return;
         const scope = (0, page_session_1.pageSessionScope)();
+        if (!this.isMembershipSessionCurrent(scope))
+            return;
         if (this.data.lastOrderId && !this.data.orderCanResume && !['paid', 'closed', 'failed', 'refunded'].includes(this.data.orderStatus)) {
             await this.refreshOrderStatus();
-            if ((0, page_session_1.pageSessionScope)() === scope)
+            if (this.isMembershipSessionCurrent(scope))
                 wx.showToast({ title: '请查看上一笔订单结果', icon: 'none' });
             return;
         }
@@ -314,32 +375,33 @@ Page({
         try {
             const checkout = this.data.orderCanResume && this._resumableCheckout
                 ? this._resumableCheckout : await member_1.memberApi.createMembershipOrder(this.data.selectedPlanCode);
-            if ((0, page_session_1.pageSessionScope)() !== scope)
+            if (!this.isMembershipSessionCurrent(scope))
                 return;
             this._resumableCheckout = checkout;
             const orderPlanText = `${checkout.order.planTitle || '会员套餐'}${Number.isFinite(checkout.order.amountFen) ? ` · ¥${(checkout.order.amountFen / 100).toFixed(2)}` : ''}`;
             this.setData({ lastOrderId: checkout.order.outTradeNo, orderStatus: 'pending', orderTitle: '订单待支付',
                 orderNote: '请在微信支付中完成付款。', orderPlanText, orderCanResume: true });
-            const paymentParams = await this.callPaymentFunction(checkout);
-            if ((0, page_session_1.pageSessionScope)() !== scope)
+            const paymentParams = await this.callPaymentFunction(checkout, scope);
+            if (!this.isMembershipSessionCurrent(scope))
                 return;
             paymentRequested = true;
             this.setData({ orderCanResume: false });
             await this.requestPayment(paymentParams);
-            if ((0, page_session_1.pageSessionScope)() !== scope)
+            if (!this.isMembershipSessionCurrent(scope))
                 return;
-            this.setData({ paymentStarting: false, confirming: true });
+            this.setData({ paymentStarting: false, confirming: true, orderStatus: 'confirming',
+                orderTitle: '付款结果确认中', orderNote: '正在核对微信支付结果，请勿重复付款。' });
             wx.showLoading({ title: '正在确认付款', mask: true });
-            const order = await this.pollPaymentOrder(checkout.order.outTradeNo);
-            wx.hideLoading();
-            if ((0, page_session_1.pageSessionScope)() !== scope)
+            const order = await this.pollPaymentOrder(checkout.order.outTradeNo, scope);
+            if (!this.isMembershipSessionCurrent(scope))
                 return;
-            await this.showOrderResult(order, true);
+            wx.hideLoading();
+            await this.showOrderResult(order, true, scope);
         }
         catch (err) {
-            wx.hideLoading();
-            if ((0, page_session_1.pageSessionScope)() !== scope)
+            if (!this.isMembershipSessionCurrent(scope))
                 return;
+            wx.hideLoading();
             const error = err && typeof err === 'object' ? err : {};
             const message = String(error.errMsg || error.message || err);
             if (/cancel/i.test(message)) {
@@ -351,13 +413,13 @@ Page({
                 if (this.data.lastOrderId)
                     this.setData(!paymentRequested && this._resumableCheckout
                         ? { orderCanResume: true, orderTitle: '支付尚未开始', orderNote: '未能拉起微信支付，请继续支付原订单，不会重新创建订单。' }
-                        : { orderCanResume: false, orderTitle: '支付结果待核实', orderNote: '本次支付未能完成确认，请查询订单状态后再操作。' });
+                        : { orderCanResume: false, orderStatus: 'confirming', orderTitle: '付款结果确认中', orderNote: '本次支付未能完成确认，请查询订单状态后再操作。' });
                 wx.showToast({ title: message || '支付未完成', icon: 'none', duration: 3000 });
             }
             console.warn('membership payment failed', err);
         }
         finally {
-            if ((0, page_session_1.pageSessionScope)() === scope)
+            if (this.isMembershipSessionCurrent(scope))
                 this.setData({ paymentStarting: false, confirming: false });
         }
     }

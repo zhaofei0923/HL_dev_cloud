@@ -5,10 +5,11 @@
   "scripts": {
     "test": "node --test tests/*.test.js",
     "build:miniprogram": "node scripts/sync-matchmaker-workspace.mjs && tsc --project tsconfig.json && node scripts/sync-wxss.mjs",
+    "prepare:wechat-pay": "node scripts/prepare-wechat-payment-integration.mjs",
     "check:generated": "node scripts/check-generated.mjs",
     "check:media": "node scripts/check-media-budget.mjs",
     "check:admin-workflows": "node scripts/verify-admin-workflows.mjs",
-    "check": "npm run check:generated && npm run check:media && npm test && tsc --noEmit --project tsconfig.json && node --check cloudfunctions/hlApi/index.js && node --check cloudfunctions/hlApi/auth-policy.js && node --check cloudfunctions/hlApi/account-claim-policy.js && node --check cloudfunctions/hlApi/membership-payment-policy.js && node --check cloudfunctions/hlApi/relationship-policy.js && node --check cloudfunctions/hlApi/salon-policy.js && node scripts/verify-admin-workflows.mjs"
+    "check": "npm run check:generated && npm run check:media && npm test && tsc --noEmit --project tsconfig.json && node --check cloudfunctions/hlApi/index.js && node --check cloudfunctions/hlApi/auth-policy.js && node --check cloudfunctions/hlApi/account-claim-policy.js && node --check cloudfunctions/hlApi/membership-payment-policy.js && node --check cloudfunctions/hlApi/relationship-policy.js && node --check cloudfunctions/hlApi/salon-policy.js && node --check integrations/wechat-pay/hl-membership-bridge.js && node --check integrations/wechat-pay/hl-membership-routes.js && node --check scripts/prepare-wechat-payment-integration.mjs && node scripts/verify-admin-workflows.mjs"
   },
   "keywords": [],
   "author": "",

@@ -31,11 +31,6 @@
       aria-label="移除筛选：{{item.label}}" bindtap="removeFilter">{{item.label}} ×</button>
   </view>
 
-  <view class="recommend-caption">
-    <text wx:if="{{categoryDescription}}" class="category-description">{{categoryDescription}}</text>
-    <text class="recommend-note">{{loading ? '正在整理会员资料' : countText}}</text>
-  </view>
-
   <view wx:if="{{filterOpen}}" class="filter-panel">
     <view class="field search-field">
       <input

@@ -5,6 +5,7 @@ export type CertificationDefinition = {
   title: string
   note: string
   materials: string
+  materialGuidelines?: string[]
 }
 
 export const CERTIFICATION_DEFINITIONS: CertificationDefinition[] = [
@@ -12,7 +13,12 @@ export const CERTIFICATION_DEFINITIONS: CertificationDefinition[] = [
   { kind: 'education', title: '学历认证', note: '支持国内、海外及港澳台学历', materials: '国内学历依据学信网可查验的验证或认证报告审核；海外及港澳台学历，以及中外合作办学取得的境外学历学位，依据教育部留学服务中心的认证结果审核。' },
   { kind: 'vehicle', title: '车辆认证', note: '核验本人名下车辆', materials: '请上传本人名下车辆的有效权属证明，由后台核验。' },
   { kind: 'property', title: '房产认证', note: '核验本人名下房产', materials: '请上传本人名下房产的有效权属证明，由后台核验。' },
-  { kind: 'assets', title: '资产认证', note: '核验通过后有效期6个月', materials: '请上传银行等机构出具的有效金融资产证明。核验通过后有效期6个月，到期需重新核验。核验采用金融资产口径，房产数量、车辆数量和年收入不直接换算为总资产。' }
+  { kind: 'assets', title: '金融资产认证', note: '核验通过后有效期6个月', materials: '核验存款、股票、基金、理财及保单现金价值。核验采用金融资产口径，房产数量、车辆数量和年收入不直接换算为总资产。', materialGuidelines: [
+    '银行存款：上传银行柜台开具的存款证明，建议使用近3个月的证明，具体有效期以银行为准。',
+    '股票、基金：上传证券账户股票持仓截图或基金持仓截图，账号请打码。',
+    '理财：上传理财持仓或余额证明，账号请打码。',
+    '保单：上传清楚显示现金价值的保单截图，按现金价值审核，不按保额。'
+  ] }
 ]
 
 export const EDUCATION_SOURCE_OPTIONS = ['国内学历 · 学信网', '海外及港澳台学历 · 留服中心']
@@ -20,12 +26,13 @@ export const EDUCATION_SOURCES = ['chsi', 'cscse'] as const
 export const CERTIFICATION_EDUCATION_OPTIONS = ['本科', '硕士', '博士'] as const
 export const CERTIFICATION_EDUCATION_VALUES = ['bachelors', 'master', 'doctor'] as const
 
-export type EducationCertificationMethod = 'chsi_code' | 'diploma_photo' | 'study_proof' | 'cscse_number'
+export type EducationCertificationMethod = 'chsi_code' | 'diploma_photo' | 'study_proof' | 'cscse_number' | 'cscse_photo'
 export const EDUCATION_CERTIFICATION_METHODS: Array<{ value: EducationCertificationMethod; title: string; note: string }> = [
   { value: 'chsi_code', title: '学信网在线验证码', note: '提交可查验报告的在线验证码' },
   { value: 'diploma_photo', title: '毕业证书或学位证书照片', note: '上传图片或 PDF 文件' },
   { value: 'study_proof', title: '在读证明等辅助材料照片', note: '仅作辅助，学历以已取得结果核验' },
-  { value: 'cscse_number', title: '教育部留服认证书编号', note: '海外及港澳台学历认证' }
+  { value: 'cscse_number', title: '教育部留服认证书编号', note: '海外及港澳台学历认证' },
+  { value: 'cscse_photo', title: '教留服认证证书照片', note: '上传留服认证证书，由工作人员核验' }
 ]
 
 export const CERTIFICATION_MATERIAL_LIMIT = 3
@@ -38,7 +45,7 @@ export function safeEducationMethod(value: unknown): EducationCertificationMetho
 }
 
 export function methodRequiresMaterials(kind: MemberCertificationKind, method: EducationCertificationMethod | ''): boolean {
-  return kind !== 'education' || method === 'diploma_photo' || method === 'study_proof'
+  return kind !== 'education' || method === 'diploma_photo' || method === 'study_proof' || method === 'cscse_photo'
 }
 
 export function certificationMaterialMime(contentBase64: string): 'image/jpeg' | 'image/png' | 'application/pdf' | '' {

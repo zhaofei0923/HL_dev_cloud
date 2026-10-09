@@ -1,10 +1,12 @@
 import { bindWechatPhone } from '../../services/auth'
 import { chatApi } from '../../services/chat'
 import { pageSessionScope } from '../../utils/page-session'
+import { assertPaymentQueryResponse, paymentParamsFrom, paymentRecord, type PaymentParams } from '../../utils/payment-response'
 import {
   memberApi,
   type MembershipOrderCheckout,
   type MembershipOverview,
+  type MembershipPaymentConfig,
   type MembershipPaymentOrder,
   type MembershipPlan
 } from '../../services/member'
@@ -14,12 +16,21 @@ type MembershipPlanView = MembershipPlan & {
   descriptionText: string
 }
 
-type PaymentParams = {
-  timeStamp: string
-  nonceStr: string
-  package: string
-  signType?: 'MD5' | 'HMAC-SHA256' | 'RSA'
-  paySign: string
+type PaymentHTTPCloud = {
+  callHTTPFunction(options: {
+    name: string
+    path: string
+    method: 'POST'
+    config: { env: string }
+    header: { 'Content-Type': string }
+    data: { outTradeNo: string }
+    success: (result: unknown) => void
+    fail: (error: unknown) => void
+  }): unknown
+}
+
+function isPaymentHTTPCloud(value: unknown): value is PaymentHTTPCloud {
+  return paymentRecord(value) && typeof value.callHTTPFunction === 'function'
 }
 
 const EMPTY_OVERVIEW: MembershipOverview = {
@@ -33,7 +44,8 @@ const EMPTY_OVERVIEW: MembershipOverview = {
     available: false,
     reason: 'merchant_not_configured',
     functionName: '',
-    createPath: ''
+    createPath: '',
+    queryPath: ''
   }
 }
 
@@ -63,22 +75,6 @@ function paymentReasonText(reason: string) {
   return labels[reason] || '微信支付暂不可用'
 }
 
-function paymentParamsFrom(result: any): PaymentParams {
-  const body = result && result.data
-  const payload = (body && body.data) || (body && body.payment) || body || {}
-  const params = payload.payment || payload
-  if (!params.timeStamp || !params.nonceStr || !params.package || !params.paySign) {
-    throw new Error('支付函数未返回完整的调起参数')
-  }
-  return {
-    timeStamp: String(params.timeStamp),
-    nonceStr: String(params.nonceStr),
-    package: String(params.package),
-    signType: params.signType || 'RSA',
-    paySign: String(params.paySign)
-  }
-}
-
 function wait(delay: number) {
   return new Promise<void>(resolve => setTimeout(resolve, delay))
 }
@@ -95,6 +91,8 @@ function orderFeedback(status: string) {
 
 Page({
   _membershipScope: '',
+  _membershipUnloaded: false,
+  _overviewRequestSerial: 0,
   _resumableCheckout: null as MembershipOrderCheckout | null,
   data: {
     loading: true,
@@ -120,27 +118,47 @@ Page({
   },
 
   onShow() {
-    this.loadOverview()
+    this._membershipUnloaded = false
+    return this.loadOverview()
   },
 
   onPullDownRefresh() {
-    this.loadOverview({ pullDown: true })
+    return this.loadOverview({ pullDown: true })
+  },
+
+  onUnload() {
+    this._membershipUnloaded = true
+    this._overviewRequestSerial += 1
+    if (this.data.confirming) wx.hideLoading()
+  },
+
+  isMembershipSessionCurrent(scope: string) {
+    return !!scope && !this._membershipUnloaded && this._membershipScope === scope && pageSessionScope() === scope
+  },
+
+  assertMembershipSession(scope: string) {
+    if (!this.isMembershipSessionCurrent(scope)) throw new Error('会员会话已变化，请重新进入')
   },
 
   async loadOverview(options: { pullDown?: boolean } = {}) {
+    if (this._membershipUnloaded) return
     const scope = pageSessionScope()
     if (scope !== this._membershipScope) {
+      if (this.data.confirming) wx.hideLoading()
       this._membershipScope = scope
       this._resumableCheckout = null
       this.setData({ overview: EMPTY_OVERVIEW, plans: [], onlineCheckout: false, selectedPlanCode: '',
         lastOrderId: '', orderTitle: '', orderNote: '', orderStatus: '', orderChecking: false, orderCanResume: false,
-        orderPlanText: '', paymentStarting: false, confirming: false })
+        orderPlanText: '', paymentStarting: false, confirming: false, phoneAuthorizing: false })
     }
+    if (!scope) return
+    const requestSerial = ++this._overviewRequestSerial
+    const isCurrent = () => this.isMembershipSessionCurrent(scope) && requestSerial === this._overviewRequestSerial
     if (options.pullDown) this.setData({ refreshing: true })
     else this.setData({ loading: true })
     try {
       const overview = await memberApi.membershipOverview()
-      if (pageSessionScope() !== scope) return
+      if (!isCurrent()) return
       const plans = overview.plans.map(plan => ({
         ...plan,
         durationText: durationText(plan.durationDays),
@@ -162,12 +180,14 @@ Page({
         errorText: ''
       })
     } catch (err) {
-      if (pageSessionScope() !== scope) return
+      if (!isCurrent()) return
       console.warn('load membership overview failed', err)
       this.setData({ errorText: '会员信息暂时无法加载，请稍后重试。' })
     } finally {
-      if (pageSessionScope() === scope) this.setData({ loading: false, refreshing: false })
-      if (options.pullDown) wx.stopPullDownRefresh()
+      if (isCurrent()) {
+        this.setData({ loading: false, refreshing: false })
+        if (options.pullDown) wx.stopPullDownRefresh()
+      }
     }
   },
 
@@ -183,9 +203,10 @@ Page({
   },
 
   async authorizePhone(e: WechatMiniprogram.ButtonGetPhoneNumber) {
-    if (this.data.phoneAuthorizing) return
-    const detail = e.detail as any
-    const code = String(detail.code || '')
+    const scope = pageSessionScope()
+    if (this.data.phoneAuthorizing || !this.isMembershipSessionCurrent(scope)) return
+    const detail: unknown = e.detail
+    const code = paymentRecord(detail) && typeof detail.code === 'string' ? detail.code : ''
     if (!code) {
       wx.showToast({ title: '未授权手机号', icon: 'none' })
       return
@@ -193,24 +214,30 @@ Page({
     this.setData({ phoneAuthorizing: true })
     try {
       await bindWechatPhone(code)
+      if (!this.isMembershipSessionCurrent(scope)) return
       wx.showToast({ title: '手机号已授权' })
       await this.loadOverview()
     } catch (err) {
-      console.warn('bind wechat phone failed', err)
+      if (this.isMembershipSessionCurrent(scope)) console.warn('bind wechat phone failed', err)
     } finally {
-      this.setData({ phoneAuthorizing: false })
+      if (this.isMembershipSessionCurrent(scope)) this.setData({ phoneAuthorizing: false })
     }
   },
 
   async contactMatchmaker() {
+    const scope = pageSessionScope()
+    const isCurrent = () => !!scope && !this._membershipUnloaded && pageSessionScope() === scope
+    if (!isCurrent()) return
     try {
       const conversations = await chatApi.listConversations({ page: 1, pageSize: 100 })
+      if (!isCurrent()) return
       const serviceConversation = conversations.list.find(item => item.conversationType === 'member_matchmaker')
       if (serviceConversation) {
         wx.navigateTo({ url: `/pages/user/chat?id=${serviceConversation.id}` })
         return
       }
     } catch (err) {
+      if (!isCurrent()) return
       console.warn('load principal conversation failed', err)
     }
     wx.showModal({
@@ -218,27 +245,35 @@ Page({
       content: '请先在“我的”页面添加主理人，再联系主理人完成会员服务。',
       confirmText: '前往绑定',
       success: res => {
-        if (res.confirm) wx.switchTab({ url: '/pages/user/profile' })
+        if (res.confirm && isCurrent()) wx.switchTab({ url: '/pages/user/profile' })
       }
     })
   },
 
-  async callPaymentFunction(checkout: MembershipOrderCheckout) {
-    const payment = checkout.payment
-    const callHTTPFunction = (wx.cloud as any).callHTTPFunction
-    if (typeof callHTTPFunction !== 'function') throw new Error('当前微信基础库不支持支付函数调用')
-    const result = await new Promise<any>((resolve, reject) => {
-      callHTTPFunction({
+  async callPaymentHTTP(payment: MembershipPaymentConfig, path: string, outTradeNo: string, scope: string): Promise<unknown> {
+    this.assertMembershipSession(scope)
+    const cloud: unknown = wx.cloud
+    if (!isPaymentHTTPCloud(cloud)) throw new Error('当前微信基础库不支持支付函数调用')
+    if (!payment.functionName || !path || !path.startsWith('/') || !outTradeNo) throw new Error('支付服务暂不可用')
+    const result = await new Promise<unknown>((resolve, reject) => {
+      cloud.callHTTPFunction({
         name: payment.functionName,
-        path: payment.createPath,
+        path,
         method: 'POST',
         config: { env: getApp<IAppOption>().globalData.env },
         header: { 'Content-Type': 'application/json' },
-        data: { outTradeNo: checkout.order.outTradeNo },
+        data: { outTradeNo },
         success: resolve,
         fail: reject
       })
     })
+    this.assertMembershipSession(scope)
+    return result
+  },
+
+  async callPaymentFunction(checkout: MembershipOrderCheckout, requestScope?: string) {
+    const scope = requestScope || this._membershipScope
+    const result = await this.callPaymentHTTP(checkout.payment, checkout.payment.createPath, checkout.order.outTradeNo, scope)
     return paymentParamsFrom(result)
   },
 
@@ -252,17 +287,37 @@ Page({
     })
   },
 
-  async pollPaymentOrder(outTradeNo: string) {
+  async queryPaymentOrder(outTradeNo: string, requestScope?: string): Promise<MembershipPaymentOrder> {
+    const scope = requestScope || this._membershipScope
+    this.assertMembershipSession(scope)
+    const payment = this.data.overview.payment
+    // Undefined belongs to the legacy API. An empty new query path cannot
+    // silently fall back to potentially stale local order state.
+    if (payment.queryPath !== undefined) {
+      const response = await this.callPaymentHTTP(payment, payment.queryPath, outTradeNo, scope)
+      assertPaymentQueryResponse(response, outTradeNo)
+    }
+    this.assertMembershipSession(scope)
+    const order = await memberApi.membershipOrder(outTradeNo)
+    this.assertMembershipSession(scope)
+    return order
+  },
+
+  async pollPaymentOrder(outTradeNo: string, requestScope?: string) {
+    const scope = requestScope || this._membershipScope
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const order: MembershipPaymentOrder = await memberApi.membershipOrder(outTradeNo)
+      const order = await this.queryPaymentOrder(outTradeNo, scope)
       if (order.status === 'paid') return order
       if (['closed', 'failed', 'refunded'].includes(order.status)) return order
       await wait(1500)
+      this.assertMembershipSession(scope)
     }
-    return memberApi.membershipOrder(outTradeNo)
+    return this.queryPaymentOrder(outTradeNo, scope)
   },
 
-  async showOrderResult(order: MembershipPaymentOrder, modal = false) {
+  async showOrderResult(order: MembershipPaymentOrder, modal = false, requestScope?: string) {
+    const scope = requestScope || this._membershipScope
+    if (!this.isMembershipSessionCurrent(scope)) return
     const feedback = orderFeedback(order.status)
     if (['paid', 'closed', 'failed', 'refunded'].includes(order.status)) {
       this._resumableCheckout = null
@@ -270,33 +325,36 @@ Page({
     }
     this.setData({ orderTitle: feedback.title, orderNote: feedback.note, orderStatus: order.status })
     if (order.status === 'paid' || order.status === 'refunded') await this.loadOverview()
-    if (modal) wx.showModal({ title: feedback.title, content: feedback.note, showCancel: false })
+    if (modal && this.isMembershipSessionCurrent(scope)) wx.showModal({ title: feedback.title, content: feedback.note, showCancel: false })
   },
 
   async refreshOrderStatus() {
     if (!this.data.lastOrderId || this.data.orderChecking || this.data.confirming) return
     const scope = pageSessionScope()
+    if (!this.isMembershipSessionCurrent(scope)) return
     const orderId = this.data.lastOrderId
     this.setData({ orderChecking: true })
     try {
-      const order = await memberApi.membershipOrder(orderId)
-      if (pageSessionScope() !== scope || this.data.lastOrderId !== orderId) return
-      await this.showOrderResult(order)
+      const order = await this.queryPaymentOrder(orderId, scope)
+      if (!this.isMembershipSessionCurrent(scope) || this.data.lastOrderId !== orderId) return
+      await this.showOrderResult(order, false, scope)
     } catch (error) {
-      if (pageSessionScope() !== scope) return
-      this.setData({ orderNote: '暂时无法查询订单，请稍后重试。确认结果前请勿重复付款。' })
+      if (!this.isMembershipSessionCurrent(scope) || this.data.lastOrderId !== orderId) return
+      this.setData({ orderStatus: 'confirming', orderTitle: '付款结果确认中', orderCanResume: false,
+        orderNote: '暂时无法查询订单，请稍后重试。确认结果前请勿重复付款。' })
       console.warn('refresh membership order failed', error)
     } finally {
-      if (pageSessionScope() === scope) this.setData({ orderChecking: false })
+      if (this.isMembershipSessionCurrent(scope)) this.setData({ orderChecking: false })
     }
   },
 
   async startPayment() {
     if (this.data.paymentStarting || this.data.confirming) return
     const scope = pageSessionScope()
+    if (!this.isMembershipSessionCurrent(scope)) return
     if (this.data.lastOrderId && !this.data.orderCanResume && !['paid', 'closed', 'failed', 'refunded'].includes(this.data.orderStatus)) {
       await this.refreshOrderStatus()
-      if (pageSessionScope() === scope) wx.showToast({ title: '请查看上一笔订单结果', icon: 'none' })
+      if (this.isMembershipSessionCurrent(scope)) wx.showToast({ title: '请查看上一笔订单结果', icon: 'none' })
       return
     }
     const overview = this.data.overview as MembershipOverview
@@ -318,26 +376,27 @@ Page({
     try {
       const checkout = this.data.orderCanResume && this._resumableCheckout
         ? this._resumableCheckout : await memberApi.createMembershipOrder(this.data.selectedPlanCode)
-      if (pageSessionScope() !== scope) return
+      if (!this.isMembershipSessionCurrent(scope)) return
       this._resumableCheckout = checkout
       const orderPlanText = `${checkout.order.planTitle || '会员套餐'}${Number.isFinite(checkout.order.amountFen) ? ` · ¥${(checkout.order.amountFen / 100).toFixed(2)}` : ''}`
       this.setData({ lastOrderId: checkout.order.outTradeNo, orderStatus: 'pending', orderTitle: '订单待支付',
         orderNote: '请在微信支付中完成付款。', orderPlanText, orderCanResume: true })
-      const paymentParams = await this.callPaymentFunction(checkout)
-      if (pageSessionScope() !== scope) return
+      const paymentParams = await this.callPaymentFunction(checkout, scope)
+      if (!this.isMembershipSessionCurrent(scope)) return
       paymentRequested = true
       this.setData({ orderCanResume: false })
       await this.requestPayment(paymentParams)
-      if (pageSessionScope() !== scope) return
-      this.setData({ paymentStarting: false, confirming: true })
+      if (!this.isMembershipSessionCurrent(scope)) return
+      this.setData({ paymentStarting: false, confirming: true, orderStatus: 'confirming',
+        orderTitle: '付款结果确认中', orderNote: '正在核对微信支付结果，请勿重复付款。' })
       wx.showLoading({ title: '正在确认付款', mask: true })
-      const order = await this.pollPaymentOrder(checkout.order.outTradeNo)
+      const order = await this.pollPaymentOrder(checkout.order.outTradeNo, scope)
+      if (!this.isMembershipSessionCurrent(scope)) return
       wx.hideLoading()
-      if (pageSessionScope() !== scope) return
-      await this.showOrderResult(order, true)
+      await this.showOrderResult(order, true, scope)
     } catch (err) {
+      if (!this.isMembershipSessionCurrent(scope)) return
       wx.hideLoading()
-      if (pageSessionScope() !== scope) return
       const error = err && typeof err === 'object' ? err as Record<string, unknown> : {}
       const message = String(error.errMsg || error.message || err)
       if (/cancel/i.test(message)) {
@@ -347,12 +406,12 @@ Page({
       } else {
         if (this.data.lastOrderId) this.setData(!paymentRequested && this._resumableCheckout
           ? { orderCanResume: true, orderTitle: '支付尚未开始', orderNote: '未能拉起微信支付，请继续支付原订单，不会重新创建订单。' }
-          : { orderCanResume: false, orderTitle: '支付结果待核实', orderNote: '本次支付未能完成确认，请查询订单状态后再操作。' })
+          : { orderCanResume: false, orderStatus: 'confirming', orderTitle: '付款结果确认中', orderNote: '本次支付未能完成确认，请查询订单状态后再操作。' })
         wx.showToast({ title: message || '支付未完成', icon: 'none', duration: 3000 })
       }
       console.warn('membership payment failed', err)
     } finally {
-      if (pageSessionScope() === scope) this.setData({ paymentStarting: false, confirming: false })
+      if (this.isMembershipSessionCurrent(scope)) this.setData({ paymentStarting: false, confirming: false })
     }
   }
 })

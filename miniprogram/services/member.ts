@@ -91,6 +91,7 @@ export type MembershipPaymentConfig = {
   reason: string
   functionName: string
   createPath: string
+  queryPath?: string
 }
 
 export type MembershipOverview = {
@@ -130,7 +131,7 @@ export type MembershipOrderCheckout = {
 
 export type MemberCertificationKind = 'identity' | 'education' | 'vehicle' | 'property' | 'assets'
 export type MemberCertificationStatus = 'unsubmitted' | 'pending' | 'approved' | 'rejected' | 'revoked' | 'expired'
-export type EducationCertificationMethod = 'chsi_code' | 'diploma_photo' | 'study_proof' | 'cscse_number'
+export type EducationCertificationMethod = 'chsi_code' | 'diploma_photo' | 'study_proof' | 'cscse_number' | 'cscse_photo'
 export type VerifiedEducationLevel = 'bachelors' | 'master' | 'doctor'
 export type FinancialAssetRange = 'under_500k' | '500k_2m' | '2m_5m' | '5m_10m' | 'over_10m'
 export type CertificationMaterialMime = 'image/jpeg' | 'image/png' | 'application/pdf'

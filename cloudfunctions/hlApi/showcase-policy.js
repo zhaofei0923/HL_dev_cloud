@@ -8,14 +8,15 @@ const FINANCIAL_ASSET_RANK = Object.freeze({
   under_500k: 1, '500k_2m': 2, '2m_5m': 3, '5m_10m': 4, over_10m: 5
 });
 const EDUCATION_SOURCES = new Set(['chsi', 'cscse']);
-const ASSET_SOURCES = new Set(['bank_statement', 'securities_statement', 'combined_financial_statement']);
+// Insurance evidence supports verified policy cash value, never the insured face amount.
+const ASSET_SOURCES = new Set(['bank_statement', 'securities_statement', 'insurance_statement', 'combined_financial_statement']);
 const CERTIFICATION_KINDS = Object.freeze(['identity', 'education', 'vehicle', 'property', 'assets']);
 const OFFLINE_CERTIFICATION_SOURCES = Object.freeze({
   identity: 'identity_document', vehicle: 'vehicle_license', property: 'property_certificate',
   assets: 'combined_financial_statement'
 });
 const CERTIFICATION_STATUSES = new Set(['approved', 'rejected', 'revoked']);
-const EDUCATION_METHODS = new Set(['chsi_code', 'diploma_photo', 'study_proof', 'cscse_number']);
+const EDUCATION_METHODS = new Set(['chsi_code', 'diploma_photo', 'study_proof', 'cscse_number', 'cscse_photo']);
 const PRIVATE_CERTIFICATION_FIELDS = [
   'showcaseCertification', 'educationVerification', 'assetVerification',
   'identityVerification', 'vehicleVerification', 'propertyVerification',
@@ -223,6 +224,11 @@ function normalizeCertificationRequest(data = {}) {
     if (data.source !== 'cscse' || typeof data.certificateNumber !== 'string' || !data.certificateNumber.trim()
       || data.certificateNumber.trim().length > 120 || data.verificationCode !== undefined) throw policyError('请填写有效的国（境）外学历学位认证编号');
     verification.certificateNumber = data.certificateNumber.trim();
+  } else if (data.method === 'cscse_photo') {
+    if (data.source !== 'cscse' || !materialIds.length
+      || ['verificationCode', 'certificateNumber'].some(field => Object.prototype.hasOwnProperty.call(data, field))) {
+      throw policyError('教留服认证证书照片方式请至少上传1份留服认证材料，不填写验证码或认证编号');
+    }
   } else if (!materialIds.length || data.verificationCode !== undefined || data.certificateNumber !== undefined) {
     throw policyError('证书或学籍证明方式请至少上传1份材料，不填写验证码或认证编号');
   }

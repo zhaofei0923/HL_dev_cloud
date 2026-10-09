@@ -23,6 +23,11 @@ type LocalMaterial = {
 function safeEducationSource(value: unknown): EducationSource {
   return value === 'chsi' || value === 'cscse' ? value : ''
 }
+function educationSourceForMethod(method: EducationCertificationMethod | '', value: unknown): EducationSource {
+  if (method === 'chsi_code') return 'chsi'
+  if (method === 'cscse_number' || method === 'cscse_photo') return 'cscse'
+  return safeEducationSource(value)
+}
 function safeEducationLevel(value: unknown): EducationLevel {
   if (value === 'bachelors') return '本科'
   if (value === 'master') return '硕士'
@@ -87,7 +92,7 @@ Page({
   _materialSequence: 0, _leaveGuardEnabled: false,
   _previewPaths: [] as string[],
   data: {
-    kind: '' as '' | MemberCertificationKind, title: '资料认证', materials: '',
+    kind: '' as '' | MemberCertificationKind, title: '资料认证', materials: '', materialGuidelines: [] as string[],
     loading: false, loadError: '', unsupportedKind: false, submitting: false, submissionError: '',
     entry: null as CertificationEntry | null, statusText: '读取中', verified: false, pending: false,
     verifiedDetail: '', submittedAtText: '', reviewedAtText: '', expiresAtText: '', feedback: '', actionText: '提交认证申请',
@@ -109,7 +114,7 @@ Page({
       this.setData({ unsupportedKind: true, loadError: '认证项目不存在，请返回我的资料重新选择' })
       return
     }
-    this.setData({ kind: definition.kind, title: definition.title, materials: definition.materials,
+    this.setData({ kind: definition.kind, title: definition.title, materials: definition.materials, materialGuidelines: definition.materialGuidelines || [],
       requiresMaterials: methodRequiresMaterials(definition.kind, '') })
     wx.setNavigationBarTitle({ title: definition.title })
   },
@@ -184,13 +189,13 @@ Page({
     }
     if (!this._draftEdited && entry.kind === 'education') {
       const application = entry.application
-      const source = safeEducationSource(application && application.source || entry.source)
       const method = safeEducationMethod(application && application.method)
+      const source = educationSourceForMethod(method, application && application.source || entry.source)
       const methodOption = EDUCATION_CERTIFICATION_METHODS.find(item => item.value === method)
       this.setData({ educationSource: source, educationSourceText: sourceText(source),
         educationLevel: safeEducationLevel(application && application.educationLevel || entry.verifiedEducation),
         institutionName: application && typeof application.institutionName === 'string' ? application.institutionName : '',
-        method, methodText: methodOption ? methodOption.title : '请选择认证方式',
+        method, methodText: methodOption ? methodOption.title : '请选择认证方式', verificationCode: '', certificateNumber: '',
         requiresMaterials: methodRequiresMaterials(entry.kind, method) })
     }
     this.updateLeaveGuard()
@@ -286,14 +291,14 @@ Page({
     const method = safeEducationMethod(e.currentTarget.dataset.method)
     if (!method || !this.data.kind) return
     const option = EDUCATION_CERTIFICATION_METHODS.find(item => item.value === method)
-    const source = method === 'chsi_code' ? 'chsi' : method === 'cscse_number' ? 'cscse' : this.data.educationSource
+    const source = educationSourceForMethod(method, this.data.educationSource)
     this.markDraftEdited()
     this.setData({ method, methodText: option ? option.title : '', methodPickerOpen: false,
       verificationCode: '', certificateNumber: '', educationSource: source, educationSourceText: sourceText(source),
       requiresMaterials: methodRequiresMaterials(this.data.kind, method), submissionError: '' })
   },
   onEducationSourceChange(e: { detail: { value: string } }) {
-    if (this.editingBlocked() || this.data.method === 'chsi_code' || this.data.method === 'cscse_number') return
+    if (this.editingBlocked() || this.data.method === 'chsi_code' || this.data.method === 'cscse_number' || this.data.method === 'cscse_photo') return
     const source = EDUCATION_SOURCES[Number(e.detail.value)]
     if (!source) return
     this.markDraftEdited()
@@ -466,10 +471,11 @@ Page({
       materialIds: this.data.requiresMaterials ? this.data.uploadedMaterials.map(item => item.id).filter(Boolean) : [] }
     if (this.data.kind === 'education') {
       if (!this.data.method) { this.setData({ submissionError: '请选择学历认证方式' }); return }
-      if (!this.data.educationSource || !this.data.educationLevel || !this.data.institutionName.trim()) {
+      const source = educationSourceForMethod(this.data.method, this.data.educationSource)
+      if (!source || !this.data.educationLevel || !this.data.institutionName.trim()) {
         this.setData({ submissionError: '请填写学校全称，并选择学历来源和最高已取得学历' }); return
       }
-      data.source = this.data.educationSource
+      data.source = source
       data.educationLevel = CERTIFICATION_EDUCATION_VALUES[CERTIFICATION_EDUCATION_OPTIONS.indexOf(this.data.educationLevel)]
       data.institutionName = this.data.institutionName.trim()
       data.method = this.data.method
