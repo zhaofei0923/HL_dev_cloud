@@ -4,6 +4,9 @@ const PAGES = ['matchmakers', 'certifications', 'salons', 'plans', 'orders'];
 // private state inside that module, never on the sandbox's page proxy.
 const controllers = new WeakMap();
 const registrations = new WeakMap();
+// Only structured server failures may contribute bounded diagnostic references.
+// Transport errors, messages and arbitrary response fields never reach the UI.
+const responseDiagnostics = new WeakMap();
 const CONTROLLER_VERSION = 'hl-admin-operations-runtime-v3';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const string = (value, max = 500) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) : '';
@@ -155,11 +158,17 @@ function current(ctx, generation) {
 }
 function codeOf(error) { return String(error?.code ?? error?.errCode ?? error?.status ?? '').toUpperCase(); }
 function forbidden(error) { return /^(?:401|403)|UNAUTH|FORBIDDEN|PERMISSION|TOKEN_EXPIRED|INVALID_ACCESS_TOKEN|LOGIN_REQUIRED/.test(codeOf(error)); }
+function validationText(error) {
+  const diagnostic = object(error) ? responseDiagnostics.get(error) : null;
+  if (!diagnostic) return '提交参数未通过校验，请核对输入和当前记录状态。';
+  const reference = diagnostic.requestId ? '；参考号：' + diagnostic.requestId : '';
+  return '请求未通过系统校验（诊断编号：' + diagnostic.code + reference + '）。请将编号提供给维护人员。';
+}
 function failed(ctx, error, patch = {}) {
   if (forbidden(error)) { clear(ctx, '登录已失效或无权访问，请重新使用已授权管理员账号登录。'); return; }
   const code = codeOf(error);
   if (/^409|VERSION|CONFLICT/.test(code)) publish(ctx, { ...clearDetail(ctx), ...patch, error: '记录已更新，请重新选择并读取最新详情后再处理。', writing: false });
-  else publish(ctx, { ...patch, error: /^422|VALIDATION/.test(code) ? '提交参数未通过校验，请核对输入和当前记录状态。' : '操作未完成，请重试；请勿把失败视为已处理。', writing: false });
+  else publish(ctx, { ...patch, error: /^422|VALIDATION/.test(code) ? validationText(error) : '操作未完成，请重试；请勿把失败视为已处理。', writing: false });
 }
 function requestId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -168,7 +177,16 @@ function requestId() {
 async function call(action, args, id) {
   const response = await $w.cloud.callFunction({ name: 'hlAdminOperations', data: { action, args,
     ...(id === undefined ? {} : { requestId: id }) } });
-  if (!object(response?.result) || response.result.code !== 0 || !object(response.result.data)) throw { code: response?.result?.code || 'INVALID_RESPONSE' };
+  if (!object(response?.result) || response.result.code !== 0 || !object(response.result.data)) {
+    const failure = { code: response?.result?.code || 'INVALID_RESPONSE' };
+    const diagnosticCode = response?.result?.diagnosticCode;
+    const reference = response?.result?.requestId;
+    if (typeof diagnosticCode === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(diagnosticCode)) {
+      responseDiagnostics.set(failure, { code: diagnosticCode,
+        requestId: typeof reference === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(reference) ? reference : '' });
+    }
+    throw failure;
+  }
   return response.result.data;
 }
 function listArgs(model) {

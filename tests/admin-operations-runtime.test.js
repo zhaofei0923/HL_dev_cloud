@@ -115,6 +115,93 @@ test('403 and stale-version failures clear private state and disable writes unti
   }
 });
 
+test('validation failures expose only bounded server diagnostic references and clear them after a successful query', async () => {
+  const requestId = '78f72b10-a1b2-4c3d-8e9f-0123456789ab';
+  await harness('plans', ({ args }, index) => index === 1 ? { result: { code: 42260, diagnosticCode: 'OPS_ENVELOPE_FIELDS', requestId,
+    message: '<script>fixture-secret-token</script>', accessToken: 'fixture-secret-token', data: { token: 'fixture-secret-token' } } }
+    : reply(list([{ planCode: 'vip_week', amountFen: 6160, active: true }], args.page)), async ({ state, command, requests }) => {
+    await command('init');
+    assert.equal(state.ops.error, `请求未通过系统校验（诊断编号：OPS_ENVELOPE_FIELDS；参考号：${requestId}）。请将编号提供给维护人员。`);
+    assert.equal(state.ops.loading, false); assert.deepEqual(state.ops.rows, []);
+    assert.doesNotMatch(JSON.stringify(state), /fixture-secret-token|<script>|accessToken/);
+    await command('query');
+    assert.equal(state.ops.error, ''); assert.equal(state.ops.rows[0].cells[2], '61.60');
+    assert.deepEqual(requests.map(request => request.data), [
+      { action: 'plans.list', args: { page: 1, pageSize: 10 } },
+      { action: 'plans.list', args: { page: 1, pageSize: 10 } }
+    ]);
+  });
+});
+
+test('untrusted diagnostic codes and server messages never appear in validation errors', async () => {
+  const invalid = ['', 'A', 'lowercase', 'OPS-INVALID', 'OPS_BAD\nfixture-secret-token', '<img src=x onerror=alert(1)>',
+    'A'.repeat(81), null, 42260, { toString() { throw new Error('diagnostic code must not be coerced'); } }];
+  for (const diagnosticCode of invalid) {
+    await harness('plans', () => ({ result: { code: 42260, diagnosticCode, requestId: '78f72b10-a1b2-4c3d-8e9f-0123456789ab',
+      message: 'fixture-secret-token' } }), async ({ state, command }) => {
+      await command('init');
+      assert.equal(state.ops.error, '提交参数未通过校验，请核对输入和当前记录状态。');
+      assert.doesNotMatch(JSON.stringify(state), /fixture-secret-token|参考号|诊断编号|onerror/);
+    });
+  }
+});
+
+test('diagnostic reference IDs accept only complete server UUID v4 values', async () => {
+  const invalid = ['fixture-secret-token', '<svg onload=alert(1)>', '78f72b10-a1b2-4c3d-8e9f-0123456789ab\nfixture-secret-token',
+    '78f72b10-a1b2-3c3d-8e9f-0123456789ab', '78f72b10-a1b2-4c3d-1e9f-0123456789ab',
+    123, null, { toString() { throw new Error('reference must not be coerced'); } }];
+  for (const requestId of invalid) {
+    await harness('plans', () => ({ result: { code: 42260, diagnosticCode: 'OPS_ARGS_PAGE', requestId } }), async ({ state, command }) => {
+      await command('init');
+      assert.equal(state.ops.error, '请求未通过系统校验（诊断编号：OPS_ARGS_PAGE）。请将编号提供给维护人员。');
+      assert.doesNotMatch(JSON.stringify(state), /fixture-secret-token|参考号|onload/);
+    });
+  }
+});
+
+test('transport and outer response fields cannot supply visible diagnostic references', async () => {
+  const diagnostics = { diagnosticCode: 'OPS_UNTRUSTED_TRANSPORT', requestId: '78f72b10-a1b2-4c3d-8e9f-0123456789ab', message: 'fixture-secret-token' };
+  for (const mode of ['transport', 'outer', 'data']) {
+    await harness('plans', () => {
+      if (mode === 'transport') throw { code: 42260, ...diagnostics };
+      if (mode === 'outer') return { ...diagnostics, result: { code: 42260 } };
+      return { result: { code: 42260, data: diagnostics } };
+    }, async ({ state, command }) => {
+      await command('init');
+      assert.equal(state.ops.error, '提交参数未通过校验，请核对输入和当前记录状态。');
+      assert.doesNotMatch(JSON.stringify(state), /fixture-secret-token|OPS_UNTRUSTED_TRANSPORT|参考号/);
+    });
+  }
+});
+
+test('server diagnostics do not override permission or conflict handling', async () => {
+  for (const code of [40360, 40960, 50360]) {
+    await harness('plans', () => ({ result: { code, diagnosticCode: 'OPS_ENVELOPE_FIELDS', requestId: '78f72b10-a1b2-4c3d-8e9f-0123456789ab' } }), async ({ state, command }) => {
+      await command('init');
+      assert.doesNotMatch(state.ops.error, /OPS_ENVELOPE_FIELDS|参考号|诊断编号/);
+      assert.deepEqual(state.ops.rows, []); assert.equal(state.ops.writing, false);
+      assert.match(state.ops.error, code === 40360 ? /无权访问/ : code === 40960 ? /记录已更新/ : /操作未完成/);
+    });
+  }
+});
+
+test('write validation diagnostics preserve confirmation and reuse the same mutation request on retry', async () => {
+  let writes = 0;
+  await harness('matchmakers', ({ action }) => {
+    if (action.endsWith('.review')) return ++writes === 1 ? { result: { code: 42260, diagnosticCode: 'OPS_ARGS_FORMAT',
+      requestId: '78f72b10-a1b2-4c3d-8e9f-0123456789ab' } } : reply({ version: version('b') });
+    return reply(action.endsWith('.list') ? list() : detail());
+  }, async ({ state, command, requests }) => {
+    await command('init'); await command('select', { index: 0 }); await command('prepare', { operation: 'approve' });
+    await command('submit');
+    assert.match(state.ops.error, /^请求未通过系统校验/); assert.ok(state.ops.confirmation); assert.equal(state.ops.writing, false);
+    await command('submit');
+    const submitted = requests.filter(request => request.data.action.endsWith('.review'));
+    assert.equal(submitted.length, 2); assert.deepEqual(submitted[0], submitted[1]);
+    assert.equal(state.ops.error, ''); assert.equal(state.ops.confirmation, null);
+  });
+});
+
 test('plans show canonical money, never submit price/title and toggle only after confirmation', async () => {
   await harness('plans', ({ action }) => reply(action.endsWith('.list') ? list([{ planCode: 'vip_week', amountFen: 6160, active: true }]) : action.endsWith('.detail') ? { planCode: 'vip_week', version: version('a'), amountFen: 6160, active: true, canUpdate: true, priceEditable: false } : { version: version('b') }), async ({ runtime, state, requests, command }) => {
     await command('init'); assert.equal(state.ops.rows[0].cells[2], '61.60'); await command('select', { index: 0 });

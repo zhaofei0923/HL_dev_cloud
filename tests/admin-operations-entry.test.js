@@ -24,7 +24,11 @@ function runtime(options = {}) {
   const providerContext = Object.freeze({ fixture: 'opaque-provider-context' });
   const parsedContext = Object.freeze({ fixture: 'opaque-sdk-parse-result' });
   const state = { permitted: true, parseFailure: false, failure: null };
-  const db = Object.freeze({ fixture: 'database' });
+  let scanCount = 0;
+  const db = options.realReads ? { collection() {
+    return { orderBy() { return this; }, field() { return this; }, skip() { return this; }, limit() { return this; },
+      async get() { scanCount++; return { data: [] }; } };
+  } } : Object.freeze({ fixture: 'database' });
   const exported = { exports: {} };
   let sequence = 0;
   const serviceCall = async (kind, action, args, actor) => {
@@ -60,7 +64,8 @@ function runtime(options = {}) {
         if (!state.permitted) throw Object.assign(new Error('fixture administrator revoked'), { code: 40350 });
         return { uid: 'provider-authorized-admin' };
       } };
-      if (name === './read-service') return { createReadService({ db: supplied }) { assert.equal(supplied, db); return readService; } };
+      if (name === './read-service') return options.realReads ? localRequire(name)
+        : { createReadService({ db: supplied }) { assert.equal(supplied, db); return readService; } };
       if (name === './mutation-service') return { createMutationService({ db: supplied }) { assert.equal(supplied, db);
         return { execute: (action, args, actor) => serviceCall('mutation', action, args, actor) }; } };
       if (name === './material-service') return { createMaterialService(options) {
@@ -71,7 +76,7 @@ function runtime(options = {}) {
       return localRequire(name);
     }
   }, { filename: file });
-  return { ...exported.exports, calls, state, providerContext };
+  return { ...exported.exports, calls, state, providerContext, get scanCount() { return scanCount; } };
 }
 
 test('entry refuses caller-supplied identity when the real provider parsing boundary denies it', async () => {
@@ -104,11 +109,14 @@ for (const action of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 
     assert.equal(result.code, 40360); assert.equal(rt.calls.database.length, 0); assert.equal(rt.calls.services.length, 0);
   });
 }
-test('top-level actor, role, code and arbitrary routing fields cannot be smuggled through an authorized request', async () => {
+test('top-level actor, role, code and arbitrary routing fields are ignored and cannot affect an authorized operation', async () => {
   for (const field of ['uid', 'role', 'code', 'token', 'path', 'method', 'functionName', 'context', 'serverRequestId']) {
     const rt = runtime();
     const result = await rt.main({ action: 'plans.update', args: {}, requestId: 'client-operation-01', [field]: 'forged' }, rt.providerContext);
-    assert.equal(result.code, 42260); assert.equal(rt.calls.services.length, 0); assert.equal(rt.calls.database.length, 0);
+    assert.equal(result.code, 0); assert.equal(rt.calls.services.length, 1);
+    assert.equal(rt.calls.services[0].action, 'plans.update');
+    assert.equal(rt.calls.services[0].actor.uid, 'provider-authorized-admin');
+    assert.ok(!JSON.stringify({ result, calls: rt.calls.services, warnings: rt.calls.warnings }).includes('forged'));
   }
 });
 test('write dispatcher supplies only the authorizer uid and separates stable client operation id from server request id', async () => {
@@ -203,13 +211,14 @@ test('pre or prod SDK metadata and embedded fake actor text cannot authorize a m
     assert.equal(revoked.code, 40350); assert.equal(rt.calls.services.length, 0); assert.equal(rt.calls.database.length, 0);
   }
 });
-test('every SDK metadata field rejects objects, other nonstring primitives and overlong strings before business dispatch', async () => {
+test('SDK transport metadata is ignored regardless of value shape and is never passed to business services', async () => {
   for (const key of Object.keys(sdkMetadata())) {
     for (const invalid of [{ uid: 'forged', role: 'administrator' }, [], 1, false, 'x'.repeat(4097)]) {
       const rt = runtime();
       const result = await rt.main({ action: 'plans.list', args: {}, ...sdkMetadata(), [key]: invalid }, rt.providerContext);
-      assert.equal(result.code, 42260, `${key} must remain bounded transport text`);
-      assert.equal(rt.calls.services.length, 0); assert.equal(rt.calls.database.length, 0);
+      assert.equal(result.code, 0, `${key} is not a business argument`);
+      assert.deepEqual(rt.calls.services[0].args, {});
+      assert.equal(rt.calls.services[0].actor, undefined);
     }
   }
 });
@@ -251,4 +260,52 @@ test('renderer accessToken does not replace provider login or an active server a
   assert.equal((await rt.main(request, rt.providerContext)).code, 40350);
   assert.equal(rt.calls.database.length, 0);
   assert.equal(rt.calls.services.length, 0);
+});
+
+test('authorized validation failures return safe diagnostic categories without exposing caller data', async () => {
+  const rt = runtime();
+  const event = Object.defineProperty({ userInfo: { token: 'private-canary' } }, 'action', { get() { throw new Error('private-canary'); } });
+  const result = await rt.main(event, rt.providerContext);
+  assert.equal(result.code, 42260);
+  assert.equal(result.diagnosticCode, 'ENVELOPE_ACCESSOR');
+  assert.equal(rt.calls.database.length, 0);
+  assert.equal((await rt.main({ action: 'plans.list', accessToken: 'private-canary'.repeat(1000) }, rt.providerContext)).code, 0);
+  assert.ok(!JSON.stringify({ result, warnings: rt.calls.warnings }).includes('private-canary'));
+  rt.state.failure = Object.assign(new Error('分页参数无效'), { code: 42260 });
+  assert.equal((await rt.main({ action: 'plans.list', args: {} }, rt.providerContext)).diagnosticCode, 'ARGS_PAGE');
+});
+
+test('unauthorized requests never receive validation diagnostics or reach business services', async () => {
+  const rt = runtime();
+  const event = { action: 'plans.list', userInfo: { token: 'private-canary' } };
+  assert.equal((await rt.main(event, {})).diagnosticCode, undefined);
+  rt.state.permitted = false;
+  assert.equal((await rt.main(event, rt.providerContext)).diagnosticCode, undefined);
+  assert.equal(rt.calls.database.length, 0);
+});
+
+test('all real list services ignore unknown outer fields while inner business fields remain strictly validated', async () => {
+  for (const page of ['matchmakers', 'certifications', 'salons', 'plans', 'orders']) {
+    const rt = runtime({ realReads: true });
+    const args = { page: 1, pageSize: 10 };
+    const baseline = await rt.main({ action: page + '.list', args }, rt.providerContext);
+    assert.equal(baseline.code, 0);
+    let getterCalls = 0;
+    const request = { action: page + '.list', args, ...sdkMetadata(), accessToken: { canary: 'private-transport-token' },
+      userInfo: { uid: 'forged' }, requestContext: { role: 'forged' }, amountFen: 1,
+      ['private-canary-field']: 'private-canary-value', [Symbol('private-canary')]: true };
+    Object.defineProperty(request, 'unknownPlatformField', { get() { getterCalls++; throw new Error('must not read metadata'); } });
+    Object.defineProperty(request, '__proto__', { value: 'private-canary-prototype' });
+    const result = await rt.main(request, rt.providerContext);
+    assert.equal(result.code, 0);
+    assert.deepEqual(result.data, baseline.data);
+    assert.equal(getterCalls, 0);
+    assert.ok(!JSON.stringify({ result, warnings: rt.calls.warnings }).includes('private-canary'));
+    if (page === 'plans') assert.equal(result.data.total, 6);
+    const scans = rt.scanCount;
+    const invalid = await rt.main({ ...request, args: { ...args, extraBusinessField: true } }, rt.providerContext);
+    assert.equal(invalid.code, 42260);
+    assert.equal(invalid.diagnosticCode, 'ARGS_FIELDS');
+    assert.equal(rt.scanCount, scans, 'invalid business arguments are rejected before data reads');
+  }
 });
