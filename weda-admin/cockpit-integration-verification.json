@@ -1,0 +1,83 @@
+{
+  "checkedAt": "2026-10-14T02:46:57.415Z",
+  "scope": "overview read-only statistics; native Weda draft; unpublished",
+  "function": {
+    "name": "hlAdminCockpit",
+    "runtime": "Nodejs20.19",
+    "status": "Active",
+    "transport": "official-sdk-zip",
+    "bundleSha256": "4b22a435687d8bbd6d1cd7a25b2bcf024077fab17dd2886807eb51ee46186aed",
+    "downloadedIndexMatchesBuild": true,
+    "unauthenticatedForgedIdentityResponse": 40150,
+    "administratorSuccessfulInvocationVerified": false
+  },
+  "draft": {
+    "appId": "app-pq2auygx",
+    "historyId": 6775626,
+    "sourceCanonicalSha256": "1291d45ed9eeaef76a3a753e5fc4a34472bbac58109b25330433cbcbbd961b17",
+    "fullJsonReadbackMatched": true,
+    "published": false,
+    "connectedFunction": "hlAdminCockpit",
+    "otherFivePagesAndTemplatesPreserved": true
+  },
+  "localChecks": {
+    "fullWorkspaceCheck": {
+      "tests": 1115,
+      "passed": 1115,
+      "failed": 0
+    },
+    "schemaAndComponentContractsValid": true,
+    "chartCount": 3,
+    "runtimeTests": 11
+  },
+  "nativeRenderer": {
+    "library": "@cloudbase/lowcode-render@1.1.10",
+    "components": "gsd-h5-react@3.31.0",
+    "data": "explicitly labelled fictional QA fixtures only",
+    "successBindings": true,
+    "forbiddenClearsMetrics": true,
+    "zeroAndUnknownDistinct": true,
+    "viewports": [
+      {
+        "width": 1280,
+        "height": 720
+      },
+      {
+        "width": 375,
+        "height": 812
+      }
+    ],
+    "metricAmountNoLineBreak": true,
+    "newModuleErrorsAfterHarnessCspFix": false,
+    "cloudIdentityVerified": false
+  },
+  "realDataCalculation": {
+    "executed": true,
+    "method": "official MCP IAM read of allowlisted projections; local buildCockpit; no raw records persisted",
+    "asOf": "2026-10-14T02:50:03.421Z",
+    "equalsAuthenticatedCloudFunctionAcceptance": false,
+    "businessCountsNotCommitted": true
+  },
+  "pending": [
+    "Actual native Weda internal-administrator successful invocation and role revocation in a real session; Edge connection unavailable",
+    "Application publication and post-publication acceptance",
+    "Other five page business integrations"
+  ],
+  "limits": [
+    "Historical demo provenance remains incomplete and is explicitly warned",
+    "Member trends recompute current active archives rather than historical daily population",
+    "Refunds support verified full refunds using local processing date; net cash excludes fees",
+    "Reads span one window and are not a cross-collection transaction",
+    "Each collection hard-limited to 50000 rows; errors never return partial totals"
+  ],
+  "cloudChanges": [
+    "Created hlAdminCockpit only",
+    "Saved existing Weda application design history"
+  ],
+  "preserved": [
+    "Existing hlApi code and configuration",
+    "Database data and ACLs",
+    "Formal payment configuration",
+    "Unrelated working tree changes"
+  ]
+}

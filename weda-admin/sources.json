@@ -1,0 +1,88 @@
+{
+  "retrievedAt": "2026-10-13",
+  "officialBlankTemplate": {
+    "url": "https://weda.cloud.tencent.com/tcb-iac-templates/tcb-iac-templates.zip",
+    "appConfigSha256": "339b02588d0456cbe03c365fa49c2bed7ea55f85fecf99a962924d30af6bed5c"
+  },
+  "schema": {
+    "package": "@cloudbase/cals",
+    "version": "1.2.25",
+    "registryUrl": "https://registry.npmjs.org/@cloudbase/cals/-/cals-1.2.25.tgz",
+    "sourcePath": "lib/schema/platform_application.json",
+    "sha256": "0318810e1ed5e29dfa76459308ddc9b9ef47f3bbddcc92158eecd0540242eb49"
+  },
+  "componentMetadata": {
+    "package": "@tcwd/gsd-h5-react",
+    "version": "3.31.0",
+    "publicPrefix": "https://comp-public-replace-1303824488.cos.ap-shanghai.myqcloud.com/lca/comGroup/cg-y9vkmgyuyplh/prod/3.31.0/build/dist/",
+    "contractFile": "vendor/component-contracts-3.31.0.json",
+    "confirmedComponents": [
+      "Container",
+      "WdText",
+      "WdInput",
+      "WdButton",
+      "WdMenuLayout",
+      "Line",
+      "Bar",
+      "Pie"
+    ],
+    "note": "Current cloud dependency and official control UMD were read after the user upgraded components. This replaces the previous 3.5.3 npm metadata assumption."
+  },
+  "docs": {
+    "navigation": "https://docs.cloudbase.net/lowcode/components/wedaUI/src/docs/compsdocs/navmenu/WdMenuLayout",
+    "eventSchema": "https://docs.cloudbase.net/lowcode/framework/event",
+    "callFunction": "https://docs.cloudbase.net/lowcode/api/cloud"
+  },
+  "pages": [
+    {
+      "id": "overview",
+      "title": "运营总览",
+      "readAction": "dashboard.read",
+      "plannedWriteActions": [],
+      "status": "DRAFT_NOT_CONNECTED",
+      "note": "Cockpit metrics require a new verified server aggregation API; existing dashboard.read only supplies basic totals."
+    },
+    {
+      "id": "matchmakers",
+      "title": "主理人审核",
+      "readAction": "matchmakers.list",
+      "plannedWriteActions": [
+        "matchmakers.review"
+      ],
+      "status": "DRAFT_NOT_CONNECTED"
+    },
+    {
+      "id": "certifications",
+      "title": "会员认证",
+      "readAction": "certifications.list",
+      "plannedWriteActions": [
+        "certifications.review"
+      ],
+      "status": "DRAFT_NOT_CONNECTED"
+    },
+    {
+      "id": "salons",
+      "title": "沙龙管理",
+      "readAction": "salons.list",
+      "plannedWriteActions": [
+        "salons.review",
+        "salons.cancel"
+      ],
+      "status": "DRAFT_NOT_CONNECTED"
+    },
+    {
+      "id": "plans",
+      "title": "套餐管理",
+      "readAction": "membership-plans.list",
+      "plannedWriteActions": [],
+      "status": "DRAFT_NOT_CONNECTED"
+    },
+    {
+      "id": "orders",
+      "title": "支付订单",
+      "readAction": "payment-orders.list",
+      "plannedWriteActions": [],
+      "status": "DRAFT_NOT_CONNECTED"
+    }
+  ]
+}

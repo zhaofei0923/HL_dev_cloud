@@ -1,0 +1,68 @@
+{
+  "verifiedOn": "2026-10-13",
+  "scope": "overview cockpit UI; no business aggregation or deployment",
+  "sourceFileSha256": "5fba7997bdd13b10c50bdf88518bebf295b497788c6972bdddeda0861e096225",
+  "sourceCompactJsonSha256": "d562f4a59a0c5e42e3258bc237023f54479347d34ef3d01e0f9f3ccab7a98ea1",
+  "cloudDraft": {
+    "appId": "app-pq2auygx",
+    "backupHistoryId": 6774865,
+    "savedHistoryId": 6774937,
+    "readbackDeepEqual": true,
+    "otherFivePagesDeepEqual": true,
+    "templatesDeepEqual": true,
+    "dependenciesDeepEqual": true,
+    "extraSettingsDeepEqual": true,
+    "published": false,
+    "cloudEditorPreviewVerified": false
+  },
+  "static": {
+    "schemaValid": true,
+    "componentContractsValid": true,
+    "componentVersion": "gsd-h5-react@3.31.0",
+    "textCount": 248,
+    "buttonCount": 29,
+    "disabledBusinessButtonCount": 24,
+    "navigationButtonCount": 5,
+    "chartCount": 3,
+    "chartSource": "variable",
+    "chartDatasets": "Explicit empty arrays; built-in demo data disabled"
+  },
+  "localNativeRendering": {
+    "renderer": "@cloudbase/lowcode-render@1.1.10",
+    "chartResources": "Official 3.31.0 lazy chunks mirrored locally without bundle changes",
+    "desktop1440x1100": {
+      "documentHorizontalOverflow": false,
+      "shortClippedTexts": 0,
+      "lineCharts": "Both native canvases rendered at 210px height with no curves",
+      "ringChart": "Empty dataset renders no segments; neutral empty-state outline displayed",
+      "overviewToOrders": "passed via entrance4 button",
+      "ordersToOverview": "passed via native menu",
+      "lowerPage": "Visually checked partner analysis and all five work entries"
+    },
+    "h5Simulation375x812": {
+      "documentWidth": 375,
+      "metricColumns": 2,
+      "shortClippedTexts": 0,
+      "rankingTableViewportWidth": 295,
+      "rankingTableInternalWidth": 490,
+      "documentHorizontalOverflow": false
+    },
+    "console": {
+      "chartLoadWarningsOrErrors": 0,
+      "knownDiagnostic": "Official actionHandler lifecycle-ended message after successful navigateTo to orders; route visibly changed and returned successfully",
+      "errorsSuppressed": false
+    }
+  },
+  "screenshots": {
+    "directory": "D:/HL_dev_cloud_drafts/20261013/weda-render-qa/screenshots",
+    "desktop": "cockpit-desktop.png",
+    "desktopLower": "cockpit-desktop-lower.png",
+    "mobile": "cockpit-h5-375.png"
+  },
+  "limitations": [
+    "Local official-component rendering does not replace cloud editor or physical device verification",
+    "Revenue and member aggregation APIs are not implemented or connected",
+    "Date-range labels state the proposed default and are not active query controls",
+    "No business records were read or fabricated; no cloud functions, payments, permissions or publication were changed"
+  ]
+}

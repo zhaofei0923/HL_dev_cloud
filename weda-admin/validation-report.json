@@ -1,0 +1,73 @@
+{
+  "checkedAt": "2026-10-14T02:49:54.448Z",
+  "schemaPackage": "@cloudbase/cals@1.2.25",
+  "componentVersion": "gsd-h5-react@3.31.0",
+  "schemaValid": true,
+  "schemaAndContractsValid": true,
+  "componentContractValidation": {
+    "mode": "Known attributes and projected dataForm value constraints; not full editor or runtime behavior",
+    "validatedKeywords": [
+      "anyOf",
+      "const",
+      "enum",
+      "items",
+      "not",
+      "patternProperties",
+      "properties",
+      "required",
+      "type"
+    ],
+    "localReferences": "Identical repeated editor anchors are coalesced into local definitions; conflicting or unresolved anchors fail",
+    "slotHandling": "Editor type=slot is not JSON Schema; slot names are checked against CALS child items",
+    "normalization": {
+      "duplicateAnchorsCoalesced": 1,
+      "editorEnumOptionsProjected": 2,
+      "editorBooleanRequiredExcluded": 13,
+      "unavailableEditorEnumChoicesExcluded": 5
+    },
+    "excludedMetadata": [
+      "x-* including x-rules and platform rules",
+      "editor default values, labels, descriptions and widgets",
+      "templates, linkages and action code",
+      "boolean required annotations",
+      "format annotations; no format validator is installed",
+      "Empty editor enum[] choices are unavailable; declared types are validated but choice membership is not"
+    ],
+    "limitations": [
+      "Top-level omitted props rely on documented runtime defaults; no defaults are injected",
+      "CSS syntax and selected visible-state rules are checked, not full computed style",
+      "Rendering, interaction, menu navigation and backend authorization require runtime verification"
+    ]
+  },
+  "errors": [],
+  "pageIds": [
+    "overview",
+    "matchmakers",
+    "certifications",
+    "salons",
+    "plans",
+    "orders"
+  ],
+  "textCount": 312,
+  "buttonCount": 29,
+  "disabledBusinessButtonCount": 24,
+  "navigationButtonCount": 5,
+  "unsafeUnitlessLineHeights": 0,
+  "remoteDataCallsPresent": true,
+  "businessRecordsPresent": false,
+  "appSha256": "9e8566d727794e272112cbd422dfd88044939c48a8617a718c3cda842bc00093",
+  "visualAndRuntimeVerification": "Recorded separately; static checks do not prove rendered appearance",
+  "allowedReadOnlyFunction": "hlAdminCockpit",
+  "chartEmptyDataChecks": {
+    "components": [
+      "Line",
+      "Bar",
+      "Pie"
+    ],
+    "chartCount": 3,
+    "requiredDataSourceType": "variable",
+    "initialDatasourceVariable": [],
+    "dynamicData": "Verified overview cockpit bindings only",
+    "defaultDemoSourceAllowed": false
+  }
+}

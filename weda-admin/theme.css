@@ -1,0 +1,120 @@
+#wd-page-root {
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #2F2924;
+  background: #F7F3EC;
+}
+.hl-admin {
+  --hl-brand: #A35D45;
+  --hl-bg: #F7F3EC;
+  --hl-card: #FFFDF9;
+  --wd-menulayout-bg: #FFFDF9;
+  --wd-menulayout-header-border: #E7DED3;
+  --wd-menulayout-header-menu-text-color: #736256;
+  --wd-menulayout-header-menu-text-color-checked: #874A37;
+  --wd-menulayout-header-menu-text-color-bg-checked: #F1E5DC;
+  --wd-menulayout-header-menu-bg-hover: #F7F3EC;
+  --wd-menulayout-header-menu-bg-selected: #F1E5DC;
+  --wd-menulayout-h5-bar-bg: #FFFDF9;
+  --wd-menulayout-h5-menu-text-color: #2F2924;
+}
+.hl-admin, .hl-admin * { box-sizing: border-box; }
+.hl-admin p { margin: 0; }
+.hl-admin .wd-menulayout-body__content { min-width: 0; background: #F7F3EC; }
+.hl-admin .wd-menulayout-header__logo-wrap { height: auto; min-height: 70px; padding: 10px 18px; }
+.hl-admin .wd-menulayout-body__left, .hl-admin .wedatea2td-menu { background: #FFFDF9 !important; }
+.hl-admin .wd-menulayout-body__left { border-right: 1px solid #E7DED3; }
+.hl-admin .wd-menulayout__submenu-stair.is-selected > .wedatea2td-menu__item { background: #F1E5DC !important; border-radius: 7px; }
+.hl-admin .wd-menulayout__submenu-stair.is-selected .wd-menulayout-menu__item-text,
+.hl-admin .wd-menulayout__submenu-stair.is-selected .wd-menulayout-menu__item-icon { color: #874A37 !important; font-weight: 600; }
+.hl-admin .wd-menulayout-menu__item-text { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px; line-height: 24px; }
+.hl-admin .hl-button { transition: background-color .16s, border-color .16s; }
+.hl-admin .hl-button .wd-btn__text { color: inherit; font-family: inherit; font-size: inherit; line-height: 22px; }
+.hl-admin .hl-button:focus-visible { outline: 3px solid #D4AE95; outline-offset: 3px; }
+.hl-admin .hl-button:not(:disabled):hover { filter: brightness(.95); }
+.hl-admin .hl-button:disabled { opacity: .68; cursor: not-allowed; }
+.hl-admin .hl-input input { height: 42px; line-height: 24px; font-family: inherit; background: #F4EDE4; }
+.hl-admin .hl-icon { pointer-events: none; }
+/* The native H5 drawer is portalled outside .hl-admin. */
+.hl-admin .wd-menulayout__bar-wrap { background: #FFFDF9; border-bottom: 1px solid #E7DED3; }
+.wd-menulayout-h5__drawer, .wd-menulayout-h5__drawer * { box-sizing: border-box; }
+.wd-menulayout-h5__drawer,
+.wd-menulayout-h5__drawer .wedatea2td-menu { background: #FFFDF9 !important; color: #2F2924; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; }
+.wd-menulayout-h5__drawer .wedatea2td-drawer__body-inner { width: 100%; }
+.wd-menulayout-h5__drawer .wd-menulayout__submenu-stair.is-selected > .wedatea2td-menu__item { background: #F1E5DC !important; }
+.wd-menulayout-h5__drawer .wd-menulayout__submenu-stair.is-selected .wd-menulayout-menu__item-text,
+.wd-menulayout-h5__drawer .wd-menulayout__submenu-stair.is-selected .wd-menulayout-menu__item-icon { color: #874A37 !important; font-weight: 600; }
+@media (min-width: 769px) {
+  .hl-admin.wd-menulayout--vertical:not(.wd-menulayout--collapsed) .wd-menulayout-body__left { width: 224px; min-width: 224px; flex: 0 0 224px; }
+}
+@media (max-width: 1150px) {
+  .hl-admin #workArea { grid-template-columns: minmax(0, 1.5fr) minmax(230px, 1fr) !important; gap: 16px !important; }
+  .hl-admin #pageContent { padding: 24px !important; }
+}
+@media (max-width: 980px) {
+  .hl-admin #workArea { grid-template-columns: minmax(0, 1fr) !important; }
+  .hl-admin #metrics { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+/* The native desktop menu does not switch to H5 when a desktop window narrows. */
+@media (max-width: 768px) {
+  .hl-admin.wd-menulayout--vertical .wd-menulayout-body { display: block !important; height: auto !important; }
+  .hl-admin.wd-menulayout--vertical .wd-menulayout-body__left { width: 100% !important; min-width: 0 !important; height: auto !important; flex: none !important; border-right: 0; border-bottom: 1px solid #E7DED3; }
+  .hl-admin.wd-menulayout--vertical .wd-menulayout-header__logo-wrap { width: 100% !important; min-height: 62px; margin: 0; padding: 12px 16px; }
+  .hl-admin.wd-menulayout--vertical .wd-menulayout-body__left-menu { width: 100% !important; height: auto !important; flex: none !important; padding: 0 8px 8px; }
+  .hl-admin.wd-menulayout--vertical .wedatea2td-menu,
+  .hl-admin.wd-menulayout--vertical .wedatea2td-menu__body,
+  .hl-admin.wd-menulayout--vertical .wedatea2td-menu__list { width: 100% !important; }
+  .hl-admin.wd-menulayout--vertical .wedatea2td-menu__list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 0; }
+  .hl-admin.wd-menulayout--vertical .wedatea2td-menu__item { padding: 10px 8px !important; }
+  .hl-admin.wd-menulayout--vertical .wd-menulayout-menu__item-text { font-size: 12px; line-height: 22px; }
+  .hl-admin.wd-menulayout--vertical .wd-menulayout-body__footer { display: none; }
+  .hl-admin.wd-menulayout--vertical .wd-menulayout-body__content { width: 100% !important; height: auto !important; overflow: visible !important; }
+}
+@media (max-width: 360px) {
+  .hl-admin.wd-menulayout--vertical .wedatea2td-menu__list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .hl-admin #pageContent { padding: 20px 16px !important; }
+  .hl-admin #pageTitle { font-size: 26px !important; line-height: 36px !important; }
+  .hl-admin #welcome { padding: 22px 20px !important; gap: 18px !important; }
+  .hl-admin #welcomeTitle { font-size: 22px !important; line-height: 34px !important; }
+  .hl-admin #welcomeStatus { align-self: flex-start !important; }
+  .hl-admin #metrics { gap: 12px !important; }
+  .hl-admin .hl-metric { padding: 16px !important; }
+  .hl-admin .hl-card:not(.hl-metric) { padding: 20px 16px !important; }
+  .hl-admin .hl-entry { gap: 10px !important; flex-wrap: wrap; }
+  .hl-admin .hl-entry .hl-button { min-width: 62px; padding: 8px 12px !important; }
+  .hl-admin .hl-entry > [id^="entryCopy"] { flex-basis: 100px !important; }
+  .hl-admin #filterActions { width: 100%; }
+  .hl-admin .hl-status-field, .hl-admin .hl-search-field { flex: 1 1 100% !important; }
+  .hl-admin #operationButtons { width: 100%; }
+  .hl-admin #brandSubtitle { display: none !important; }
+  .hl-admin #brandName { font-size: 16px !important; line-height: 26px !important; }
+}
+@media (prefers-reduced-motion: reduce) { .hl-admin .hl-button { transition: none; } }
+
+/* Overview cockpit. Other five pages keep their existing layout. */
+.hl-admin .hl-chart-empty > .wd-text { background: rgba(255, 253, 249, .94); padding: 2px 10px !important; border-radius: 4px; }
+.hl-admin .hl-cockpit-entry .hl-icon { width: 32px !important; height: 32px !important; background-size: 21px 21px !important; }
+.hl-admin #memberProfilePanel > [id^="member"]:last-child { border-bottom: 0 !important; }
+@media (max-width: 1250px) {
+  .hl-admin #cockpitMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+  .hl-admin #cockpitWorkEntries { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+}
+@media (max-width: 1000px) {
+  .hl-admin .hl-cockpit-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .hl-admin #memberProfilePanel { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
+  .hl-admin #memberProfileHeading { grid-column: 1 / -1; }
+  .hl-admin #matchmakerAnalysisBody { grid-template-columns: minmax(0, 1fr) !important; }
+  .hl-admin #matchmakerHealth { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .hl-admin #cockpitMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+  .hl-admin .hl-card.hl-cockpit-metric { padding: 16px 12px !important; }
+  .hl-admin #cockpitWorkEntries { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .hl-admin #matchmakerHealth { grid-template-columns: minmax(0, 1fr) !important; }
+  .hl-admin #memberProfilePanel { display: flex !important; }
+  .hl-admin #cockpitWorkEntries .hl-cockpit-entry { padding: 16px 12px !important; }
+  .hl-admin #cockpitWorkEntries [id^="cockpitEntryHead"] { flex-wrap: wrap; }
+  .hl-admin #cockpitToolbar { gap: 10px !important; }
+  .hl-admin #revenueMixPanel [id^="revenueMixRow"] { gap: 8px !important; }
+}

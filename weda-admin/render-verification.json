@@ -1,0 +1,73 @@
+{
+  "verifiedOn": "2026-10-13",
+  "scope": "UI redesign of the six existing native Weda pages",
+  "sourceFileSha256": "3b06ce4657b4f2589793db6892961649e86e2c49f596b341a953aff234f1d0f6",
+  "sourceCompactJsonSha256": "939c4f4c901be2678071134a7181a89a0c082078876c4d446918031d6e4319da",
+  "cloudDraft": {
+    "appId": "app-pq2auygx",
+    "backupHistoryId": 6774762,
+    "savedHistoryId": 6774856,
+    "readbackDeepEqual": true,
+    "published": false,
+    "editorBrowserVerified": false
+  },
+  "localRenderer": {
+    "package": "@cloudbase/lowcode-render@1.1.10",
+    "components": "gsd-h5-react@3.31.0",
+    "directory": "D:/HL_dev_cloud_drafts/20261013/weda-render-qa",
+    "source": "Current app.cals.json with official components and global CSS",
+    "isolation": "Cloud identity initialization, cloud calls, lifecycle business execution and remote data disabled; local resources only",
+    "h5Simulation": "Set mobile navigator UA before the first dynamic import of the official runtime; no re-registerApp or SDK method stubs",
+    "iconResources": "Official private-resource flag selects a local mirror of the public official icon CSS/fonts; vendor bundles unchanged"
+  },
+  "observations": {
+    "oldIssuesReproduced": [
+      "Old page title computed line-height approximately 1.35px",
+      "Old primary button text and background both rgb(33, 92, 77)"
+    ],
+    "desktop1440x1000": {
+      "documentWidth": 1440,
+      "pageTitleLineHeight": "42px",
+      "primaryButtonText": "rgb(255, 248, 237)",
+      "primaryButtonBackground": "rgb(163, 93, 69)",
+      "shortClippedTextCount": 0,
+      "sixPageNativeMenuNavigation": "passed",
+      "overviewToMatchmakersButton": "passed"
+    },
+    "narrowDesktop": {
+      "viewports": ["375x812", "320x740"],
+      "documentHorizontalOverflow": false,
+      "truncatedMenuLabels": false,
+      "metricColumns": 2,
+      "ordersTable": "760px content scrolls within its own container"
+    },
+    "h5Simulation375x812": {
+      "documentWidth": 375,
+      "shortClippedTextCount": 0,
+      "drawerToOrdersNavigation": "passed; drawer closes and orders title appears",
+      "drawerOverflow": false,
+      "drawerSelectedBackground": "rgb(241, 229, 220)",
+      "ordersInputsDisabled": true,
+      "ordersBusinessButtonsDisabled": true
+    },
+    "console": {
+      "finalFreshLoadAndH5NavigationNewWarningsOrErrors": 0,
+      "knownNavigationDiagnostic": "Official actionHandler logs lifecycle-ended cancellation after successful navigateTo unmounts the old page; target loaded, no subsequent action in the event chain",
+      "consoleFilteringOrSuppression": false
+    }
+  },
+  "screenshots": {
+    "directory": "D:/HL_dev_cloud_drafts/20261013/weda-render-qa/screenshots",
+    "before": "before-desktop.png",
+    "desktop": "overview-desktop-final.png",
+    "narrowDesktop": "overview-narrow-375.png",
+    "h5Overview": "overview-h5-375.png",
+    "h5Orders": "orders-h5-375.png"
+  },
+  "limitations": [
+    "Local official-component rendering is not Tencent Cloud editor preview verification",
+    "H5 UA simulation is not physical-device testing",
+    "24 business buttons remain disabled and there are no real business records or data calls",
+    "Cloud login, administrator authorization, business operations and publication remain unverified"
+  ]
+}
