@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
-const runtimeSource = fs.readFileSync(path.join(root, 'weda-admin', 'operations-runtime.js'), 'utf8');
+const runtimeSource = fs.readFileSync(path.join(root, 'weda-admin', 'operations-runtime.js'), 'utf8').replace(/\r\n/g, '\n');
 const app = JSON.parse(fs.readFileSync(path.join(root, 'weda-admin', 'app.cals.json'), 'utf8'));
 const pageIds = ['matchmakers', 'certifications', 'salons', 'plans', 'orders'];
 const version = 'v1_' + 'a'.repeat(64);
