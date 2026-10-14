@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-14T11:12:04.468Z",
+  "checkedAt": "2026-10-14T12:44:02.190Z",
   "scope": "Native Weda five-page management workflows, fixed-price activation and cockpit date-axis fix",
   "userDecisions": {
     "cockpitRealPreviewAccepted": true,
@@ -8,16 +8,16 @@
   },
   "draft": {
     "appId": "app-pq2auygx",
-    "historyId": 6776323,
+    "historyId": 6776390,
     "fullReadbackMatched": true,
-    "sourceCanonicalSha256": "744f387fb29c806d1e49dcd11d089c2701aadede386357ae9ed3fc11139db46a",
+    "sourceCanonicalSha256": "3b1d08831a559f04c98bc59184ca4e51350ecef024e9bf4764cf5345f3e2b316",
     "published": false,
     "connectedFunctions": [
       "hlAdminCockpit",
       "hlAdminOperations"
     ],
     "layoutTemplatesAndLoginConfigPreserved": true,
-    "latestEditorBaselineHistory": 6776308
+    "latestEditorBaselineHistory": 6776323
   },
   "function": {
     "name": "hlAdminOperations",
@@ -63,8 +63,8 @@
   },
   "checks": {
     "fullWorkspace": {
-      "tests": 1281,
-      "pass": 1281,
+      "tests": 1284,
+      "pass": 1284,
       "fail": 0
     },
     "officialSchemaAndComponentContractsValid": true,
@@ -311,7 +311,8 @@
         "View components, auth, CSS compilation, dataset state initialization and external visual events are explicit local adapters.",
         "Actual default Switch key preservation is used; path matching is an exact-path adapter for the known tested routes.",
         "No editor-injected page API, actual editor preview, cloud identity, permission or live business endpoint is exercised.",
-        "This is code evidence, not verification that the latest cloud preview displays data."
+        "This is code evidence, not verification that the latest cloud preview displays data.",
+        "This historical harness used a modern Babel compiler, not the actual preview Babel 7.9.6. Its passing result missed a whole-module logicalAssignment compilation failure."
       ]
     },
     "actualStateIntegration": {
@@ -336,6 +337,88 @@
     "businessDataChanged": false,
     "paymentConfigurationChanged": false,
     "published": false,
-    "manualAcceptance": "Exit the current overview/preview, return to page design and merge the saved cloud draft. Open a fresh preview, enter Plans and use Query. If a reopen-preview instruction appears, the page API/handler is not ready; that state is not zero business data. Administrator query/details/writes and PDF viewing still require live manual acceptance."
+    "manualAcceptance": "Exit the current overview/preview, return to page design and merge the saved cloud draft. Open a fresh preview, enter Plans and use Query. If a reopen-preview instruction appears, the page API/handler is not ready; that state is not zero business data. Administrator query/details/writes and PDF viewing still require live manual acceptance.",
+    "status": "insufficient-user-reported-unloaded; superseded-by-actual-compiler-compatibility-fix"
+  },
+  "compilerCompatibilityRepair": {
+    "checkedAt": "2026-10-14T12:44:02.190Z",
+    "userConstraint": "Code and official cloud APIs only; no browser or UI automation",
+    "rootCause": "The deployed editor and isolate-preview compiler is Babel 7.9.6. Logical assignment in PDF window tracking caused all five operations handler modules to fail parsing, leaving their registered handler absent; the separate overview handler compiled successfully.",
+    "rootCauseReproduced": true,
+    "implementation": "Replace the single logical-assignment expression with equivalent ordinary assignment and push. Preserve the registered-handler, WeakMap, lifecycle, authorization and mutation contracts.",
+    "previousValidationGap": "Earlier native harnesses used a modern Babel version and did not verify compatibility with the deployed compiler.",
+    "cloudBaselineHistory": 6776323,
+    "savedHistoryId": 6776390,
+    "sourceCanonicalSha256": "3b1d08831a559f04c98bc59184ca4e51350ecef024e9bf4764cf5345f3e2b316",
+    "cloudFullReadbackMatched": true,
+    "changedHandlerResources": 5,
+    "allOtherCloudContentPreserved": true,
+    "actualCompiler": {
+      "passed": true,
+      "compiler": {
+        "name": "@babel/standalone",
+        "version": "7.9.6",
+        "sourceUrl": "https://cloudcache.tencent-cloud.com/qcloud/lowcode/static/ide/assets/js/babel.min.js",
+        "sha256": "037cc1c224bcea92bd6ee00bdc4fcc5ae6fdbc2636f9771be2de06e8e36b8dd4"
+      },
+      "options": {
+        "presets": [
+          "env",
+          "react"
+        ]
+      },
+      "resourceCount": 12,
+      "compiledCount": 12,
+      "failures": []
+    },
+    "saveGate": "All CALS JavaScript resources must compile with the reviewed compiler digest before UpdateWeAppContentByAppId. Missing or mismatched compiler and any compilation failure reject the save.",
+    "editorModuleProof": {
+      "editorArtifactSha256": "8163975335594f1fbc1f4b14988c1f12147947f17333860e2ad32f2f85604776",
+      "originalModulesFailed": 5,
+      "originalOverviewRegistered": true,
+      "repairedHandlersRegistered": 6,
+      "repairedManagementFixtureReads": 5,
+      "repairedCodeSource": "Current app.cals.json, without in-memory source replacement",
+      "actualBusinessCalls": 0,
+      "networkRequests": 0,
+      "limitations": [
+        "Native Node globals represent standard JavaScript built-ins.",
+        "Document script insertion uses same-realm VM execution; the actual editor DOM is not opened.",
+        "Page APIs and business read responses are isolated fixtures."
+      ]
+    },
+    "actualCompilerNativeChain": {
+      "compilerBootstrapEvidence": {
+        "shell": "https://app-pq2auygx.preview.cloudbase.net/preview/isolate",
+        "bootstrap": "https://weda.cloud.tencent.com/preview/rainBow.js",
+        "compiler": "https://qbase.cdn-go.cn/lcap/lcap-resource-cdngo/-/release/_url/qcloud/lowcode/static/ide/assets/js/babel.min.js"
+      },
+      "cloudRendererSha256": "1a36c2538da885c177b3f0f4e6fbee7fe8e5c144ff6aa9cfbce87e755e3cf216",
+      "reactVersion": "16.14.0",
+      "cases": 24,
+      "pass": 24,
+      "scope": [
+        "Six pages compile, register and initialize through native routes.",
+        "Five management pages load when entered from overview.",
+        "Registered query/reset handlers recover cold read controllers.",
+        "Six explicitly fictional plans load, query and clear on leaving.",
+        "Missing or wrong-owner handler remains blocked."
+      ],
+      "realBusinessNetworkRequests": 0,
+      "businessWrites": 0,
+      "limitations": [
+        "Public compiler and bootstrap artifacts were downloaded read-only before tests; all business/cloud requests during execution are blocked or explicit in-memory list/cockpit fixtures.",
+        "View components, auth, CSS compilation, dataset initialization and visual events use local adapters. Native page API, handler binding, module parsers and React lifecycle effects are real.",
+        "Exact-path matcher is adapted for known tested routes; real Route/Switch and key preservation remain unchanged.",
+        "Actual editor injection object, login and live data display are not exercised. This report does not claim cloud preview visual acceptance."
+      ]
+    },
+    "browserUsed": false,
+    "actualCloudListVerified": false,
+    "backendRedeployed": false,
+    "businessDataChanged": false,
+    "paymentConfigurationChanged": false,
+    "published": false,
+    "manualAcceptance": "Reload the editor from the saved draft and open a fresh Plans preview. Confirm six fixed-price rows and a numeric total, then query and navigate. If the editor offers a cloud-code merge, use the saved cloud version; absence of that prompt does not prove a save failure."
   }
 }

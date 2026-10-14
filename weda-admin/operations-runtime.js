@@ -378,7 +378,7 @@ export default async function operations(input = {}) {
   else if (command === 'submit') return submit(ctx);
   else if (command === 'material') return material(ctx, target.index);
   else if (command === 'evidence') return evidence(ctx);
-  else if (command === 'openPdf' && ctx.pdfUrl) { const opened = window.open(ctx.pdfUrl, '_blank'); if (opened) { opened.opener = null; (ctx.pdfWindows ||= []).push(opened); } else publish(ctx, { error: '浏览器阻止了PDF窗口，请允许本次弹出后重试。' }); }
+  else if (command === 'openPdf' && ctx.pdfUrl) { const opened = window.open(ctx.pdfUrl, '_blank'); if (opened) { opened.opener = null; ctx.pdfWindows = ctx.pdfWindows || []; ctx.pdfWindows.push(opened); } else publish(ctx, { error: '浏览器阻止了PDF窗口，请允许本次弹出后重试。' }); }
   else if (command === 'downloadPdf' && ctx.pdfUrl) { const link = document.createElement('a'); link.href = ctx.pdfUrl; link.download = '认证材料.pdf'; link.rel = 'noopener'; document.body.appendChild(link); link.click(); link.remove(); }
   else if (command === 'closeMaterial') { ctx.materialSequence++; ctx.evidenceSequence++; closePdf(ctx); publish(ctx, { material: null, evidenceText: '', evidenceLoading: false }); }
 }

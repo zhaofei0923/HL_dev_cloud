@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "weda-editor-5.10.51-javascript-compiler",
+  "compiler": {
+    "name": "@babel/standalone",
+    "version": "7.9.6",
+    "sourceUrl": "https://cloudcache.tencent-cloud.com/qcloud/lowcode/static/ide/assets/js/babel.min.js",
+    "sha256": "037cc1c224bcea92bd6ee00bdc4fcc5ae6fdbc2636f9771be2de06e8e36b8dd4"
+  },
+  "options": {
+    "presets": ["env", "react"]
+  },
+  "javascriptCodeTypes": [
+    "lifecycle", "handler-fn", "normal-module", "computed", "state", "renderer", "mp_config", "config"
+  ],
+  "nonJavascriptCodeTypes": ["style", "theme"],
+  "validation": "Compile every CALS JavaScript CODE resource with the pinned editor compiler; do not execute resource code or contact CloudBase."
+}

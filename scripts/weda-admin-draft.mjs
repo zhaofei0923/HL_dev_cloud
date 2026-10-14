@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { resolve } from 'node:path';
+import { validateWedaCompiler } from './check-weda-compiler.mjs';
 
 // Uses the official MCP SDK's existing login; never reads credential files.
 // Only this existing application's design history is writable. No create/publish API.
@@ -11,9 +12,9 @@ const REGION = 'ap-shanghai';
 const APP_ID = 'app-pq2auygx';
 const APP_NAME = 'hl-admin-weda';
 const APP_TITLE = 'HL运营管理后台';
-const [sdkFile, mode = 'inspect'] = process.argv.slice(2);
+const [sdkFile, mode = 'inspect', compilerFile] = process.argv.slice(2);
 if (!sdkFile || !['inspect', 'backup', 'save', 'verify'].includes(mode)) {
-  console.error('Usage: node scripts/weda-admin-draft.mjs <official-MCP-dist/index.cjs> [inspect|backup|save|verify]');
+  console.error('Usage: node scripts/weda-admin-draft.mjs <official-MCP-dist/index.cjs> [inspect|backup|save|verify] [official-babel-file-required-for-save]');
   process.exit(2);
 }
 const root = resolve(import.meta.dirname, '..');
@@ -70,6 +71,18 @@ try {
     const cals = JSON.parse(await readFile(source, 'utf8'));
     if (cals.name !== APP_NAME || cals.label !== APP_TITLE || cals.schemaVersion !== '4.0.0'
       || cals.items.filter(item => item.type === 'PAGE').length !== 6) throw new Error('Unexpected draft source');
+    const sourceSha256 = sha256(JSON.stringify(cals));
+    let compilerVerification;
+    if (mode === 'save') {
+      phase = 'validate-editor-compiler';
+      if (!compilerFile) throw new Error('Cloud draft compiler check required');
+      try { compilerVerification = await validateWedaCompiler(cals, compilerFile); }
+      catch { throw new Error('Cloud draft compiler validation failed'); }
+      if (!compilerVerification.passed) {
+        console.error(JSON.stringify({ phase, compilerVerification }));
+        throw new Error('Cloud draft compiler validation failed');
+      }
+    }
     const overview = cals.items.find(item => item.id === 'overview' && item.type === 'PAGE');
     const cockpitHandler = overview?.resources?.find(resource => resource.type === 'CODE'
       && resource.codeType === 'handler-fn' && resource.path === 'overview/handler/loadCockpit');
@@ -96,6 +109,9 @@ try {
       throw new Error('Recovery state belongs to another draft');
     }
     if (known?.appId !== undefined && known.appId !== APP_ID) throw new Error('Recovery state application ID differs from fixed application');
+    if (mode === 'verify' && known?.sourceSha256 === sourceSha256 && known?.compilerVerification?.passed) {
+      compilerVerification = known.compilerVerification;
+    }
     // Local evidence can be absent in a fresh checkout. Always locate the fixed
     // ID in the current cloud listing; never recover by a name or create an app.
     const matching = apps.filter(app => appId(app) === APP_ID);
@@ -135,16 +151,8 @@ try {
           throw new Error('Cloud draft changed since backup; preserve concurrent edits');
         }
       }
-      const nativeHandlerBridge = operationsConnected && operationsPages.every(page => {
-        const code = page.resources?.find(resource => resource.path === `${page.id}/lifecycle`)?.code;
-        return typeof code === 'string' && code.includes('const handler = page.handler.operations;') && !/^\s*import\b/m.test(code);
-      });
-      const saveParams = { WeAppId: id, HistoryContent: JSON.stringify(cals), Comment: nativeHandlerBridge
-        ? '统一原生处理函数与列表只读重试；保留审核确认、离页清理与最新编辑内容；未发布'
-        : operationsConnected ? '后台五页接通查询、详情、审核、认证材料与套餐启停；保留固定价格；未发布'
-        : businessApiConnected
-        ? '运营驾驶舱接入 hlAdminCockpit 只读真实统计；会员、主理人与经营收款分析；未发布'
-        : '运营驾驶舱界面设计；业务统计尚未接入；未发布' };
+      const saveParams = { WeAppId: id, HistoryContent: JSON.stringify(cals),
+        Comment: '检查实际微搭编译器兼容性并修复管理页面加载；保留业务、权限与最新编辑内容；未发布' };
       if (latest?.id ?? latest?.Id) saveParams.CommitBaseline = safeHistoryId(latest.id ?? latest.Id);
       else saveParams.IsFirstCommit = true;
       const saved = await call('UpdateWeAppContentByAppId', saveParams);
@@ -152,6 +160,7 @@ try {
       await mkdir(resolve(root, 'output'), { recursive: true });
       await writeFile(evidence, JSON.stringify({ ...summary, appId: id, name: APP_NAME,
         createdRequestId: known?.createdRequestId, saveRequestId, status: 'design-saved-awaiting-readback', published: false,
+        sourceSha256, compilerVerification,
         businessApiConnected, connectedFunction, operationsConnected, connectedFunctions, browserPreviewVerified: false }, null, 2) + '\n');
     }
     const history = await call('DescribeHistoryListByAppId', { PageNum: 1, PageSize: 1, WeAppId: id });
@@ -164,7 +173,7 @@ try {
     if (!isDeepStrictEqual(readback, cals)) throw new Error('History differs from local design');
     const record = { ...summary, appId: id, name: APP_NAME, cloudAppName: detailName, title: APP_TITLE,
       createdRequestId: known?.createdRequestId, saveRequestId, historyRequestId: history.RequestId, historyId,
-      sourceSha256: sha256(JSON.stringify(cals)), pageIds: cals.items.filter(item => item.type === 'PAGE').map(item => item.id),
+      sourceSha256, compilerVerification, pageIds: cals.items.filter(item => item.type === 'PAGE').map(item => item.id),
       status: 'design-saved-and-readback-verified', published: false, businessApiConnected, connectedFunction, operationsConnected, connectedFunctions,
       browserPreviewVerified: false,
       verificationScope: 'design-history-readback-only',
@@ -180,6 +189,7 @@ try {
   const safeReasons = ['History read-back unavailable', 'History read-back failed', 'History differs from local design',
     'Saved history not found', 'Invalid history ID', 'Draft ownership check failed',
     'Cloud draft changed since backup; preserve concurrent edits',
+    'Cloud draft compiler check required', 'Cloud draft compiler validation failed',
     'Existing backup differs from cloud history',
     'Incomplete application listing; fixed application lookup unavailable',
     'Recovery state application ID differs from fixed application',

@@ -34,13 +34,23 @@
 - `scripts/patch-weda-operations-code.mjs`：从最新云备份只替换五页处理函数与生命周期正文，完整保留编辑器元数据、布局、角色和登录配置；不重建页面。
 - `scripts/build-weda-admin-design.mjs`：从现有应用重建并自动恢复两类接入，保留六个布局模板和登录配置。
 - `scripts/validate-weda-admin-design.mjs`：官方应用 Schema、同版本组件属性、动态表达式及固定动作事件校验。
+- `scripts/check-weda-compiler.mjs`、`compiler-contract.json`：以实际编辑器使用的 Babel 7.9.6 和固定摘要检查全部 JavaScript 资源；只编译，不执行应用代码。
 - `cloudfunctions/hlAdminCockpit`：只读统计；`cloudfunctions/hlAdminOperations`：只读详情、事务管理动作与选中材料读取。既有 `hlApi/index.js` 保持本轮之前状态。
 
 构建：`node scripts/build-cockpit-function.mjs <esbuild目录> <SDK安装目录> <输出父目录> hlAdminOperations`。SDK 精确版本在函数 `package.json`。独立捆包没有跨函数运行依赖，采用 Nodejs20.19 和官方 SDK ZIP 上传。
 
 `deploy-admin-operations.mjs` 先只读检查既有服务与凭据准备情况；部署只创建／更新指定管理函数及 ADMINONLY 审计集合，不更改其他集合权限。它核对构建哈希、服务所有权与精确环境变量，并验证伪造身份被拒绝。敏感配置只在内存中处理，不写入输出或命令参数。
 
-保存应用使用 `scripts/weda-admin-draft.mjs`，固定既有应用 `app-pq2auygx`，先备份再以 CommitBaseline 保存并完整回读；不自动创建重复应用或发布。
+保存应用使用 `scripts/weda-admin-draft.mjs`，固定既有应用 `app-pq2auygx`，先备份再以 CommitBaseline 保存并完整回读；保存前必须通过实际编辑器编译检查。缺少编译器文件、摘要不符或任一脚本编译失败时拒绝保存。不自动创建重复应用或发布。
+
+编译器文件从 `compiler-contract.json` 记录的腾讯云官方地址单独下载，放入本地输出目录，不能将现代 Babel 替代该版本；第三方编译器文件不提交仓库。运行方式：
+
+```text
+node scripts/check-weda-compiler.mjs --cals weda-admin/app.cals.json --babel <官方编译器文件> --stdout
+node scripts/weda-admin-draft.mjs <官方MCP-SDK路径> backup
+node scripts/weda-admin-draft.mjs <官方MCP-SDK路径> save <官方编译器文件>
+node scripts/weda-admin-draft.mjs <官方MCP-SDK路径> verify
+```
 
 修复已有云草稿时，先运行保存工具的 `backup`，再将其备份路径与本地 `weda-admin/app.cals.json` 传给代码修补工具。验证后才执行 `save`。备份同一历史可重复读取，但已有备份内容不符时会停止；云端版本有新变化时必须重新基于最新备份修补。
 
@@ -52,6 +62,8 @@
 
 真实认证申请目前无样本，尚需首条真实申请的受控业务验收。CloudBase 管理员会话中的全部新操作及发布后访问仍须独立验收。本地原生预览不等于真实云端管理员登录；测试文件、云端备份与原始业务资料不提交。
 
-本次读取恢复按用户要求仅使用代码与云接口：验证腾讯云实际模块解析、页面工厂、官方 SDK 状态更新、React 生命周期及原生路由，并核对保存历史全文。代码测试覆盖首次加载、未初始化直接查询、热更新旧实例隔离和离页清理；编辑器复用旧页面与正常独立路由的行为分别记录。实际编辑器会话、管理员业务链路和 PDF 新窗口仍需用户手动验收。
+本次读取恢复按用户要求仅使用代码与云接口。2026-10-14 复现了“页面尚未准备完成”的确定原因：管理脚本内的 `||=` 语法不受微搭实际使用的 Babel 7.9.6 支持，使五个处理模块整体编译失败、无法注册；总览使用单独脚本，因此仍能显示。改为等价的普通赋值后，全部 12 个脚本通过同版本编译。此前使用现代编译器的本地检查漏掉了这一差异，其通过记录不能证明云端编译兼容。
+
+实际编译器、腾讯云模块解析与原生生命周期的隔离验证及云端全文回读分别记录。样例读取仅在本地完成，未对真实会员执行审核，也未变更支付配置。实际编辑器会话、管理员业务链路和 PDF 新窗口仍需用户手动验收。
 
 官方格式与来源记录于 `sources.json`、`vendor/`；静态结果见 `validation-report.json`，历史纯界面验收见 `render-verification.json` 和 `cockpit-verification.json`，本次证据以 `operations-verification.json` 为准。
