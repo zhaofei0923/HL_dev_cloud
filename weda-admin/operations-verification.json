@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-14T04:51:57.733519+00:00",
+  "checkedAt": "2026-10-14T09:35:13.167667+00:00",
   "scope": "Native Weda five-page management workflows, fixed-price activation and cockpit date-axis fix",
   "userDecisions": {
     "cockpitRealPreviewAccepted": true,
@@ -7,9 +7,9 @@
   },
   "draft": {
     "appId": "app-pq2auygx",
-    "historyId": 6775825,
+    "historyId": 6776231,
     "fullReadbackMatched": true,
-    "sourceCanonicalSha256": "759cfa678bfea5c4f7d052329df8aa5512ae6c3bb68ab5967ecae0a34bbb360a",
+    "sourceCanonicalSha256": "2dba83b5330fe402f5c6e325ab1c92825d7971610dd9cd08129ca1d38244eee4",
     "published": false,
     "connectedFunctions": [
       "hlAdminCockpit",
@@ -61,8 +61,8 @@
   },
   "checks": {
     "fullWorkspace": {
-      "tests": 1246,
-      "pass": 1246,
+      "tests": 1252,
+      "pass": 1252,
       "fail": 0
     },
     "officialSchemaAndComponentContractsValid": true,
@@ -131,5 +131,27 @@
     "Real internal-administrator new workflows and first real certification-application acceptance",
     "PDF viewer manual acceptance",
     "Micro-app publication and post-publication access acceptance"
-  ]
+  ],
+  "lifecycleHotfix": {
+    "reportedError": "this.handler.operations is not a function at onPageHide",
+    "scope": "Five operations pages only; lifecycle imports default handler and retains page owner for initialization and cleanup",
+    "regressionTests": 6,
+    "regressionPass": 6,
+    "originalErrorReproducedWithDifferentCallbackReceiver": true,
+    "nativeFixtureNavigation": [
+      "salons",
+      "certifications",
+      "plans",
+      "orders",
+      "matchmakers",
+      "salons"
+    ],
+    "queryAndSelectedDetailVerified": true,
+    "consoleWarningsOrErrors": 0,
+    "cloudHistoryFullReadbackMatched": true,
+    "consoleAuthoredDescriptionPreserved": true,
+    "backendRedeployed": false,
+    "actualCloudEditorVerified": false,
+    "cloudEditorLimitation": "Edge tab acquisition timed out; user must refresh actual CloudBase preview and verify query/detail plus page switching"
+  }
 }

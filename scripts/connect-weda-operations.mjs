@@ -36,6 +36,11 @@ function choices(pageId, id, label, name, options, visible) {
   return result;
 }
 
+export function operationsLifecycle(pageId) {
+  if (!Object.hasOwn(states, pageId)) throw new Error('Unknown operations page');
+  return `${MARKER}\n// Import directly: editor lifecycle receivers do not expose the page handler table.\nimport operations from './handler/operations';\nlet ownerPage;\n\nfunction initialize() {\n  const page = $page;\n  if (!page || page.id !== '${pageId}') throw new Error('管理页面上下文不匹配，请刷新页面');\n  ownerPage = page;\n  return operations({ lifecyclePage: page, data: { target: { command: 'init' } } });\n}\n\nfunction cleanup() {\n  // A page hidden before its load has no controller or private state to clear.\n  if (!ownerPage) return;\n  return operations({ cleanupPage: ownerPage, data: { target: { command: 'clear' } } });\n}\n\nexport default {\n  onPageLoad() { return initialize(); },\n  onPageShow() { return initialize(); },\n  onPageHide() { return cleanup(); },\n  onPageUnload() { return cleanup(); }\n};\n`;
+}
+
 export function connectOperations(original, runtimeCode) {
   runtimeCode = runtimeCode.replace(/\r\n/g, '\n');
   const app = structuredClone(original);
@@ -52,7 +57,7 @@ export function connectOperations(original, runtimeCode) {
     const definition = { varType: 'state', dataType: 'object', initialValue: null, label: '管理操作交互状态' };
     if (page.dataset.state.ops && !isDeepStrictEqual(page.dataset.state.ops, definition)) throw new Error('Existing ops variable differs');
     page.dataset.state.ops = definition;
-    const lifecycle = `${MARKER}\nexport default {\n onPageLoad() { return this.handler.operations({data:{target:{command:'init'}}}); },\n onPageShow() { return this.handler.operations({data:{target:{command:'init'}}}); },\n onPageHide() { return this.handler.operations({cleanupPage:this,data:{target:{command:'clear'}}}); },\n onPageUnload() { return this.handler.operations({cleanupPage:this,data:{target:{command:'clear'}}}); }\n};\n`;
+    const lifecycle = operationsLifecycle(pageId);
     for (const resource of [
       { type: 'CODE', codeType: 'handler-fn', name: 'operations', path: `${pageId}/handler/operations`, code: MARKER + '\n' + runtimeCode },
       { type: 'CODE', codeType: 'lifecycle', name: 'lifecycle', path: `${pageId}/lifecycle`, code: lifecycle },

@@ -243,7 +243,8 @@ async function evidence(ctx) {
 export default async function operations(input = {}) {
   const target = input?.data?.target || {};
   const command = target.command || 'init';
-  const page = command === 'clear' && input.cleanupPage ? input.cleanupPage : $w.page;
+  const page = command === 'clear' && input.cleanupPage ? input.cleanupPage
+    : command === 'init' && input.lifecyclePage ? input.lifecyclePage : $w.page;
   if (!page || !PAGES.includes(page.id)) return;
   let ctx = controllers.get(page);
   if (!ctx) { ctx = { page, active: true, generation: 0, readSequence: 0, detailSequence: 0, materialSequence: 0, evidenceSequence: 0, model: initial(page.id) }; controllers.set(page, ctx); }

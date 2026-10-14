@@ -100,7 +100,7 @@ app.items=pages.map(p=>{
 });
 app.resources=app.resources.filter(x=>!(x.name==='style'&&x.codeType==='style'));
 app.resources.push({type:'CODE',name:'style',path:'global/style',codeType:'style',code:(await readFile(resolve(root,'weda-admin/theme.css'),'utf8')).trimEnd()+'\n\n'+cockpitLayoutCSS.trim()+'\n'});
-app.description='与小程序品牌一致的运营驾驶舱；授权管理员统计、受控审核与套餐启停，支付订单只读。';
+if(typeof app.description!=='string')app.description='与小程序品牌一致的运营驾驶舱；授权管理员统计、受控审核与套餐启停，支付订单只读。';
 // Rebuilding the view must also restore its reviewed variables, bindings and
 // lifecycle, rather than silently reverting a connected dashboard to a draft.
 const connectedApp = connectCockpit(app, await readFile(resolve(root, 'weda-admin/cockpit-runtime.js'), 'utf8'));

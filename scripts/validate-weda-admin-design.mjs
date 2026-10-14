@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { operationsLifecycle } from './connect-weda-operations.mjs';
 
 const dependencyRoot=process.argv[2];
 if(!dependencyRoot) throw new Error('Supply directory containing validation-only node_modules');
@@ -196,6 +197,8 @@ if(connected){
   const operationRuntime=operationPages.size?(await readFile(resolve(root,'weda-admin/operations-runtime.js'),'utf8')).replace(/\r\n/g,'\n'):null;
   for(const[pageId,handler]of operationPages){
     if(handler.code!=='// HL_OPERATIONS_V1\n'+operationRuntime)errors.push(`${pageId}: operations handler differs from reviewed source`);
+    const lifecycle=app.items.find(page=>page.id===pageId)?.resources?.find(resource=>resource.path===`${pageId}/lifecycle`&&resource.codeType==='lifecycle');
+    if(lifecycle?.code!==operationsLifecycle(pageId))errors.push(`${pageId}: lifecycle must import the handler and retain its owning page`);
   }
   if(operationRuntime&&((operationRuntime.match(/\.callFunction\(/g)||[]).length!==1||!operationRuntime.includes("name: 'hlAdminOperations'")))errors.push('Unexpected management function target');
   const allowedResources=new Set([connectedHandler,...operationPages.values()]);

@@ -32,7 +32,11 @@
   "docs": {
     "navigation": "https://docs.cloudbase.net/lowcode/components/wedaUI/src/docs/compsdocs/navmenu/WdMenuLayout",
     "eventSchema": "https://docs.cloudbase.net/lowcode/framework/event",
-    "callFunction": "https://docs.cloudbase.net/lowcode/api/cloud"
+    "callFunction": "https://docs.cloudbase.net/lowcode/api/cloud",
+    "lifecycle": "https://docs.cloudbase.net/lowcode/framework/lifecycle",
+    "pageApi": "https://docs.cloudbase.net/lowcode/api/page",
+    "appSettings": "https://cloud.tencent.com/document/product/1301/53204",
+    "appAccessControl": "https://cloud.tencent.com/document/product/1301/82059"
   },
   "pages": [
     {
