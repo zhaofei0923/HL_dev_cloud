@@ -52,19 +52,18 @@ test('code-only repair refuses missing, duplicate, unreviewed or differently typ
   }
 });
 
-test('lifecycle generation has no module dependencies and includes only the reviewed normalized runtime', async () => {
+test('lifecycle delegates to the native registered handler without a second runtime or module dependency', async () => {
   const { operationsLifecycle } = await connector;
-  const embedded = runtime.replace(/^export function /gm, 'function ')
-    .replace(/^export default async function operations\(/m, 'async function operations(');
   for (const id of pages) {
     const code = operationsLifecycle(id, runtime);
-    assert.ok(code.includes(embedded));
+    assert.match(code, /const handler = page\.handler\.operations/);
+    assert.doesNotMatch(code, /async function operations\(|WeakMap|Symbol\.for|\.callFunction\(/);
     assert.doesNotMatch(code, /^\s*import\b/m);
     assert.doesNotMatch(code, /this\.handler/);
     assert.equal((code.match(/^export default /gm) || []).length, 1);
     assert.doesNotMatch(code, /^export function /m);
-    assert.match(code, /controller = operationsOwnerController/);
-    assert.match(code, /cleanupController: controller/);
+    assert.match(code, /handler = operationsOwnerHandler, token = operationsOwnerToken/);
+    assert.match(code, /cleanupToken: token/);
   }
   assert.throws(() => operationsLifecycle('unknown', runtime), /Unknown operations page/);
   assert.throws(() => operationsLifecycle('plans'), /runtime is required/);
@@ -96,8 +95,8 @@ test('list feedback patch changes only the two status text attributes and preser
 
 test('saved list feedback distinguishes not initialized, loading, failure and confirmed zero records', () => {
   const states = [
-    [null, '列表尚未加载', '刷新'],
-    [{ rows: [], total: null, loading: false, error: '' }, '列表尚未加载', '刷新'],
+    [null, '列表尚未加载', '查询'],
+    [{ rows: [], total: null, loading: false, error: '' }, '列表尚未加载', '查询'],
     [{ rows: [], total: null, loading: true, error: '' }, '正在加载…', '正在读取'],
     [{ rows: [], total: null, loading: false, error: 'fixture error' }, '记录未取得', '上方提示'],
     [{ rows: [], total: 0, loading: false, error: '' }, '暂无符合条件的记录', '筛选'],
@@ -109,8 +108,46 @@ test('saved list feedback distinguishes not initialized, loading, failure and co
     const title = new Function('$page', 'return (' + nodes.get('emptyTitle').attributes[':text'] + ');');
     const description = new Function('$page', 'return (' + nodes.get('emptyDescription').attributes[':text'] + ');');
     for (const [ops, expected, help] of states) {
-      const page = { dataset: { state: { ops } } };
+      const page = { id, handler: { operations() {} }, dataset: { state: { ops } } };
       assert.equal(title(page), expected, id); assert.ok(description(page).includes(help), id);
+    }
+  }
+});
+
+test('read recovery changes only query/reset disabling rules and preserves native event contracts', async () => {
+  const { connectOperationsReadRecovery } = await connector;
+  const before = structuredClone(source);
+  function find(page, id) { let result; function walk(node) { if (node.id === id) result = node; for (const child of node.items || []) walk(child); } walk(page); return result; }
+  for (const id of pages) for (const name of ['queryButton', 'refreshButton']) find(before.items.find(page => page.id === id), name).attributes[':disabled'] = 'true';
+  const snapshot = structuredClone(before), after = connectOperationsReadRecovery(before);
+  assert.deepEqual(before, snapshot);
+  for (const id of pages) for (const name of ['queryButton', 'refreshButton']) {
+    const node = find(after.items.find(page => page.id === id), name);
+    const disabled = new Function('$page', 'return !!(' + node.attributes[':disabled'] + ');');
+    const page = { id, handler: { operations() {} }, dataset: { state: { ops: null } } };
+    assert.equal(disabled(page), false, 'Uninitialized read remains recoverable');
+    page.dataset.state.ops = { loading: true, writing: false }; assert.equal(disabled(page), true);
+    page.dataset.state.ops = { loading: false, writing: true }; assert.equal(disabled(page), true);
+    page.dataset.state.ops = { loading: false, writing: false, error: 'fixture error' }; assert.equal(disabled(page), false);
+    node.attributes[':disabled'] = 'true';
+  }
+  assert.deepEqual(after, snapshot, 'Only these read button rules change');
+  const invalid = structuredClone(source), node = find(invalid.items.find(page => page.id === 'plans'), 'queryButton');
+  node.listeners[0].handler.params.target.command = 'submit';
+  assert.throws(() => connectOperationsReadRecovery(invalid), /Unexpected operations read control/);
+});
+
+test('preview context mismatch or missing handler gives a visible reopen instruction instead of a misleading empty list', () => {
+  for (const id of pages) {
+    const nodes = new Map(); function walk(node) { nodes.set(node.id, node); for (const child of node.items || []) walk(child); } walk(source.items.find(page => page.id === id));
+    const evaluate = (nodeId, key, page) => new Function('$page', 'return (' + nodes.get(nodeId).attributes[key] + ');')(page);
+    for (const page of [
+      { id: 'overview', handler: { operations() {} }, dataset: { state: { ops: null } } },
+      { id, handler: {}, dataset: { state: { ops: null } } },
+    ]) {
+      assert.equal(evaluate('emptyTitle', ':text', page), '页面尚未准备完成');
+      assert.match(evaluate('emptyDescription', ':text', page), /关闭预览/);
+      assert.equal(Boolean(evaluate('queryButton', ':disabled', page)), true, 'Do not dispatch a read to the wrong page or missing handler');
     }
   }
 });

@@ -39,15 +39,11 @@ function choices(pageId, id, label, name, options, visible) {
 export function operationsLifecycle(pageId, runtimeCode) {
   if (!Object.hasOwn(states, pageId)) throw new Error('Unknown operations page');
   if (typeof runtimeCode !== 'string') throw new Error('Reviewed operations runtime is required');
-  runtimeCode = runtimeCode.replace(/\r\n/g, '\n');
-  if ((runtimeCode.match(/^export default async function operations\(/gm) || []).length !== 1
-    || !runtimeCode.includes('export function getOperationsController(page)')) throw new Error('Unexpected operations runtime exports');
-  // Each low-code module must load by itself: the editor can preload a lifecycle
-  // without its sibling handler. Both copies use the same page-owned capsule.
-  const embedded = runtimeCode.replace(/^export function /gm, 'function ')
-    .replace(/^export default async function operations\(/m, 'async function operations(');
-  if (/^\s*(?:export|import)\b/m.test(embedded)) throw new Error('Unexpected embedded module dependency');
-  return `${MARKER}\n// Self-contained lifecycle; controller identity is shared through the owning page.\n${embedded}\nlet operationsOwnerPage;\nlet operationsOwnerController;\n\nfunction initializeOperationsPage() {\n  const page = $w.page;\n  if (!page || page.id !== '${pageId}') throw new Error('管理页面上下文不匹配，请刷新页面');\n  operationsOwnerPage = page;\n  const pending = operations({ lifecyclePage: page, data: { target: { command: 'init' } } });\n  operationsOwnerController = getOperationsController(page);\n  return pending;\n}\n\nfunction cleanupOperationsPage(unload = false) {\n  if (!operationsOwnerPage || !operationsOwnerController) return;\n  const page = operationsOwnerPage, controller = operationsOwnerController;\n  if (unload) { operationsOwnerPage = undefined; operationsOwnerController = undefined; }\n  return operations({ cleanupPage: page, cleanupController: controller, disposeController: unload, data: { target: { command: 'clear' } } });\n}\n\nexport default {\n  onPageLoad() { return initializeOperationsPage(); },\n  onPageShow() { return initializeOperationsPage(); },\n  onPageHide() { return cleanupOperationsPage(); },\n  onPageUnload() { return cleanupOperationsPage(true); }\n};\n`;
+  if ((runtimeCode.replace(/\r\n/g, '\n').match(/^export default async function operations\(/gm) || []).length !== 1) throw new Error('Unexpected operations runtime exports');
+  if (/^\s*import\b/m.test(runtimeCode)) throw new Error('Unexpected module dependency in operations runtime');
+  // Use the same registered handler as native rematch buttons and the working
+  // cockpit. Capture it for cleanup; never resolve a new page during hide.
+  return `${MARKER}\n// Native page handler bridge; no relative module dependency or duplicate runtime.\nlet operationsOwnerPage;\nlet operationsOwnerKey;\nlet operationsOwnerHandler;\nlet operationsOwnerToken;\n\nfunction initializeOperationsPage() {\n  const page = $w.page;\n  if (!page || page.id !== '${pageId}') throw new Error('管理页面上下文不匹配，请重新进入');\n  const handler = page.handler.operations;\n  if (typeof handler !== 'function') throw new Error('管理操作尚未就绪，请重新进入');\n  const owner = page.$page || page;\n  if (operationsOwnerKey !== owner || operationsOwnerHandler !== handler || !operationsOwnerToken) operationsOwnerToken = {};\n  operationsOwnerPage = page;\n  operationsOwnerKey = owner;\n  operationsOwnerHandler = handler;\n  return handler({ lifecyclePage: page, lifecycleToken: operationsOwnerToken, data: { target: { command: 'init' } } });\n}\n\nfunction cleanupOperationsPage(unload = false) {\n  if (!operationsOwnerPage || !operationsOwnerHandler || !operationsOwnerToken) return;\n  const page = operationsOwnerPage, handler = operationsOwnerHandler, token = operationsOwnerToken;\n  if (unload) { operationsOwnerPage = undefined; operationsOwnerKey = undefined; operationsOwnerHandler = undefined; operationsOwnerToken = undefined; }\n  return handler({ cleanupPage: page, cleanupToken: token, disposeController: unload, data: { target: { command: 'clear' } } });\n}\n\nexport default {\n  onPageLoad() { return initializeOperationsPage(); },\n  onPageShow() { return initializeOperationsPage(); },\n  onPageHide() { return cleanupOperationsPage(); },\n  onPageUnload() { return cleanupOperationsPage(true); }\n};\n`;
 }
 
 // Patch reviewed code only, preserving editor metadata, layout, roles and login.
@@ -72,10 +68,17 @@ export function connectOperationsCode(original, runtimeCode) {
   return app;
 }
 
-export function operationsListFeedback() {
+function operationsPageUnavailable(pageId) {
+  if (!Object.hasOwn(states, pageId)) throw new Error('Unknown operations page');
+  return `$page.id !== '${pageId}' || !$page.handler || !$page.handler.operations`;
+}
+function operationsReadDisabled(pageId) {
+  return `${operationsPageUnavailable(pageId)} || (${S} && (${S}.loading || ${S}.writing))`;
+}
+export function operationsListFeedback(pageId) {
   return {
-    title: `!${S} ? '列表尚未加载' : (${S}.loading ? '正在加载…' : (${S}.error ? '记录未取得' : (${S}.total === null ? '列表尚未加载' : '暂无符合条件的记录')))`,
-    description: `!${S} ? '若持续显示，请刷新页面后重新进入。' : (${S}.loading ? '正在读取记录，请稍候。' : (${S}.error ? '请查看上方提示，处理后重新查询。' : (${S}.total === null ? '若持续显示，请刷新页面后重新进入。' : '可调整筛选条件后重新查询。')))`,
+    title: `${operationsPageUnavailable(pageId)} ? '页面尚未准备完成' : (!${S} ? '列表尚未加载' : (${S}.loading ? '正在加载…' : (${S}.error ? '记录未取得' : (${S}.total === null ? '列表尚未加载' : '暂无符合条件的记录'))))`,
+    description: `${operationsPageUnavailable(pageId)} ? '请先关闭预览，再重新打开当前页面。' : (!${S} ? '点击查询读取记录。' : (${S}.loading ? '正在读取记录，请稍候。' : (${S}.error ? '请查看上方提示，处理后重新查询。' : (${S}.total === null ? '点击查询读取记录。' : '可调整筛选条件后重新查询。'))))`,
   };
 }
 
@@ -83,8 +86,8 @@ export function operationsListFeedback() {
 export function connectOperationsFeedback(original) {
   const app = structuredClone(original);
   if (app.name !== 'hl-admin-weda' || app.schemaVersion !== '4.0.0') throw new Error('Unexpected operations application');
-  const feedback = operationsListFeedback();
   for (const pageId of Object.keys(states)) {
+    const feedback = operationsListFeedback(pageId);
     const page = app.items.find(page => page.id === pageId && page.type === 'PAGE');
     if (!page) throw new Error('Missing operations feedback page ' + pageId);
     const nodes = [];
@@ -98,6 +101,29 @@ export function connectOperationsFeedback(original) {
     }
   }
   return app;
+}
+
+export function connectOperationsReadRecovery(original) {
+  const app = structuredClone(original);
+  if (app.name !== 'hl-admin-weda' || app.schemaVersion !== '4.0.0') throw new Error('Unexpected operations application');
+  for (const pageId of Object.keys(states)) {
+    const page = app.items.find(page => page.id === pageId && page.type === 'PAGE');
+    if (!page) throw new Error('Missing operations recovery page ' + pageId);
+    const nodes = [];
+    function walk(node) { if (['queryButton', 'refreshButton'].includes(node.id)) nodes.push(node); for (const child of node.items || []) walk(child); }
+    walk(page);
+    for (const [id, command] of [['queryButton', 'query'], ['refreshButton', 'reset']]) {
+      const matches = nodes.filter(node => node.id === id), node = matches[0];
+      if (matches.length !== 1 || node.component !== 'WdButton' || !operationReadListener(node, pageId, command)) throw new Error('Unexpected operations read control ' + pageId + '/' + id);
+      node.attributes[':disabled'] = operationsReadDisabled(pageId);
+    }
+  }
+  return app;
+}
+function operationReadListener(node, pageId, command) {
+  const [listener] = node.listeners || [], handler = listener?.handler;
+  return node.listeners?.length === 1 && listener.type === 'rematch' && listener.eventName === 'tap'
+    && handler?.name === 'operations' && handler?.module === pageId && handler?.params?.target?.command === command;
 }
 
 export function connectOperations(original, runtimeCode) {
@@ -156,11 +182,11 @@ export function connectOperations(original, runtimeCode) {
     listCard.items = [
       box('filters', [
         field(pageId, 'keyword', '关键词', 'keyword', '输入关键词后点击查询'),
-        box('filterActions', [button(pageId, 'queryButton', '查询', 'query', {}, readBusy, true), button(pageId, 'refreshButton', '重置', 'reset', {}, readBusy)], { flexDirection: 'row', flexWrap: 'wrap', gap: '10px' }),
+        box('filterActions', [button(pageId, 'queryButton', '查询', 'query', {}, operationsReadDisabled(pageId), true), button(pageId, 'refreshButton', '重置', 'reset', {}, operationsReadDisabled(pageId))], { flexDirection: 'row', flexWrap: 'wrap', gap: '10px' }),
       ], { flexDirection: 'row', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end' }),
       box('status', [text('statusLabel', '状态筛选（点击即查询）'), box('statusChoices', states[pageId].map(([value, label], index) => button(pageId, `opsStatus${index}`, label, 'filter', { value }, readBusy)), { flexDirection: 'row', gap: '8px', flexWrap: 'wrap' }), text('opsSelectedFilter', `${S} ? '当前状态：' + (${S}.filter || '全部') : '当前状态：全部'`, true)], { gap: '8px', marginTop: '16px', marginBottom: '20px' }),
       box('tableScroll', [header, ...rows], { overflowX: 'auto', maxWidth: '100%' }),
-      { ...box('emptyRecords', [text('emptyTitle', operationsListFeedback().title, true), text('emptyDescription', operationsListFeedback().description, true)], { padding: '30px 10px', alignItems: 'center' }), directives: { ':if': `!${S} || !${S}.rows.length` } },
+      { ...box('emptyRecords', [text('emptyTitle', operationsListFeedback(pageId).title, true), text('emptyDescription', operationsListFeedback(pageId).description, true)], { padding: '30px 10px', alignItems: 'center' }), directives: { ':if': `!${S} || !${S}.rows.length` } },
       box('tableFooter', [text('recordCount', val('totalText', '记录数 —'), true), text('paginationPending', val('pageText', '第1页'), true), button(pageId, 'opsPrevious', '上一页', 'previous', {}, `${readBusy} || !${S}.hasPrevious`), button(pageId, 'opsNext', '下一页', 'next', {}, `${readBusy} || !${S}.hasNext`)], { flexDirection: 'row', gap: '12px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', marginTop: '18px' }),
     ];
     const selected = `${S} && ${S}.detail`;

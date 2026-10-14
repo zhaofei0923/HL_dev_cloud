@@ -135,12 +135,12 @@ try {
           throw new Error('Cloud draft changed since backup; preserve concurrent edits');
         }
       }
-      const selfContainedOperations = operationsConnected && operationsPages.every(page => {
+      const nativeHandlerBridge = operationsConnected && operationsPages.every(page => {
         const code = page.resources?.find(resource => resource.path === `${page.id}/lifecycle`)?.code;
-        return typeof code === 'string' && code.includes('function getOperationsController(page)') && !/^\s*import\b/m.test(code);
+        return typeof code === 'string' && code.includes('const handler = page.handler.operations;') && !/^\s*import\b/m.test(code);
       });
-      const saveParams = { WeAppId: id, HistoryContent: JSON.stringify(cals), Comment: selfContainedOperations
-        ? '修复五页列表初始化与生命周期；共享控制器与离页清理；保留最新编辑内容；未发布'
+      const saveParams = { WeAppId: id, HistoryContent: JSON.stringify(cals), Comment: nativeHandlerBridge
+        ? '统一原生处理函数与列表只读重试；保留审核确认、离页清理与最新编辑内容；未发布'
         : operationsConnected ? '后台五页接通查询、详情、审核、认证材料与套餐启停；保留固定价格；未发布'
         : businessApiConnected
         ? '运营驾驶舱接入 hlAdminCockpit 只读真实统计；会员、主理人与经营收款分析；未发布'

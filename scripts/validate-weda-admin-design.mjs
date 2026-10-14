@@ -195,15 +195,13 @@ if(connected){
   if((runtime.match(/\.callFunction\(/g)||[]).length!==1||!runtime.includes("name: 'hlAdminCockpit'"))errors.push('Unexpected cockpit function target');
   const resources=[...app.resources,...app.items.flatMap(p=>p.resources||[])];
   const operationRuntime=operationPages.size?(await readFile(resolve(root,'weda-admin/operations-runtime.js'),'utf8')).replace(/\r\n/g,'\n'):null;
-  const reviewedLifecycles=[];
   for(const[pageId,handler]of operationPages){
     if(handler.code!=='// HL_OPERATIONS_V1\n'+operationRuntime)errors.push(`${pageId}: operations handler differs from reviewed source`);
     const lifecycle=app.items.find(page=>page.id===pageId)?.resources?.find(resource=>resource.path===`${pageId}/lifecycle`&&resource.codeType==='lifecycle');
-    if(lifecycle?.code!==operationsLifecycle(pageId,operationRuntime))errors.push(`${pageId}: lifecycle must embed the reviewed runtime and retain its owning controller`);
-    else reviewedLifecycles.push(lifecycle);
+    if(lifecycle?.code!==operationsLifecycle(pageId,operationRuntime))errors.push(`${pageId}: lifecycle must call the registered handler and retain its owner and token`);
   }
   if(operationRuntime&&((operationRuntime.match(/\.callFunction\(/g)||[]).length!==1||!operationRuntime.includes("name: 'hlAdminOperations'")))errors.push('Unexpected management function target');
-  const allowedResources=new Set([connectedHandler,...operationPages.values(),...reviewedLifecycles]);
+  const allowedResources=new Set([connectedHandler,...operationPages.values()]);
   if(resources.some(r=>!allowedResources.has(r)&&/callFunction|\.database\(|\.collection\(|\bfetch\s*\(/.test(r.code||'')))errors.push('Unexpected remote invocation outside reviewed handlers');
 }else if(/callFunction/.test(source))errors.push('Unexpected business API invocation');
 if(nav!==5||pageIds.length!==6||(operationPages.size?operationPages.size!==5||controlledActions<40:buttons!==29||disabled!==24))errors.push('Unexpected action/page counts');

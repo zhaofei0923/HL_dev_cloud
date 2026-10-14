@@ -36,8 +36,8 @@ test('operation reads use the fixed function, pagination/filter contract and fre
     assert.ok(requests.every(r => r.name === 'hlAdminOperations'));
     assert.deepEqual(requests.at(-2).data.args, { page: 1, pageSize: 10, keyword: '测试', status: 1 });
     assert.deepEqual(requests.at(-1).data.args, { id: 1 });
-    assert.ok(requests.every(r => Object.keys(r.data).sort().join(',') === 'action,args,requestId'));
-    assert.ok(requests.every(r => /^[0-9a-f-]{36}$/.test(r.data.requestId)));
+    assert.ok(requests.every(r => Object.keys(r.data).sort().join(',') === 'action,args'));
+    assert.ok(requests.every(r => !Object.hasOwn(r.data, 'requestId')), 'Read calls do not require a client-side mutation identifier');
   });
 });
 

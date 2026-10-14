@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-14T10:41:19.831Z",
+  "checkedAt": "2026-10-14T11:12:04.468Z",
   "scope": "Native Weda five-page management workflows, fixed-price activation and cockpit date-axis fix",
   "userDecisions": {
     "cockpitRealPreviewAccepted": true,
@@ -8,16 +8,16 @@
   },
   "draft": {
     "appId": "app-pq2auygx",
-    "historyId": 6776303,
+    "historyId": 6776323,
     "fullReadbackMatched": true,
-    "sourceCanonicalSha256": "293b9cb1e106d5f662dec4f9fcdf4484a29fc8fe879f02bd30d4a199faadcd22",
+    "sourceCanonicalSha256": "744f387fb29c806d1e49dcd11d089c2701aadede386357ae9ed3fc11139db46a",
     "published": false,
     "connectedFunctions": [
       "hlAdminCockpit",
       "hlAdminOperations"
     ],
     "layoutTemplatesAndLoginConfigPreserved": true,
-    "latestEditorBaselineHistory": 6776286
+    "latestEditorBaselineHistory": 6776308
   },
   "function": {
     "name": "hlAdminOperations",
@@ -63,8 +63,8 @@
   },
   "checks": {
     "fullWorkspace": {
-      "tests": 1274,
-      "pass": 1274,
+      "tests": 1281,
+      "pass": 1281,
       "fail": 0
     },
     "officialSchemaAndComponentContractsValid": true,
@@ -214,7 +214,8 @@
     },
     "actualCloudEditorVerified": false,
     "manualAcceptance": "Refresh and merge the saved cloud draft, preview each management page, query/select details, switch pages, and verify no module-load or cleanup error. PDF new-window viewing and administrator business acceptance remain manual.",
-    "userReportedNavigationAccepted": true
+    "userReportedNavigationAccepted": true,
+    "status": "superseded-by-single-registered-handler"
   },
   "activePageInitializationRepair": {
     "checkedAt": "2026-10-14T10:41:19.831Z",
@@ -259,6 +260,82 @@
     "backendRedeployed": false,
     "published": false,
     "actualCloudListQueryVerified": false,
-    "manualAcceptance": "Refresh and merge cloud history, enter Plans and confirm a numeric total and visible rows, then test selected details and the other lists. User navigation acceptance alone does not verify the administrator read/write chain."
+    "manualAcceptance": "Refresh and merge cloud history, enter Plans and confirm a numeric total and visible rows, then test selected details and the other lists. User navigation acceptance alone does not verify the administrator read/write chain.",
+    "status": "not-sufficient-user-reported-list-remained-unloaded"
+  },
+  "canonicalHandlerRecovery": {
+    "checkedAt": "2026-10-14T11:12:04.468Z",
+    "cloudBaselineHistory": 6776308,
+    "savedHistoryId": 6776323,
+    "sourceCanonicalSha256": "744f387fb29c806d1e49dcd11d089c2701aadede386357ae9ed3fc11139db46a",
+    "userFeedback": "Latest list shows the updated uninitialized status and no six-plan list; prior page-reference fix did not verify or restore actual cloud loading.",
+    "diagnosisBoundary": "The same status can represent absent state or a cleared controller. Code evidence reproduces preview reuse without lifecycle restart and direct PageRender reuse with stale page API. The actual editor path was not inspected.",
+    "architecture": "Lifecycle and rematch invoke one native registered operations handler, with a module-private WeakMap, canonical page owner and lifecycle token. Old registered modules cannot write or erase a newer page dataset.",
+    "readRecovery": "Query/reset cold-start read-only controllers without browser-generated requestId. Missing/wrong page API or missing handler is shown as a visible reopen-preview instruction; other uninitialized reads can be retried.",
+    "writeBoundaries": "No cold write, selection or material request; mutation requires current detail version, explicit confirmation and secure stable requestId. Server authorization and all backend contracts unchanged.",
+    "changedCodeResources": 10,
+    "listFeedbackNodes": 10,
+    "readRecoveryControls": 10,
+    "allOtherCloudContentPreserved": true,
+    "cloudFullReadbackMatched": true,
+    "exactNativePipeline": {
+      "cloudRendererSha256": "1a36c2538da885c177b3f0f4e6fbee7fe8e5c144ff6aa9cfbce87e755e3cf216",
+      "exactFunctions": [
+        "cB",
+        "rB",
+        "default loadLowcodes",
+        "HC",
+        "GC",
+        "ZE",
+        "wN",
+        "AN",
+        "ON",
+        "Ue",
+        "he (Route)",
+        "Ae (Switch)"
+      ],
+      "reactVersion": "17.0.2",
+      "cases": 22,
+      "pass": 22,
+      "scope": [
+        "Fresh native routes and ordinary default-router page switches initialize all five registered handlers.",
+        "With a correct page API and registered handler, query/reset bootstrap a cold controller even if an AN hot code apply did not rerun lifecycle."
+      ],
+      "requiresRemount": [
+        "Direct wN reuse can retain the previous API/handler; missing or wrong-owner handler is disabled and explicitly requests reopening preview."
+      ],
+      "noBrowser": true,
+      "realNetworkCalls": 0,
+      "realBusinessWrites": 0,
+      "limitations": [
+        "View components, auth, CSS compilation, dataset state initialization and external visual events are explicit local adapters.",
+        "Actual default Switch key preservation is used; path matching is an exact-path adapter for the known tested routes.",
+        "No editor-injected page API, actual editor preview, cloud identity, permission or live business endpoint is exercised.",
+        "This is code evidence, not verification that the latest cloud preview displays data."
+      ]
+    },
+    "actualStateIntegration": {
+      "cloudRendererSha256": "1a36c2538da885c177b3f0f4e6fbee7fe8e5c144ff6aa9cfbce87e755e3cf216",
+      "runtimeSha256": "a928997b3e03b52bb6a83242609a4a47e10ef9540a892ef339fe9d118eb62db6",
+      "sdk": "@cloudbase/weda-cloud-sdk@1.0.110",
+      "observableRuntime": "mobx@5.15.7",
+      "nativeFrozenPageTests": 5,
+      "allPassed": true,
+      "handwrittenStateSetter": false,
+      "realNetworkCalls": 0
+    },
+    "checks": {
+      "relatedTests": 73,
+      "relatedPass": 73,
+      "nativeLifecycleAndControllerTests": 28,
+      "pass": 28
+    },
+    "browserUsed": false,
+    "actualCloudListVerified": false,
+    "backendRedeployed": false,
+    "businessDataChanged": false,
+    "paymentConfigurationChanged": false,
+    "published": false,
+    "manualAcceptance": "Exit the current overview/preview, return to page design and merge the saved cloud draft. Open a fresh preview, enter Plans and use Query. If a reopen-preview instruction appears, the page API/handler is not ready; that state is not zero business data. Administrator query/details/writes and PDF viewing still require live manual acceptance."
   }
 }

@@ -10,7 +10,6 @@ const root = path.join(__dirname, '..');
 const runtimeSource = fs.readFileSync(path.join(root, 'weda-admin', 'operations-runtime.js'), 'utf8').replace(/\r\n/g, '\n');
 const app = JSON.parse(fs.readFileSync(path.join(root, 'weda-admin', 'app.cals.json'), 'utf8'));
 const pageIds = ['matchmakers', 'certifications', 'salons', 'plans', 'orders'];
-const key = Symbol.for('hl.admin.operations.controller');
 const version = 'v1_' + 'a'.repeat(64);
 const reply = data => ({ result: { code: 0, data } });
 const list = (rows = []) => ({ list: rows, total: rows.length, page: 1, pageSize: 10 });
@@ -23,9 +22,12 @@ function deferred() {
 }
 function createPage(id, initialState = {}) {
   const state = { ...initialState }, updates = [];
-  const target = { id, __internal__: { active: true }, dataset: { state },
+  const target = { id, __internal__: { active: true }, dataset: { state }, handler: {},
     setState(patch) { updates.push(patch); Object.assign(state, patch); } };
-  return { target, page: new Proxy(target, {}), second: new Proxy(target, {}), state, updates };
+  const nativeProxy = () => new Proxy(target, { get(target, key, receiver) {
+    return key === '$page' ? target : Reflect.get(target, key, receiver);
+  } });
+  return { target, page: nativeProxy(), second: nativeProxy(), state, updates };
 }
 async function generatedLifecycle(pageId) {
   const connector = await import(pathToFileURL(path.join(root, 'scripts', 'connect-weda-operations.mjs')).href);
@@ -50,9 +52,9 @@ function evaluateHandler(api, page) {
   const scope = context(api, page);
   const executable = runtimeSource.replace(/^export function /gm, 'function ')
     .replace(/^export default async function operations\b/m, 'async function operations')
-    + '\nglobalThis.__handler = operations;';
+    + '\nglobalThis.__handler = operations; globalThis.__controller = getOperationsController;';
   new vm.Script(executable, { filename: 'independent-operations-handler' }).runInContext(scope);
-  return { handler: scope.__handler, scope };
+  return { handler: scope.__handler, getController: scope.__controller, scope };
 }
 function evaluateLifecycle(source, api, page) {
   assert.doesNotMatch(source, /^\s*import\s/m, 'CALS lifecycle is self-contained and does not depend on a relative module loader');
@@ -68,15 +70,17 @@ async function withLifecycle(pageId, fixture, run, { persisted = false } = {}) {
     assert.match(request.data.action, /\.(?:list|detail|evidence|material)$/, 'Only read calls may leave this isolated fixture');
     requests.push(plain(request)); return fixture(request.data, requests.length);
   } } };
-  // Separate evaluations have independent module scopes and communicate only
-  // through the real page target's Symbol capsule, as in the native editor.
+  // Native rematch and lifecycle both call this same registered export. The
+  // lifecycle is independently evaluated and contains no controller runtime.
+  const handler = evaluateHandler(api, current.second);
+  const registered = handler.handler.bind(current.page);
+  current.target.handler.operations = registered;
   const lifecycleSource = persisted ? calsResources(pageId).lifecycle.code : await generatedLifecycle(pageId);
   const lifecycle = evaluateLifecycle(lifecycleSource, api, current.page);
-  const handler = evaluateHandler(api, current.second);
-  assert.notEqual(lifecycle.scope.operations, handler.handler);
-  const command = (command, target = {}, value) => handler.handler({ data: { target: { command, ...target } },
+  assert.equal(lifecycle.scope.operations, undefined, 'Tiny lifecycle must not instantiate a duplicate operations module');
+  const command = (command, target = {}, value) => registered({ data: { target: { command, ...target } },
     ...(value === undefined ? {} : { event: { detail: { value } } }) });
-  return run({ ...current, ...lifecycle, handler: handler.handler, api, requests, command });
+  return run({ ...current, ...lifecycle, handler: registered, getController: handler.getController, api, requests, command });
 }
 function assertPrivateCleared(state) {
   assert.equal(state.ops.detail, null); assert.equal(state.ops.selected, null);
@@ -95,42 +99,41 @@ test('the old this.handler call reproduces the reported editor receiver error', 
     error => error.name === 'TypeError' && /operations.*not a function/.test(error.message));
 });
 
-test('all five generated CALS lifecycles embed the real runtime and have no handler import or receiver dependency', async () => {
+test('all five generated CALS lifecycles call the registered handler without imports or a duplicate runtime', async () => {
   for (const pageId of pageIds) {
     const source = await generatedLifecycle(pageId), saved = calsResources(pageId).lifecycle.code.replace(/\r\n/g, '\n');
     assert.equal(saved, source, `${pageId} saved lifecycle must match the current generator and runtime`);
-    assert.doesNotMatch(source, /^\s*import\s|this\.handler/m);
-    assert.match(source, /async function operations\(/); assert.match(source, /cleanupController/);
+    assert.doesNotMatch(source, /^\s*import\s|this\.handler|async function operations\(|new WeakMap|Symbol\.for/m);
+    assert.match(source, /page\.handler\.operations/); assert.match(source, /cleanupToken/); assert.match(source, /lifecycleToken/);
     assert.match(source, /disposeController:\s*unload/); assert.match(source, /cleanupOperationsPage\(true\)/);
-    assert.match(source, /getOperationsController\(page\)/);
   }
 });
 
-test('all five lifecycles initialize once across load/show and share a controller with an independent handler and proxy', async () => {
+test('all five lifecycles initialize once across load/show and rematch uses the same registered handler module', async () => {
   for (const pageId of pageIds) {
     await withLifecycle(pageId, ({ action }) => reply(action.endsWith('.list') ? list([{ id: 1 }]) : { id: 1, version }),
-      async ({ lifecycle, target, state, requests, command }) => {
-        assert.equal(target.handler, undefined); await lifecycle.onPageLoad.call({});
-        const capsule = target[key]; await lifecycle.onPageShow.call({ handler: { operations: {} } });
-        assert.equal(target[key], capsule); assert.equal(state.ops.pageId, pageId);
+      async ({ lifecycle, target, page, getController, state, requests, command }) => {
+        assert.equal(typeof target.handler.operations, 'function'); await lifecycle.onPageLoad.call({});
+        const capsule = getController(page); await lifecycle.onPageShow.call({ handler: { operations: {} } });
+        assert.equal(getController(page), capsule); assert.equal(state.ops.pageId, pageId);
         assert.equal(state.ops.total, 1); assert.equal(state.ops.error, '');
         assert.equal(requests.length, 1); assert.equal(requests[0].data.action, `${pageId}.list`);
         await command('edit', { field: 'keyword' }, 'fixture-shared-keyword'); assert.equal(state.ops.keyword, 'fixture-shared-keyword');
         await command('query'); assert.equal(requests.length, 2); assert.equal(requests[1].data.args.keyword, 'fixture-shared-keyword');
-        await lifecycle.onPageHide.call({}); assertPrivateCleared(state); assert.equal(target[key], capsule);
+        await lifecycle.onPageHide.call({}); assertPrivateCleared(state); assert.equal(getController(page), capsule);
         await lifecycle.onPageUnload.call({ handler: { operations: {} } }); assertPrivateCleared(state);
-        assert.equal(target[key], undefined, 'Unload disposes its captured capsule');
+        assert.equal(getController(page), null, 'Unload disposes its captured controller');
       });
   }
 });
 
 test('hide/unload before load have no side effects, and show initializes then reloads after a hide', async () => {
-  await withLifecycle('plans', () => reply(list()), async ({ lifecycle, target, state, requests }) => {
+  await withLifecycle('plans', () => reply(list()), async ({ lifecycle, page, getController, state, requests }) => {
     assert.equal(lifecycle.onPageHide.call({}), undefined); assert.equal(lifecycle.onPageUnload.call({}), undefined);
-    assert.equal(state.ops, undefined); assert.equal(target[key], undefined); assert.equal(requests.length, 0);
+    assert.equal(state.ops, undefined); assert.equal(getController(page), null); assert.equal(requests.length, 0);
     await lifecycle.onPageShow.call({}); assert.equal(state.ops.pageId, 'plans'); assert.equal(requests.length, 1);
-    const capsule = target[key]; await lifecycle.onPageHide.call({}); await lifecycle.onPageShow.call({});
-    assert.equal(requests.length, 2); assert.equal(target[key], capsule); await lifecycle.onPageUnload.call({});
+    const capsule = getController(page); await lifecycle.onPageHide.call({}); await lifecycle.onPageShow.call({});
+    assert.equal(requests.length, 2); assert.equal(getController(page), capsule); await lifecycle.onPageUnload.call({});
   });
 });
 
@@ -160,14 +163,14 @@ test('independent lifecycle cleanup clears private handler state and ignores lat
 
 test('late initialization cannot restore rows after hide/unload from its independent lifecycle', async () => {
   const pending = deferred();
-  await withLifecycle('matchmakers', () => pending.promise, async ({ lifecycle, scope, api, target, state, requests }) => {
+  await withLifecycle('matchmakers', () => pending.promise, async ({ lifecycle, scope, api, page, getController, state, requests }) => {
     const initializing = lifecycle.onPageLoad.call({}); assert.equal(state.ops.loading, true);
     await lifecycle.onPageShow.call({}); assert.equal(requests.length, 1);
     const next = createPage('plans', { ops: { detailText: 'fixture-next-page-sentinel' } }); api.page = next.page; scope.$page = next.second;
     await lifecycle.onPageHide.call({}); await lifecycle.onPageUnload.call({});
     pending.resolve(reply(list([{ id: 1, user: { nickname: 'fixture-late-private-name' } }]))); await initializing;
     assert.equal(state.ops.loading, false); assert.equal(state.ops.total, null); assertPrivateCleared(state);
-    assert.equal(target[key], undefined); assert.equal(next.state.ops.detailText, 'fixture-next-page-sentinel'); assert.equal(next.updates.length, 0);
+    assert.equal(getController(page), null); assert.equal(next.state.ops.detailText, 'fixture-next-page-sentinel'); assert.equal(next.updates.length, 0);
   });
 });
 
@@ -175,10 +178,10 @@ test('initialization uses the current active page target and cleanup keeps that 
   for (const persisted of [false, true]) {
     await withLifecycle('salons', ({ action }) => reply(action.endsWith('.list') ? list([{ id: 1 }])
       : { id: 1, version, title: 'fixture-private-current-salon', canApprove: true }),
-    async ({ lifecycle, scope, api, state, requests, command }) => {
+    async ({ lifecycle, scope, api, state, requests, command, handler, getController }) => {
       // The free global still points at the first target; $w.page is already a
       // different live target with the same page id, as in the native loader.
-      const active = createPage('salons'); api.page = active.page;
+      const active = createPage('salons'); active.target.handler.operations = handler; api.page = active.page;
       await lifecycle.onPageLoad.call({ handler: { operations: {} } });
       assert.equal(requests.length, 1); assert.equal(requests[0].data.action, 'salons.list');
       assert.equal(active.state.ops.pageId, 'salons'); assert.equal(active.state.ops.total, 1);
@@ -187,7 +190,7 @@ test('initialization uses the current active page target and cleanup keeps that 
       const next = createPage('orders', { ops: { detailText: 'fixture-next-page-sentinel' } }), before = plain(next.state);
       api.page = next.page; scope.$page = next.second;
       await lifecycle.onPageHide.call({}); await lifecycle.onPageUnload.call({});
-      assertPrivateCleared(active.state); assert.equal(active.target[key], undefined);
+      assertPrivateCleared(active.state); assert.equal(getController(active.page), null);
       assert.deepEqual(next.state, before); assert.equal(next.updates.length, 0); assert.equal(state.ops, undefined);
     }, { persisted });
   }
@@ -196,14 +199,14 @@ test('initialization uses the current active page target and cleanup keeps that 
 test('all five active management pages initialize when the unrelated free global remains on overview', async () => {
   for (const persisted of [false, true]) {
     for (const pageId of pageIds) {
-      await withLifecycle(pageId, () => reply(list()), async ({ lifecycle, scope, state, target, requests }) => {
+      await withLifecycle(pageId, () => reply(list()), async ({ lifecycle, scope, state, page, getController, requests }) => {
         const overview = createPage('overview', { sentinel: 'fixture-overview-unchanged' }), before = plain(overview.state);
         scope.$page = overview.page;
         await lifecycle.onPageLoad.call({}); await lifecycle.onPageShow.call({ handler: { operations: {} } });
         assert.equal(requests.length, 1); assert.equal(requests[0].data.action, `${pageId}.list`);
         assert.equal(state.ops.pageId, pageId); assert.equal(state.ops.total, 0); assert.equal(state.ops.error, '');
-        assert.equal(state.ops.totalText, '共 0 条记录'); assert.ok(target[key]);
-        assert.deepEqual(overview.state, before); assert.equal(overview.updates.length, 0); assert.equal(overview.target[key], undefined);
+        assert.equal(state.ops.totalText, '共 0 条记录'); assert.ok(getController(page));
+        assert.deepEqual(overview.state, before); assert.equal(overview.updates.length, 0); assert.equal(getController(overview.page), null);
         await lifecycle.onPageUnload.call({}); assertPrivateCleared(state);
       }, { persisted });
     }
@@ -237,7 +240,7 @@ test('a stale matching free global cannot initialize when the actual active page
       const actual = createPage('overview', { sentinel: 'fixture-overview-unchanged' }); api.page = actual.page;
       assert.throws(() => lifecycle.onPageLoad.call({}), /管理页面上下文不匹配/);
       assert.equal(requests.length, 0); assert.equal(state.ops, undefined); assert.equal(actual.state.ops, undefined);
-      assert.equal(actual.target[key], undefined); assert.equal(actual.updates.length, 0);
+      assert.equal(actual.updates.length, 0);
     }, { persisted });
   }
 });
