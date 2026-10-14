@@ -4,7 +4,8 @@
   "userDecisions": {
     "cockpitRealPreviewAccepted": true,
     "pricePolicy": "Retain fixed prices; enable plan read/activation and all other scoped management workflows",
-    "cloudPageSwitchingAccepted": true
+    "cloudPageSwitchingAccepted": true,
+    "sixPlanListPreviewAccepted": true
   },
   "draft": {
     "appId": "app-pq2auygx",
@@ -543,12 +544,22 @@
       "onlyFiveDiagnosticHandlerBodiesChanged": true,
       "originalObjectKeyOrderRestoredWithoutSemanticChange": true
     },
-    "actualAdministratorListVerified": false,
+    "actualAdministratorListVerified": true,
     "businessDataChanged": false,
     "paymentConfigurationChanged": false,
     "permissionsChanged": false,
     "logServiceEnabledByThisChange": false,
     "published": false,
-    "acceptance": "Click Query in the already loaded diagnostic preview; no further frontend merge required. Await user confirmation of six plans."
+    "acceptance": "On 2026-10-14 (Asia/Shanghai), the user queried the existing Plans preview and confirmed that all six plans are displayed.",
+    "planListUserAcceptance": {
+      "date": "2026-10-14",
+      "timezone": "Asia/Shanghai",
+      "source": "Direct user reply to the post-deployment query verification request",
+      "userReply": "已显示6档套餐",
+      "status": "passed",
+      "scope": "Plans list query and six visible plan rows in the existing Weda preview",
+      "remainingWorkflowAcceptance": "Plan activation changes, other management actions and published-app access remain outside this confirmation."
+    },
+    "actualAdministratorListVerificationScope": "User-confirmed plans.list only; other workflows remain pending"
   }
 }
