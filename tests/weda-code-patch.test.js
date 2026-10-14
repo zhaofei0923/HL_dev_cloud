@@ -70,3 +70,47 @@ test('lifecycle generation has no module dependencies and includes only the revi
   assert.throws(() => operationsLifecycle('plans'), /runtime is required/);
   assert.throws(() => operationsLifecycle('plans', runtime + '\nimport unsafe from "other";'), /module dependency/);
 });
+
+test('list feedback patch changes only the two status text attributes and preserves editor content', async () => {
+  const { connectOperationsFeedback } = await connector;
+  const before = structuredClone(source);
+  const find = (page, id) => { let found; function walk(node) { if (node.id === id) found = node; for (const child of node.items || []) walk(child); } walk(page); return found; };
+  for (const id of pages) {
+    const page = before.items.find(item => item.id === id);
+    for (const name of ['emptyTitle', 'emptyDescription']) {
+      const node = find(page, name);
+      delete node.attributes[':text']; node.attributes.text = 'fixture old placeholder';
+      node.extra = { fixtureEditorMetadata: name };
+    }
+  }
+  const snapshot = structuredClone(before), after = connectOperationsFeedback(before);
+  assert.deepEqual(before, snapshot);
+  for (const id of pages) for (const name of ['emptyTitle', 'emptyDescription']) {
+    const original = find(before.items.find(page => page.id === id), name);
+    const changed = find(after.items.find(page => page.id === id), name);
+    assert.equal(changed.attributes.text, undefined); assert.equal(typeof changed.attributes[':text'], 'string');
+    delete changed.attributes[':text']; changed.attributes.text = original.attributes.text;
+  }
+  assert.deepEqual(after, snapshot, 'Layout, styles, events, roles and unrelated resources remain exact');
+});
+
+test('saved list feedback distinguishes not initialized, loading, failure and confirmed zero records', () => {
+  const states = [
+    [null, '列表尚未加载', '刷新'],
+    [{ rows: [], total: null, loading: false, error: '' }, '列表尚未加载', '刷新'],
+    [{ rows: [], total: null, loading: true, error: '' }, '正在加载…', '正在读取'],
+    [{ rows: [], total: null, loading: false, error: 'fixture error' }, '记录未取得', '上方提示'],
+    [{ rows: [], total: 0, loading: false, error: '' }, '暂无符合条件的记录', '筛选'],
+  ];
+  for (const id of pages) {
+    const nodes = new Map();
+    function walk(node) { nodes.set(node.id, node); for (const child of node.items || []) walk(child); }
+    walk(source.items.find(page => page.id === id));
+    const title = new Function('$page', 'return (' + nodes.get('emptyTitle').attributes[':text'] + ');');
+    const description = new Function('$page', 'return (' + nodes.get('emptyDescription').attributes[':text'] + ');');
+    for (const [ops, expected, help] of states) {
+      const page = { dataset: { state: { ops } } };
+      assert.equal(title(page), expected, id); assert.ok(description(page).includes(help), id);
+    }
+  }
+});

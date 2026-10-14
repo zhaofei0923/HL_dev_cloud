@@ -61,7 +61,7 @@ function evaluateLifecycle(source, api, page) {
   new vm.Script(source.replace(/\bexport default\s+/, 'globalThis.__lifecycle = '), { filename: `${page.id}/lifecycle` }).runInContext(scope);
   return { lifecycle: scope.__lifecycle, scope };
 }
-async function withLifecycle(pageId, fixture, run) {
+async function withLifecycle(pageId, fixture, run, { persisted = false } = {}) {
   const current = createPage(pageId), requests = [];
   const api = { page: current.second, cloud: { async callFunction(request) {
     assert.equal(request.name, 'hlAdminOperations');
@@ -70,7 +70,8 @@ async function withLifecycle(pageId, fixture, run) {
   } } };
   // Separate evaluations have independent module scopes and communicate only
   // through the real page target's Symbol capsule, as in the native editor.
-  const lifecycle = evaluateLifecycle(await generatedLifecycle(pageId), api, current.page);
+  const lifecycleSource = persisted ? calsResources(pageId).lifecycle.code : await generatedLifecycle(pageId);
+  const lifecycle = evaluateLifecycle(lifecycleSource, api, current.page);
   const handler = evaluateHandler(api, current.second);
   assert.notEqual(lifecycle.scope.operations, handler.handler);
   const command = (command, target = {}, value) => handler.handler({ data: { target: { command, ...target } },
@@ -170,12 +171,73 @@ test('late initialization cannot restore rows after hide/unload from its indepen
   });
 });
 
-test('explicit lifecyclePage is used when the global active page already points elsewhere', async () => {
-  await withLifecycle('salons', () => reply(list()), async ({ lifecycle, api, state, requests }) => {
-    const next = createPage('orders', { ops: { detailText: 'fixture-next-page-sentinel' } }); api.page = next.page;
-    await lifecycle.onPageLoad.call({ handler: { operations: {} } });
-    assert.equal(requests.length, 1); assert.equal(requests[0].data.action, 'salons.list'); assert.equal(state.ops.pageId, 'salons');
-    assert.equal(next.state.ops.detailText, 'fixture-next-page-sentinel'); assert.equal(next.updates.length, 0);
-    await lifecycle.onPageHide.call({}); assert.equal(state.ops.loading, false); assert.equal(state.ops.total, null); assertPrivateCleared(state);
-  });
+test('initialization uses the current active page target and cleanup keeps that captured owner after navigation', async () => {
+  for (const persisted of [false, true]) {
+    await withLifecycle('salons', ({ action }) => reply(action.endsWith('.list') ? list([{ id: 1 }])
+      : { id: 1, version, title: 'fixture-private-current-salon', canApprove: true }),
+    async ({ lifecycle, scope, api, state, requests, command }) => {
+      // The free global still points at the first target; $w.page is already a
+      // different live target with the same page id, as in the native loader.
+      const active = createPage('salons'); api.page = active.page;
+      await lifecycle.onPageLoad.call({ handler: { operations: {} } });
+      assert.equal(requests.length, 1); assert.equal(requests[0].data.action, 'salons.list');
+      assert.equal(active.state.ops.pageId, 'salons'); assert.equal(active.state.ops.total, 1);
+      assert.equal(state.ops, undefined, 'The stale free global never receives initialization');
+      await command('select', { index: 0 }); assert.match(active.state.ops.detailText, /fixture-private-current-salon/);
+      const next = createPage('orders', { ops: { detailText: 'fixture-next-page-sentinel' } }), before = plain(next.state);
+      api.page = next.page; scope.$page = next.second;
+      await lifecycle.onPageHide.call({}); await lifecycle.onPageUnload.call({});
+      assertPrivateCleared(active.state); assert.equal(active.target[key], undefined);
+      assert.deepEqual(next.state, before); assert.equal(next.updates.length, 0); assert.equal(state.ops, undefined);
+    }, { persisted });
+  }
+});
+
+test('all five active management pages initialize when the unrelated free global remains on overview', async () => {
+  for (const persisted of [false, true]) {
+    for (const pageId of pageIds) {
+      await withLifecycle(pageId, () => reply(list()), async ({ lifecycle, scope, state, target, requests }) => {
+        const overview = createPage('overview', { sentinel: 'fixture-overview-unchanged' }), before = plain(overview.state);
+        scope.$page = overview.page;
+        await lifecycle.onPageLoad.call({}); await lifecycle.onPageShow.call({ handler: { operations: {} } });
+        assert.equal(requests.length, 1); assert.equal(requests[0].data.action, `${pageId}.list`);
+        assert.equal(state.ops.pageId, pageId); assert.equal(state.ops.total, 0); assert.equal(state.ops.error, '');
+        assert.equal(state.ops.totalText, '共 0 条记录'); assert.ok(target[key]);
+        assert.deepEqual(overview.state, before); assert.equal(overview.updates.length, 0); assert.equal(overview.target[key], undefined);
+        await lifecycle.onPageUnload.call({}); assertPrivateCleared(state);
+      }, { persisted });
+    }
+  }
+});
+
+test('active-page initialization never reads a missing or throwing free global page', async () => {
+  for (const persisted of [false, true]) {
+    for (const pageId of pageIds) {
+      for (const mode of ['missing', 'throwing']) {
+        await withLifecycle(pageId, () => reply(list()), async ({ lifecycle, scope, state, requests }) => {
+          let globalReads = 0;
+          if (mode === 'missing') delete scope.$page;
+          else Object.defineProperty(scope, '$page', { configurable: true, get() {
+            globalReads++; throw new Error('fixture-free-global-must-never-be-read');
+          } });
+          await lifecycle.onPageLoad.call({}); await lifecycle.onPageShow.call({});
+          assert.equal(globalReads, 0); assert.equal(requests.length, 1);
+          assert.equal(state.ops.pageId, pageId); assert.equal(state.ops.total, 0); assert.equal(state.ops.totalText, '共 0 条记录');
+          await lifecycle.onPageHide.call({}); await lifecycle.onPageUnload.call({});
+          assert.equal(globalReads, 0); assertPrivateCleared(state);
+        }, { persisted });
+      }
+    }
+  }
+});
+
+test('a stale matching free global cannot initialize when the actual active page is a different page', async () => {
+  for (const persisted of [false, true]) {
+    await withLifecycle('salons', () => reply(list()), async ({ lifecycle, api, state, requests }) => {
+      const actual = createPage('overview', { sentinel: 'fixture-overview-unchanged' }); api.page = actual.page;
+      assert.throws(() => lifecycle.onPageLoad.call({}), /管理页面上下文不匹配/);
+      assert.equal(requests.length, 0); assert.equal(state.ops, undefined); assert.equal(actual.state.ops, undefined);
+      assert.equal(actual.target[key], undefined); assert.equal(actual.updates.length, 0);
+    }, { persisted });
+  }
 });

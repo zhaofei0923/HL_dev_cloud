@@ -1,22 +1,23 @@
 {
-  "checkedAt": "2026-10-14T10:15:03.889Z",
+  "checkedAt": "2026-10-14T10:41:19.831Z",
   "scope": "Native Weda five-page management workflows, fixed-price activation and cockpit date-axis fix",
   "userDecisions": {
     "cockpitRealPreviewAccepted": true,
-    "pricePolicy": "Retain fixed prices; enable plan read/activation and all other scoped management workflows"
+    "pricePolicy": "Retain fixed prices; enable plan read/activation and all other scoped management workflows",
+    "cloudPageSwitchingAccepted": true
   },
   "draft": {
     "appId": "app-pq2auygx",
-    "historyId": 6776286,
+    "historyId": 6776303,
     "fullReadbackMatched": true,
-    "sourceCanonicalSha256": "f76314b4b76bb59f06bee292bdf3fe7dffff6fabbc945734ad00bda0ef377581",
+    "sourceCanonicalSha256": "293b9cb1e106d5f662dec4f9fcdf4484a29fc8fe879f02bd30d4a199faadcd22",
     "published": false,
     "connectedFunctions": [
       "hlAdminCockpit",
       "hlAdminOperations"
     ],
     "layoutTemplatesAndLoginConfigPreserved": true,
-    "latestEditorBaselineHistory": 6776260
+    "latestEditorBaselineHistory": 6776286
   },
   "function": {
     "name": "hlAdminOperations",
@@ -62,8 +63,8 @@
   },
   "checks": {
     "fullWorkspace": {
-      "tests": 1269,
-      "pass": 1269,
+      "tests": 1274,
+      "pass": 1274,
       "fail": 0
     },
     "officialSchemaAndComponentContractsValid": true,
@@ -212,6 +213,52 @@
       }
     },
     "actualCloudEditorVerified": false,
-    "manualAcceptance": "Refresh and merge the saved cloud draft, preview each management page, query/select details, switch pages, and verify no module-load or cleanup error. PDF new-window viewing and administrator business acceptance remain manual."
+    "manualAcceptance": "Refresh and merge the saved cloud draft, preview each management page, query/select details, switch pages, and verify no module-load or cleanup error. PDF new-window viewing and administrator business acceptance remain manual.",
+    "userReportedNavigationAccepted": true
+  },
+  "activePageInitializationRepair": {
+    "checkedAt": "2026-10-14T10:41:19.831Z",
+    "cloudBaselineHistory": 6776286,
+    "savedHistoryId": 6776303,
+    "symptom": "Five management lists show unknown total and default empty labels while overview statistics are present.",
+    "diagnosis": "The exact cloud renderer resolves $w.page via activePage, while the free global $page is assigned elsewhere. A stale or absent $page reproduces pre-request initialization failure. The actual editor global value was not observed.",
+    "implementation": "Resolve lifecycle initialization through $w.page; retain the captured owner, shared capsule and all existing race/cleanup guards. Distinguish uninitialized/loading/error/confirmed-empty list labels.",
+    "changedLifecycleResources": 5,
+    "listFeedbackNodes": 10,
+    "allOtherCloudContentPreserved": true,
+    "cloudFullReadbackMatched": true,
+    "sourceCanonicalSha256": "293b9cb1e106d5f662dec4f9fcdf4484a29fc8fe879f02bd30d4a199faadcd22",
+    "realDataReadVerification": {
+      "method": "Official IAM allowlisted projections passed to the local read-service in memory",
+      "listReadsSucceeded": 5,
+      "nonEmptyManagementPagesAvailable": 4,
+      "certificationSampleAvailable": false,
+      "rawRowsLoggedOrCommitted": false,
+      "cloudStateChanged": false,
+      "operatorFunctionChainVerified": false
+    },
+    "exactCloudRendererRegression": {
+      "scope": "Offline regression using exact cloud HC/XN/MN/NN/RN and complete original/generated CALS lifecycle resources. Business responses are explicitly fictional local fixtures; no browser, live identity or cloud endpoint is used.",
+      "cases": 20,
+      "pass": 20,
+      "networkRequests": 0,
+      "bundleSha256": "1a36c2538da885c177b3f0f4e6fbee7fe8e5c144ff6aa9cfbce87e755e3cf216",
+      "lifecycleOnlyPagesPassed": 5,
+      "totalModuleFallbackRequests": 0,
+      "limitations": [
+        "The cloud dataset setter is replaced with a minimal assignment adapter.",
+        "No editor-injected page object or actual preview was exercised."
+      ]
+    },
+    "checks": {
+      "relatedTests": 66,
+      "relatedPass": 66,
+      "listFeedbackAndCodePatchTests": 5,
+      "lifecycleTests": 10
+    },
+    "backendRedeployed": false,
+    "published": false,
+    "actualCloudListQueryVerified": false,
+    "manualAcceptance": "Refresh and merge cloud history, enter Plans and confirm a numeric total and visible rows, then test selected details and the other lists. User navigation acceptance alone does not verify the administrator read/write chain."
   }
 }
