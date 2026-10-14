@@ -166,12 +166,13 @@ test('non-plain request envelopes and accessor properties cannot execute a servi
   }
 });
 
-// basic-api.callFunction in the official Weda SDK injects these six top-level
-// transport fields. Values below are isolated fixtures, not real cloud identity.
+// basic-api.callFunction in the official Weda SDK injects six top-level fields;
+// the official renderer's beforeCallFunction hook adds accessToken for configured
+// login. Values below are isolated fixtures, not real cloud identity.
 const sdkMetadata = (envType = 'prod') => ({ wedaAppId: 'app_fixture_sdk_wire',
   userAgent: 'Mozilla/5.0 (fixture browser)', referrer: 'https://fixture.invalid/admin', envType,
-  wedaTarget: 'web', 'x-cloud-sdk-version': 'fixture-sdk-version' });
-test('authorized SDK-wire-shaped reads and writes accept all six metadata fields without changing business args or actor', async () => {
+  wedaTarget: 'web', 'x-cloud-sdk-version': 'fixture-sdk-version', accessToken: 'fixture-platform-token-not-a-real-credential' });
+test('authorized SDK-wire-shaped reads and writes accept platform metadata without changing business args or actor', async () => {
   for (const envType of ['pre', 'prod']) {
     const rt = runtime(), readArgs = { active: false };
     const read = await rt.main({ action: 'plans.list', args: readArgs, ...sdkMetadata(envType) }, rt.providerContext);
@@ -219,4 +220,35 @@ test('SDK metadata permits bounded strings and optional null or undefined withou
     assert.equal(result.code, 0); assert.equal(rt.calls.authorize.length, 1); assert.equal(rt.calls.services.length, 1);
     assert.deepEqual(Object.keys(rt.calls.services[0].args), []);
   }
+});
+
+test('renderer accessToken is ignored for every read and never reaches a service, result or diagnostic', async () => {
+  const token = 'fixture-renderer-token-containing-private-text';
+  for (const action of Object.keys(READS)) {
+    const rt = runtime(), args = { fixture: 'business-service-validates-its-own-fields' };
+    const result = await rt.main({ action, args, ...sdkMetadata(), accessToken: token }, rt.providerContext);
+    assert.equal(result.code, 0, action);
+    assert.equal(rt.calls.parse[0], rt.providerContext);
+    assert.equal(rt.calls.authorize.length, 1);
+    assert.equal(rt.calls.services[0].args, args);
+    assert.equal(rt.calls.services[0].actor, undefined);
+    assert.ok(!JSON.stringify({ result, services: rt.calls.services, warnings: rt.calls.warnings }).includes(token));
+  }
+  const rt = runtime();
+  rt.state.failure = Object.assign(new Error('fixture service error'), { code: 42260 });
+  const failed = await rt.main({ action: 'plans.list', accessToken: token }, rt.providerContext);
+  assert.equal(failed.code, 42260);
+  assert.ok(!JSON.stringify({ failed, warnings: rt.calls.warnings }).includes(token));
+  assert.deepEqual(Object.keys(rt.calls.warnings[0][1]).sort(), ['code', 'requestId']);
+});
+
+test('renderer accessToken does not replace provider login or an active server administrator role', async () => {
+  const rt = runtime();
+  const request = { action: 'plans.list', args: { page: 1, pageSize: 10 },
+    accessToken: 'fixture-token-claiming-administrator' };
+  assert.equal((await rt.main(request, {})).code, 40150);
+  rt.state.permitted = false;
+  assert.equal((await rt.main(request, rt.providerContext)).code, 40350);
+  assert.equal(rt.calls.database.length, 0);
+  assert.equal(rt.calls.services.length, 0);
 });

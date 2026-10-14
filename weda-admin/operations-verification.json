@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-14T12:44:02.190Z",
+  "checkedAt": "2026-10-14T13:17:50.841Z",
   "scope": "Native Weda five-page management workflows, fixed-price activation and cockpit date-axis fix",
   "userDecisions": {
     "cockpitRealPreviewAccepted": true,
@@ -23,14 +23,14 @@
     "name": "hlAdminOperations",
     "runtime": "Nodejs20.19",
     "status": "Active",
-    "bundleSha256": "d2ef1023fbb7a3517741290eea753ef4970e789180a1123ad1cea576a6ef74bf",
+    "bundleSha256": "ecec60b2d4cd46b32b5e3d42998f47517278705f0316fffdd64cfed35ba523a7",
     "downloadedIndexMatchesBuild": true,
     "protectedEnvironmentMatched": true,
     "forgedIdentityDenied": 40150,
     "jwtSigningSecretCopied": false,
     "nativeAdministratorNewOperationsSuccessVerified": false,
-    "deployedAt": "2026-10-14 12:50:49",
-    "verifiedAt": "2026-10-14T04:51:02.999Z"
+    "deployedAt": "2026-10-14 21:15:13",
+    "verifiedAt": "2026-10-14T13:15:27.928Z"
   },
   "audit": {
     "collection": "hl_admin_audit_logs",
@@ -63,8 +63,8 @@
   },
   "checks": {
     "fullWorkspace": {
-      "tests": 1284,
-      "pass": 1284,
+      "tests": 1286,
+      "pass": 1286,
       "fail": 0
     },
     "officialSchemaAndComponentContractsValid": true,
@@ -420,5 +420,54 @@
     "paymentConfigurationChanged": false,
     "published": false,
     "manualAcceptance": "Reload the editor from the saved draft and open a fresh Plans preview. Confirm six fixed-price rows and a numeric total, then query and navigate. If the editor offers a cloud-code merge, use the saved cloud version; absence of that prompt does not prove a save failure."
+  },
+  "platformMetadataCompatibilityRepair": {
+    "checkedAt": "2026-10-14T13:17:50.841Z",
+    "userReportedSymptom": "Submitted arguments failed validation; list records not obtained. The handler now runs, but the function rejects the transport envelope.",
+    "rootCause": "The actual renderer beforeCallFunction hook injects data.accessToken in non-basic mode with configured login. The management envelope allowed only the six SDK metadata fields, so valid lists returned 42260 before any database read.",
+    "documents": [
+      "https://docs.cloudbase.net/lowcode/api/cloud",
+      "https://docs.cloudbase.net/lowcode/practices/platform-guide/weda-client",
+      "https://docs.cloudbase.net/api-reference/server/node-sdk/env",
+      "https://docs.cloudbase.net/cloud-function/instance"
+    ],
+    "publicRuntime": "https://qbase.cdn-go.cn/lcap/lcap-resource-cdngo/-/0.1.4/_files/static/weda-render/main.0ab216cf8f7a4031dead.bundle.js",
+    "publicRuntimeSha256": "1a36c2538da885c177b3f0f4e6fbee7fe8e5c144ff6aa9cfbce87e755e3cf216",
+    "exactHookOffset": 1164915,
+    "exactHookEvaluated": true,
+    "compatibilityField": "accessToken",
+    "fieldPolicy": "Optional bounded string under the existing 4096-character application metadata limit; null/undefined compatible. Not used for authorization, business args, actor, logs or audit.",
+    "authorization": "Unchanged: parse this invocation context, validate platform identity/environment, then verify ACTIVE internalUser with administrator role from server-side user lookup.",
+    "requestContract": "Unchanged action/args/requestId contract. Unknown business or top-level fields still rejected; fixed list args are page=1,pageSize=10.",
+    "reproduction": {
+      "cases": 5,
+      "oldFailures": 5,
+      "repairedSuccesses": 5,
+      "fixedPlanCount": 6,
+      "pipeline": "Exact public renderer hook -> actual entry -> actual read service, with isolated empty database and fictional platform token; no network or real identity.",
+      "dataEqualToNoHookBaseline": true,
+      "cloudCalls": 0,
+      "businessWrites": 0
+    },
+    "functionDeployment": {
+      "name": "hlAdminOperations",
+      "runtime": "Nodejs20.19",
+      "status": "Active",
+      "previousBundleSha256": "d2ef1023fbb7a3517741290eea753ef4970e789180a1123ad1cea576a6ef74bf",
+      "bundleSha256": "ecec60b2d4cd46b32b5e3d42998f47517278705f0316fffdd64cfed35ba523a7",
+      "downloadedCodeMatched": true,
+      "protectedEnvironmentMatched": true,
+      "businessBundleOnlyChange": "The accessToken metadata allowlist entry; third-party dependencies were rebundled with esbuild 0.25.12.",
+      "modifiedAt": "2026-10-14 21:15:13",
+      "verifiedAt": "2026-10-14T13:15:27.928Z",
+      "unauthorizedInvocationDenied": 40150
+    },
+    "backendRedeployed": true,
+    "frontendDraftChanged": false,
+    "businessDataChanged": false,
+    "paymentConfigurationChanged": false,
+    "applicationPublished": false,
+    "actualAdministratorListVerified": false,
+    "acceptance": "Click Query in the existing Plans preview. No page-code merge is required for this backend-only fix. Real administrator session data display remains user acceptance."
   }
 }

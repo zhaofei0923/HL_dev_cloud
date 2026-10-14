@@ -19,8 +19,11 @@ const READS = Object.freeze({
 const WRITES = Object.freeze(['matchmakers.review', 'certifications.review', 'salons.review', 'salons.cancel', 'plans.update']);
 const MATERIALS = Object.freeze(['certifications.evidence', 'certifications.material']);
 // Official Weda cloud-sdk injects these into data before app.callFunction.
-// They are caller-controlled transport metadata, never authorization inputs.
-const SDK_METADATA = Object.freeze(['wedaAppId', 'userAgent', 'referrer', 'envType', 'wedaTarget', 'x-cloud-sdk-version']);
+// The renderer's beforeCallFunction hook also adds accessToken when its login
+// configuration is enabled. Treat all as caller-controlled transport metadata;
+// only the provider-parsed context above can establish the administrator identity.
+// Never copy accessToken into business args, actor, audit records or diagnostics.
+const SDK_METADATA = Object.freeze(['wedaAppId', 'userAgent', 'referrer', 'envType', 'wedaTarget', 'x-cloud-sdk-version', 'accessToken']);
 const describeUsers = (config, params) => new tcb.v20180608.Client(config).DescribeUserList(params);
 
 exports.main = async (event = {}, context = {}) => {
