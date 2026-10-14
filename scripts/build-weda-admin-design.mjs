@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { buildCockpit, cockpitLayoutCSS } from './weda-admin-cockpit.mjs';
 import { connectCockpit } from './connect-weda-cockpit.mjs';
+import { connectOperations } from './connect-weda-operations.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const appId = 'app-pq2auygx';
@@ -99,11 +100,12 @@ app.items=pages.map(p=>{
 });
 app.resources=app.resources.filter(x=>!(x.name==='style'&&x.codeType==='style'));
 app.resources.push({type:'CODE',name:'style',path:'global/style',codeType:'style',code:(await readFile(resolve(root,'weda-admin/theme.css'),'utf8')).trimEnd()+'\n\n'+cockpitLayoutCSS.trim()+'\n'});
-app.description='与小程序品牌一致的运营驾驶舱；经授权的只读会员、主理人和经营收款统计，其他业务操作待接入。';
+app.description='与小程序品牌一致的运营驾驶舱；授权管理员统计、受控审核与套餐启停，支付订单只读。';
 // Rebuilding the view must also restore its reviewed variables, bindings and
 // lifecycle, rather than silently reverting a connected dashboard to a draft.
 const connectedApp = connectCockpit(app, await readFile(resolve(root, 'weda-admin/cockpit-runtime.js'), 'utf8'));
 if (!process.argv.includes('--all-pages') && !isDeepStrictEqual(connectedApp.items.filter(page => page.id !== 'overview'), preserved.pages)) throw new Error('Unexpected changes to other five pages');
 if (!isDeepStrictEqual(connectedApp.templates, preserved.templates) || !isDeepStrictEqual(connectedApp.extra, preserved.extra)) throw new Error('Unexpected application layout or configuration changes');
-await writeFile(applicationPath,JSON.stringify(connectedApp,null,2)+'\n');
-console.log(JSON.stringify({appId,pages:pages.map(p=>p.id),baselineSource:baseline.source,cloudBaseline:baseline.historyId,readOnlyFunction:'hlAdminCockpit',otherPagesPreserved:!process.argv.includes('--all-pages'),layoutTemplatesPreserved:true,output:'weda-admin/app.cals.json'}));
+const operationsApp = connectOperations(connectedApp, await readFile(resolve(root, 'weda-admin/operations-runtime.js'), 'utf8'));
+await writeFile(applicationPath,JSON.stringify(operationsApp,null,2)+'\n');
+console.log(JSON.stringify({appId,pages:pages.map(p=>p.id),baselineSource:baseline.source,cloudBaseline:baseline.historyId,readOnlyFunction:'hlAdminCockpit',operationsFunction:'hlAdminOperations',otherPagesPreserved:isDeepStrictEqual(operationsApp.items.filter(page=>page.id!=='overview'),preserved.pages),layoutTemplatesPreserved:true,output:'weda-admin/app.cals.json'}));

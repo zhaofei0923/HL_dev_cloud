@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-14T02:49:54.448Z",
+  "checkedAt": "2026-10-14T04:54:31.748Z",
   "schemaPackage": "@cloudbase/cals@1.2.25",
   "componentVersion": "gsd-h5-react@3.31.0",
   "schemaValid": true,
@@ -48,16 +48,20 @@
     "plans",
     "orders"
   ],
-  "textCount": 312,
-  "buttonCount": 29,
-  "disabledBusinessButtonCount": 24,
+  "textCount": 653,
+  "buttonCount": 154,
+  "disabledBusinessButtonCount": 0,
   "navigationButtonCount": 5,
   "unsafeUnitlessLineHeights": 0,
   "remoteDataCallsPresent": true,
   "businessRecordsPresent": false,
-  "appSha256": "9e8566d727794e272112cbd422dfd88044939c48a8617a718c3cda842bc00093",
+  "appSha256": "21f6d42ea47acc4f2882277fd723a240802d30335ede0c8d9f62c7ee74ccec08",
   "visualAndRuntimeVerification": "Recorded separately; static checks do not prove rendered appearance",
   "allowedReadOnlyFunction": "hlAdminCockpit",
+  "managementFunctions": [
+    "hlAdminOperations"
+  ],
+  "controlledBusinessButtonCount": 149,
   "chartEmptyDataChecks": {
     "components": [
       "Line",

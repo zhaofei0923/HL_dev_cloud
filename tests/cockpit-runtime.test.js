@@ -95,11 +95,11 @@ test('native Line and Pie data use XLabel and YLabels arrays, preserving zero an
   ];
   const view = createCockpitView(input);
   assert.deepEqual(view.memberTrend, [
-    { XLabel: { Name: 'date', Value: '2026-10-12' }, YLabels: [{ Name: 'newCount', Cn_Name: '新增会员', Value: 0 }, { Name: 'cumulative', Cn_Name: '累计建档', Value: 2 }] },
-    { XLabel: { Name: 'date', Value: '2026-10-13' }, YLabels: [{ Name: 'newCount', Cn_Name: '新增会员', Value: null }, { Name: 'cumulative', Cn_Name: '累计建档', Value: null }] },
+    { date: '2026-10-12', XLabel: { Name: 'date', Value: '10-12' }, YLabels: [{ Name: 'newCount', Cn_Name: '新增会员', Value: 0 }, { Name: 'cumulative', Cn_Name: '累计建档', Value: 2 }] },
+    { date: '2026-10-13', XLabel: { Name: 'date', Value: '10-13' }, YLabels: [{ Name: 'newCount', Cn_Name: '新增会员', Value: null }, { Name: 'cumulative', Cn_Name: '累计建档', Value: null }] },
   ]);
   assert.deepEqual(view.revenueTrend, [
-    { XLabel: { Name: 'date', Value: '2026-10-12' }, YLabels: [{ Name: 'paidFen', Cn_Name: '实付金额', Value: 0 }, { Name: 'refundFen', Cn_Name: '退款金额', Value: null }, { Name: 'netFen', Cn_Name: '净收款', Value: -1.5 }] },
+    { date: '2026-10-12', XLabel: { Name: 'date', Value: '10-12' }, YLabels: [{ Name: 'paidFen', Cn_Name: '实付金额', Value: 0 }, { Name: 'refundFen', Cn_Name: '退款金额', Value: null }, { Name: 'netFen', Cn_Name: '净收款', Value: -1.5 }] },
   ]);
   assert.deepEqual(view.productPie, [
     { XLabel: { Name: 'product', Value: '测试套餐甲' }, YLabels: [{ Name: 'paidFen', Cn_Name: '实付金额', Value: 100 }] },
@@ -109,6 +109,21 @@ test('native Line and Pie data use XLabel and YLabels arrays, preserving zero an
   assert.equal(view.hasMemberTrend, true);
   assert.equal(view.hasRevenueTrend, true);
   assert.equal(view.hasProductPie, true);
+});
+
+test('long trends retain all daily points and ISO dates with at most eight short labels including both ends', async () => {
+  const { createCockpitView } = await runtime();
+  for (const days of [7, 30, 90]) {
+    const input = data();
+    input.members.trend = Array.from({ length: days }, (_, i) => ({ date: new Date(Date.UTC(2026, 6, 17 + i)).toISOString().slice(0, 10), newCount: i === 1 ? null : i, cumulative: 100 + i }));
+    const rows = createCockpitView(input).memberTrend;
+    assert.equal(rows.length, days);
+    assert.deepEqual(rows.map(row => row.date), input.members.trend.map(row => row.date));
+    assert.deepEqual(rows.map(row => row.YLabels[0].Value), input.members.trend.map(row => row.newCount));
+    assert.ok(rows.filter(row => row.XLabel.Value).length <= 8);
+    assert.equal(rows[0].XLabel.Value, rows[0].date.slice(5));
+    assert.equal(rows.at(-1).XLabel.Value, rows.at(-1).date.slice(5));
+  }
 });
 
 test('all unknown trends and incomplete product classifications cannot produce apparent chart totals', async () => {

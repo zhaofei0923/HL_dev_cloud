@@ -23,6 +23,7 @@ function rowNode(id, items, columns) {
 }
 
 export function connectCockpit(original, runtimeCode) {
+  runtimeCode = runtimeCode.replace(/\r\n/g, '\n');
   const app = structuredClone(original);
   if (app.name !== 'hl-admin-weda' || app.schemaVersion !== '4.0.0') throw new Error('Unexpected Weda application');
   const page = app.items?.find(item => item.id === 'overview' && item.type === 'PAGE');
@@ -103,7 +104,7 @@ export function connectCockpit(original, runtimeCode) {
   const mixRows = [];
   for (let i = 0; i < 10; i++) {
     const item = `${VIEW}.mixRows[${i}]`;
-    const exists = `${VIEW} && ${item}`;
+    const exists = `${VIEW} && ${VIEW}.mixRows.length > ${i}`;
     const row = rowNode(`revenueMixRow${i}`, [
       { id: `cockpitMixName${i}`, component: 'Container', attributes: { style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '7px', minWidth: '0px' } }, items: [
         { id: `cockpitMixDot${i}`, component: 'Container', attributes: { style: { width: '7px', height: '7px', flexShrink: 0, borderRadius: '50%', backgroundColor: COLORS[i % COLORS.length] } }, items: [] },
@@ -124,7 +125,7 @@ export function connectCockpit(original, runtimeCode) {
   scroll.items = scroll.items.filter(item => !/^cockpitRankRow\d+$/.test(item.id));
   for (let i = 0; i < 10; i++) {
     const item = `${VIEW}.ranking[${i}]`;
-    const exists = `${VIEW} && ${item}`;
+    const exists = `${VIEW} && ${VIEW}.ranking.length > ${i}`;
     const row = rowNode(`cockpitRankRow${i}`, ['name', 'city', 'memberCount', 'newAssignments'].map((key, column) => textNode(`cockpitRank${i}Cell${column}`, `${exists} ? ${item}.${key} : '—'`)), '1.25fr 1fr 1fr 1.2fr');
     row.directives = { ':if': exists };
     scroll.items.push(row);

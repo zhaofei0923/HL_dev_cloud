@@ -103,13 +103,27 @@ const pageIds=app.items.map(p=>p.id);
 const connectedPage=app.items.find(p=>p.id==='overview');
 const connectedHandler=connectedPage?.resources?.find(r=>r.path==='overview/handler/loadCockpit');
 const connected=!!connectedHandler;
+const operationPages=new Map(app.items.filter(p=>p.id!=='overview').map(p=>[p.id,p.resources?.find(r=>r.path===`${p.id}/handler/operations`)]).filter(([,handler])=>handler));
+const operationCommands=new Set(['init','clear','edit','choose','filter','query','reset','previous','next','select','detail','prepare','cancelConfirmation','submit','material','evidence','openPdf','downloadPdf','closeMaterial']);
+const operationFields=new Set(['keyword','remark','feedback','source','educationLevel','financialAssetRange','evidenceReference']);
+function operationListener(node,pageId){
+  if(!operationPages.has(pageId)||!Array.isArray(node.listeners)||node.listeners.length!==1)return false;
+  const listener=node.listeners[0],handler=listener.handler,target=handler?.params?.target;
+  if(listener.type!=='rematch'||handler?.name!=='operations'||handler?.module!==pageId
+    ||listener.eventName!==(node.component==='WdInput'?'change':'tap')||!target||!operationCommands.has(target.command))return false;
+  if(Object.keys(handler.params).some(key=>key!=='target')||Object.keys(target).some(key=>!['command','field','index','operation','value'].includes(key)))return false;
+  if(target.field!==undefined&&!operationFields.has(target.field))return false;
+  if(target.index!==undefined&&(!Number.isInteger(target.index)||target.index<0||target.index>=10))return false;
+  if(target.operation!==undefined&&!['approve','reject','revoke','cancel','toggle'].includes(target.operation))return false;
+  return Object.values(target).every(value=>typeof value==='string'||typeof value==='number');
+}
 const statePrefix='$page.dataset.state';
 function validBinding(expression){
   return typeof expression==='string'&&expression.includes(statePrefix)
-    && !/[;{}=`]|\b(?:new|function|constructor|prototype|__proto__|fetch|require|import)\b/.test(expression)
+    && !/[;{}=`]|\b(?:new|function|constructor|prototype|__proto__|fetch|require|import)\b/.test(expression.replaceAll('===','').replaceAll('!==',''))
     && !/\w\s*\(/.test(expression.replaceAll(statePrefix,''));
 }
-let buttons=0,disabled=0,nav=0,texts=0,unsafeLineHeights=0,charts=0;
+let buttons=0,disabled=0,nav=0,texts=0,unsafeLineHeights=0,charts=0,controlledActions=0;
 for(const p of app.items){
   const seen=new Set();
   function walk(n){
@@ -124,7 +138,7 @@ for(const p of app.items){
       else for(const [key,value] of Object.entries(attrs)){
         if(['style','class','commonStyle'].includes(key))continue;
         if(key.startsWith(':')){
-          if(!connected||p.id!=='overview'||!contract.has(key.slice(1))||!validBinding(value))errors.push(`${p.id}/${n.id}: unsupported dynamic binding ${key}`);
+          if(!(p.id==='overview'?connected:operationPages.has(p.id))||!contract.has(key.slice(1))||!validBinding(value))errors.push(`${p.id}/${n.id}: unsupported dynamic binding ${key}`);
           continue;
         }
         const check=contract.get(key);
@@ -150,10 +164,11 @@ for(const p of app.items){
       if(!attrs.text?.trim())errors.push(`${n.id}: no button label`);
       const target=n.listeners?.[0]?.handler?.params?.pageId;
       if(target){nav++;if(!pageIds.includes(target)||attrs.disabled)errors.push(`${n.id}: invalid navigation`);}
-      else{disabled++;if(attrs.disabled!==true || n.listeners?.length)errors.push(`${n.id}: active business action`);}
+      else if(operationListener(n,p.id)){controlledActions++;if(!validBinding(attrs[':disabled']))errors.push(`${n.id}: controlled button lacks reviewed disabling state`);}
+      else{disabled++;if(attrs.disabled!==true || n.listeners?.length)errors.push(`${n.id}: unreviewed active business action`);}
       if(attrs.style.color===attrs.style.backgroundColor)errors.push(`${n.id}: button label invisible`);
     }
-    if(n.component==='WdInput'&&attrs.status!=='disabled')errors.push(`${n.id}: unsupported live filter`);
+    if(n.component==='WdInput'&&attrs.status!=='disabled'&&!(operationListener(n,p.id)&&validBinding(attrs[':inputValue'])&&validBinding(attrs[':status'])))errors.push(`${n.id}: unsupported live filter`);
     if(['Line','Bar','Pie'].includes(n.component)){
       charts++;
       // Unconfigured data-model charts contain built-in demo series. The draft
@@ -164,7 +179,7 @@ for(const p of app.items){
       const bound=connected&&p.id==='overview'&&expression!==null&&attrs[':datasourceVariable']===expression;
       if(attrs.dataSourceType!=='variable'||(!empty&&!bound))errors.push(`${p.id}/${n.id}: chart must use empty data or the verified cockpit binding`);
     }
-    for(const [key,value]of Object.entries(n.directives||{}))if(key!==':if'||p.id!=='overview'||!connected||!validBinding(value))errors.push(`${p.id}/${n.id}: unsupported conditional directive`);
+    for(const [key,value]of Object.entries(n.directives||{}))if(key!==':if'||!(p.id==='overview'?connected:operationPages.has(p.id))||!validBinding(value))errors.push(`${p.id}/${n.id}: unsupported conditional directive`);
     for(const child of n.items||[])walk(child);
   }
   walk(p);
@@ -174,16 +189,24 @@ postcss.parse(style);
 if(/#215c4d|#18312e/i.test(source))errors.push('Legacy green branding remains');
 if(/\.database\(|\.collection\(/.test(source))errors.push('Unexpected direct database invocation');
 if(connected){
-  const runtime=await readFile(resolve(root,'weda-admin/cockpit-runtime.js'),'utf8');
+  const runtime=(await readFile(resolve(root,'weda-admin/cockpit-runtime.js'),'utf8')).replace(/\r\n/g,'\n');
   if(connectedHandler.code!=='// HL_COCKPIT_READONLY_V1\n'+runtime)errors.push('Cockpit handler differs from reviewed runtime source');
   if((runtime.match(/\.callFunction\(/g)||[]).length!==1||!runtime.includes("name: 'hlAdminCockpit'"))errors.push('Unexpected cockpit function target');
   const resources=[...app.resources,...app.items.flatMap(p=>p.resources||[])];
-  if(resources.some(r=>r!==connectedHandler&&/callFunction|\.database\(|\.collection\(/.test(r.code||'')))errors.push('Unexpected remote invocation outside cockpit handler');
+  const operationRuntime=operationPages.size?(await readFile(resolve(root,'weda-admin/operations-runtime.js'),'utf8')).replace(/\r\n/g,'\n'):null;
+  for(const[pageId,handler]of operationPages){
+    if(handler.code!=='// HL_OPERATIONS_V1\n'+operationRuntime)errors.push(`${pageId}: operations handler differs from reviewed source`);
+  }
+  if(operationRuntime&&((operationRuntime.match(/\.callFunction\(/g)||[]).length!==1||!operationRuntime.includes("name: 'hlAdminOperations'")))errors.push('Unexpected management function target');
+  const allowedResources=new Set([connectedHandler,...operationPages.values()]);
+  if(resources.some(r=>!allowedResources.has(r)&&/callFunction|\.database\(|\.collection\(|\bfetch\s*\(/.test(r.code||'')))errors.push('Unexpected remote invocation outside reviewed handlers');
 }else if(/callFunction/.test(source))errors.push('Unexpected business API invocation');
-if(buttons!==29||disabled!==24||nav!==5||pageIds.length!==6)errors.push('Unexpected action/page counts');
+if(nav!==5||pageIds.length!==6||(operationPages.size?operationPages.size!==5||controlledActions<40:buttons!==29||disabled!==24))errors.push('Unexpected action/page counts');
 const report={checkedAt:new Date().toISOString(),schemaPackage:'@cloudbase/cals@1.2.25',componentVersion:'gsd-h5-react@3.31.0',schemaValid,schemaAndContractsValid:errors.length===0,componentContractValidation:{mode:'Known attributes and projected dataForm value constraints; not full editor or runtime behavior',validatedKeywords:[...projectedKeywords].filter(k=>!['$id','$ref'].includes(k)).sort(),localReferences:'Identical repeated editor anchors are coalesced into local definitions; conflicting or unresolved anchors fail',slotHandling:'Editor type=slot is not JSON Schema; slot names are checked against CALS child items',normalization,excludedMetadata:['x-* including x-rules and platform rules','editor default values, labels, descriptions and widgets','templates, linkages and action code','boolean required annotations','format annotations; no format validator is installed'],limitations:['Top-level omitted props rely on documented runtime defaults; no defaults are injected','CSS syntax and selected visible-state rules are checked, not full computed style','Rendering, interaction, menu navigation and backend authorization require runtime verification']},errors,pageIds,textCount:texts,buttonCount:buttons,disabledBusinessButtonCount:disabled,navigationButtonCount:nav,unsafeUnitlessLineHeights:unsafeLineHeights,remoteDataCallsPresent:false,businessRecordsPresent:false,appSha256:createHash('sha256').update(source).digest('hex'),visualAndRuntimeVerification:'Recorded separately; static checks do not prove rendered appearance'};
 report.remoteDataCallsPresent=connected;
 report.allowedReadOnlyFunction=connected?'hlAdminCockpit':null;
+report.managementFunctions=operationPages.size?['hlAdminOperations']:[];
+report.controlledBusinessButtonCount=controlledActions;
 report.chartEmptyDataChecks={components:['Line','Bar','Pie'],chartCount:charts,requiredDataSourceType:'variable',initialDatasourceVariable:[],dynamicData:connected?'Verified overview cockpit bindings only':false,defaultDemoSourceAllowed:false};
 if(normalization.unavailableEditorEnumChoicesExcluded)report.componentContractValidation.excludedMetadata.push('Empty editor enum[] choices are unavailable; declared types are validated but choice membership is not');
 if(!process.argv.includes('--stdout'))await writeFile(resolve(root,'weda-admin/validation-report.json'),JSON.stringify(report,null,2)+'\n');

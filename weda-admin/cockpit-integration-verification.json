@@ -79,5 +79,10 @@
     "Database data and ACLs",
     "Formal payment configuration",
     "Unrelated working tree changes"
-  ]
+  ],
+  "supersededBy": "operations-verification.json",
+  "subsequentUserAcceptance": {
+    "realCockpitPreview": true,
+    "basis": "User confirmation and attached screenshot with real metrics on 2026-10-14"
+  }
 }

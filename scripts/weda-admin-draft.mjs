@@ -81,6 +81,14 @@ try {
       && (handlerCode.match(/\bcallFunction\s*\(/g) || []).length === 1
       && /\$w\.cloud\.callFunction\s*\(\s*\{\s*name\s*:\s*(['"])hlAdminCockpit\1\s*,/.test(handlerCode);
     const connectedFunction = businessApiConnected ? 'hlAdminCockpit' : null;
+    const operationsPages = cals.items.filter(item => item.type === 'PAGE' && item.id !== 'overview');
+    const operationsConnected = operationsPages.length === 5 && operationsPages.every(page => {
+      const code = page.resources?.find(resource => resource.codeType === 'handler-fn' && resource.path === `${page.id}/handler/operations`)?.code;
+      return typeof code === 'string' && code.startsWith('// HL_OPERATIONS_V1\n')
+        && (code.match(/\bcallFunction\s*\(/g) || []).length === 1
+        && /\$w\.cloud\.callFunction\s*\(\s*\{\s*name\s*:\s*(['"])hlAdminOperations\1\s*,/.test(code);
+    });
+    const connectedFunctions = [connectedFunction, ...(operationsConnected ? ['hlAdminOperations'] : [])].filter(Boolean);
     let known;
     try { known = JSON.parse(await readFile(evidence, 'utf8')); }
     catch (error) { if (error?.code !== 'ENOENT') throw error; }
@@ -121,7 +129,9 @@ try {
           throw new Error('Cloud draft changed since backup; preserve concurrent edits');
         }
       }
-      const saveParams = { WeAppId: id, HistoryContent: JSON.stringify(cals), Comment: businessApiConnected
+      const saveParams = { WeAppId: id, HistoryContent: JSON.stringify(cals), Comment: operationsConnected
+        ? '后台五页接通查询、详情、审核、认证材料与套餐启停；保留固定价格；未发布'
+        : businessApiConnected
         ? '运营驾驶舱接入 hlAdminCockpit 只读真实统计；会员、主理人与经营收款分析；未发布'
         : '运营驾驶舱界面设计；业务统计尚未接入；未发布' };
       if (latest?.id ?? latest?.Id) saveParams.CommitBaseline = safeHistoryId(latest.id ?? latest.Id);
@@ -131,7 +141,7 @@ try {
       await mkdir(resolve(root, 'output'), { recursive: true });
       await writeFile(evidence, JSON.stringify({ ...summary, appId: id, name: APP_NAME,
         createdRequestId: known?.createdRequestId, saveRequestId, status: 'design-saved-awaiting-readback', published: false,
-        businessApiConnected, connectedFunction, browserPreviewVerified: false }, null, 2) + '\n');
+        businessApiConnected, connectedFunction, operationsConnected, connectedFunctions, browserPreviewVerified: false }, null, 2) + '\n');
     }
     const history = await call('DescribeHistoryListByAppId', { PageNum: 1, PageSize: 1, WeAppId: id });
     const histories = history.Data?.List ?? history.Data?.list;
@@ -144,7 +154,7 @@ try {
     const record = { ...summary, appId: id, name: APP_NAME, cloudAppName: detailName, title: APP_TITLE,
       createdRequestId: known?.createdRequestId, saveRequestId, historyRequestId: history.RequestId, historyId,
       sourceSha256: sha256(JSON.stringify(cals)), pageIds: cals.items.filter(item => item.type === 'PAGE').map(item => item.id),
-      status: 'design-saved-and-readback-verified', published: false, businessApiConnected, connectedFunction,
+      status: 'design-saved-and-readback-verified', published: false, businessApiConnected, connectedFunction, operationsConnected, connectedFunctions,
       browserPreviewVerified: false,
       verificationScope: 'design-history-readback-only',
       lastDeployTime: metadata.LastDeployTime, lastWebCiStatus: metadata.LastWebCiStatus,

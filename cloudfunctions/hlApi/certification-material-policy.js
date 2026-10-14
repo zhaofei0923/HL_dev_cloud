@@ -94,7 +94,10 @@ function resolveKey(secrets, keySource) {
   const dedicatedPresent = secrets.encryptionKey !== undefined && secrets.encryptionKey !== null && secrets.encryptionKey !== '';
   const source = keySource || (dedicatedPresent ? 'dedicated' : 'jwt-derived-v1');
   if (!KEY_SOURCES.has(source)) throw inputError();
-  return { key: source === 'dedicated' ? dedicatedKey(secrets.encryptionKey) : derivedKey(secrets.jwtSecret), keySource: source };
+  // Read-only administrative services receive only this domain-specific key,
+  // never the JWT signing secret. Preserve the original envelope/AAD source.
+  return { key: source === 'dedicated' ? dedicatedKey(secrets.encryptionKey)
+    : secrets.jwtDerivedKey ? dedicatedKey(secrets.jwtDerivedKey) : derivedKey(secrets.jwtSecret), keySource: source };
 }
 
 function associatedData(context, purpose, keySource) {

@@ -1,0 +1,135 @@
+{
+  "checkedAt": "2026-10-14T04:51:57.733519+00:00",
+  "scope": "Native Weda five-page management workflows, fixed-price activation and cockpit date-axis fix",
+  "userDecisions": {
+    "cockpitRealPreviewAccepted": true,
+    "pricePolicy": "Retain fixed prices; enable plan read/activation and all other scoped management workflows"
+  },
+  "draft": {
+    "appId": "app-pq2auygx",
+    "historyId": 6775825,
+    "fullReadbackMatched": true,
+    "sourceCanonicalSha256": "759cfa678bfea5c4f7d052329df8aa5512ae6c3bb68ab5967ecae0a34bbb360a",
+    "published": false,
+    "connectedFunctions": [
+      "hlAdminCockpit",
+      "hlAdminOperations"
+    ],
+    "layoutTemplatesAndLoginConfigPreserved": true
+  },
+  "function": {
+    "name": "hlAdminOperations",
+    "runtime": "Nodejs20.19",
+    "status": "Active",
+    "bundleSha256": "d2ef1023fbb7a3517741290eea753ef4970e789180a1123ad1cea576a6ef74bf",
+    "downloadedIndexMatchesBuild": true,
+    "protectedEnvironmentMatched": true,
+    "forgedIdentityDenied": 40150,
+    "jwtSigningSecretCopied": false,
+    "nativeAdministratorNewOperationsSuccessVerified": false,
+    "deployedAt": "2026-10-14 12:50:49",
+    "verifiedAt": "2026-10-14T04:51:02.999Z"
+  },
+  "audit": {
+    "collection": "hl_admin_audit_logs",
+    "aclTag": "ADMINONLY",
+    "safeRuleTag": "ADMINONLY",
+    "writesAtomicWithBusinessChange": true,
+    "sensitiveReadsAuditedBeforePlaintextReturn": true
+  },
+  "features": {
+    "listsFiltersPaginationAndSelectedDetails": [
+      "matchmakers",
+      "certifications",
+      "salons",
+      "plans",
+      "orders"
+    ],
+    "mutations": [
+      "matchmakers.review",
+      "certifications.review",
+      "salons.review",
+      "salons.cancel",
+      "plans.update"
+    ],
+    "sensitiveReads": [
+      "certifications.evidence",
+      "certifications.material"
+    ],
+    "fixedPrice": true,
+    "ordersReadOnly": true
+  },
+  "checks": {
+    "fullWorkspace": {
+      "tests": 1246,
+      "pass": 1246,
+      "fail": 0
+    },
+    "officialSchemaAndComponentContractsValid": true,
+    "buttonCount": 154,
+    "controlledButtonCount": 149,
+    "backendReadWriteIntegrationAndOfficialSdkMetadataShapes": true,
+    "secretsPatternScan": "Passed scoped staged-source pattern scan before commit; no credential values recorded",
+    "observableArrayBounds": {
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "scope": "Every native dynamic binding with empty lists and one short row"
+    },
+    "materialOwnerIdentityCompatibility": {
+      "numericAndStringIds": true,
+      "ambiguousDuplicatesDeniedBeforeDecryption": true
+    }
+  },
+  "nativeRenderer": {
+    "runtime": "@cloudbase/lowcode-render@1.1.10",
+    "components": "gsd-h5-react@3.31.0",
+    "data": "Explicit fictional QA fixtures; all write actions blocked; no production data in browser tests",
+    "verified": [
+      "Initial loading and lifecycle",
+      "Main principal pagination and selected details",
+      "Review confirmation prepare/cancel",
+      "Education Chinese options and human-readable confirmation",
+      "Selected image material display and PDF controls",
+      "Read-only order detail without write version",
+      "Fixed-price plan detail and activation confirmation/cancel",
+      "Salon selected detail and cancel confirmation/cancel",
+      "Forbidden identity clears records and disables mutation controls",
+      "Empty and short lists render without observable out-of-bounds warnings"
+    ],
+    "pdfNewWindow": "Automation blocked by browser security policy; no workaround attempted; standard browser view/download entrance preserved for manual acceptance",
+    "dateAxis": {
+      "dailyPoints": 30,
+      "visibleLabels": 8,
+      "officialConverterAndNativeEchartsDataListRetainAllPoints": true
+    },
+    "limitations": [
+      "Real CloudBase operator session for new operations was not exercised by agent because Edge connection unavailable",
+      "New-window PDF viewing requires manual browser acceptance"
+    ],
+    "postFixConsole": {
+      "emptyForbiddenListWarnings": 0,
+      "shortAuthorizedPlanListWarnings": 0,
+      "method": "Fresh native renderer documents, warn/error logs after navigation"
+    }
+  },
+  "realDataReadVerification": {
+    "method": "Official MCP IAM allowlisted projections held in memory; local read-service only",
+    "listsSucceeded": 5,
+    "availableDetailsSucceeded": 4,
+    "certificationSamples": 0,
+    "noRawRowsOrBusinessCountsCommitted": true,
+    "actualBusinessWriteExecuted": false
+  },
+  "preserved": [
+    "Existing hlApi/index.js and payment configuration",
+    "Other business data and existing ACLs",
+    "Retired plan identities, purchased entitlements and historical orders",
+    "Unrelated workspace modifications"
+  ],
+  "pending": [
+    "Real internal-administrator new workflows and first real certification-application acceptance",
+    "PDF viewer manual acceptance",
+    "Micro-app publication and post-publication access acceptance"
+  ]
+}

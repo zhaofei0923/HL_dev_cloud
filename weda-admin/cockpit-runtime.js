@@ -45,7 +45,8 @@ function toTrend(rows, fields) {
     const date = dateLabel(row.date);
     if (!date) continue;
     values.push({
-      XLabel: { Name: 'date', Value: date },
+      date,
+      XLabel: { Name: 'date', Value: date.slice(5) },
       YLabels: fields.map(([key, label, money, signed]) => {
         const value = integer(row[key], !!signed);
         return { Name: key, Cn_Name: label, Value: value === null ? null : money ? value / 100 : value };
@@ -53,7 +54,11 @@ function toTrend(rows, fields) {
     });
   }
   // Missing values stay null gaps. A genuine numeric zero remains visible.
-  return values.some(row => row.YLabels.some(item => item.Value !== null)) ? values : [];
+  if (!values.some(row => row.YLabels.some(item => item.Value !== null))) return [];
+  // The official native Line transformer fixes axisLabel.interval at zero.
+  // Keep every point and its ISO date, but expose at most eight short labels.
+  const shown = new Set(Array.from({ length: Math.min(8, values.length) }, (_, index) => Math.round(index * (values.length - 1) / Math.max(1, Math.min(8, values.length) - 1))));
+  return values.map((row, index) => ({ ...row, XLabel: { ...row.XLabel, Value: shown.has(index) ? row.XLabel.Value : '' } }));
 }
 
 function sumKnown(rows, key) {
