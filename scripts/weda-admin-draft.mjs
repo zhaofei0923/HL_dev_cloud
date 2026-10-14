@@ -115,7 +115,13 @@ try {
       const content = await fetchHistory(id, historyId);
       const backupPath = resolve(root, `output/weda-admin-before-redesign-${historyId}.json`);
       await mkdir(resolve(root, 'output'), { recursive: true });
-      await writeFile(backupPath, JSON.stringify(content, null, 2) + '\n', { flag: 'wx' });
+      // Reuse an immutable matching backup when the cloud history is unchanged.
+      // A different local file at that path is never overwritten.
+      try { await writeFile(backupPath, JSON.stringify(content, null, 2) + '\n', { flag: 'wx' }); }
+      catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+        if (!isDeepStrictEqual(JSON.parse(await readFile(backupPath, 'utf8')), content)) throw new Error('Existing backup differs from cloud history');
+      }
       await writeFile(baselineFile, JSON.stringify({ appId: id, envId: ENV_ID, historyId,
         capturedAt: new Date().toISOString(), sourceSha256: sha256(JSON.stringify(content)), backupPath }, null, 2) + '\n');
       console.log(JSON.stringify({ appId: id, historyId, backupPath, matchesLocal: isDeepStrictEqual(content, cals) }, null, 2));
@@ -129,8 +135,13 @@ try {
           throw new Error('Cloud draft changed since backup; preserve concurrent edits');
         }
       }
-      const saveParams = { WeAppId: id, HistoryContent: JSON.stringify(cals), Comment: operationsConnected
-        ? '后台五页接通查询、详情、审核、认证材料与套餐启停；保留固定价格；未发布'
+      const selfContainedOperations = operationsConnected && operationsPages.every(page => {
+        const code = page.resources?.find(resource => resource.path === `${page.id}/lifecycle`)?.code;
+        return typeof code === 'string' && code.includes('function getOperationsController(page)') && !/^\s*import\b/m.test(code);
+      });
+      const saveParams = { WeAppId: id, HistoryContent: JSON.stringify(cals), Comment: selfContainedOperations
+        ? '修复五页预览生命周期模块加载；共享控制器与离页清理；保留最新编辑内容；未发布'
+        : operationsConnected ? '后台五页接通查询、详情、审核、认证材料与套餐启停；保留固定价格；未发布'
         : businessApiConnected
         ? '运营驾驶舱接入 hlAdminCockpit 只读真实统计；会员、主理人与经营收款分析；未发布'
         : '运营驾驶舱界面设计；业务统计尚未接入；未发布' };
@@ -169,6 +180,7 @@ try {
   const safeReasons = ['History read-back unavailable', 'History read-back failed', 'History differs from local design',
     'Saved history not found', 'Invalid history ID', 'Draft ownership check failed',
     'Cloud draft changed since backup; preserve concurrent edits',
+    'Existing backup differs from cloud history',
     'Incomplete application listing; fixed application lookup unavailable',
     'Recovery state application ID differs from fixed application',
     'Fixed application ID was not uniquely found in current cloud listing'];

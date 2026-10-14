@@ -36,9 +36,40 @@ function choices(pageId, id, label, name, options, visible) {
   return result;
 }
 
-export function operationsLifecycle(pageId) {
+export function operationsLifecycle(pageId, runtimeCode) {
   if (!Object.hasOwn(states, pageId)) throw new Error('Unknown operations page');
-  return `${MARKER}\n// Import directly: editor lifecycle receivers do not expose the page handler table.\nimport operations from './handler/operations';\nlet ownerPage;\n\nfunction initialize() {\n  const page = $page;\n  if (!page || page.id !== '${pageId}') throw new Error('管理页面上下文不匹配，请刷新页面');\n  ownerPage = page;\n  return operations({ lifecyclePage: page, data: { target: { command: 'init' } } });\n}\n\nfunction cleanup() {\n  // A page hidden before its load has no controller or private state to clear.\n  if (!ownerPage) return;\n  return operations({ cleanupPage: ownerPage, data: { target: { command: 'clear' } } });\n}\n\nexport default {\n  onPageLoad() { return initialize(); },\n  onPageShow() { return initialize(); },\n  onPageHide() { return cleanup(); },\n  onPageUnload() { return cleanup(); }\n};\n`;
+  if (typeof runtimeCode !== 'string') throw new Error('Reviewed operations runtime is required');
+  runtimeCode = runtimeCode.replace(/\r\n/g, '\n');
+  if ((runtimeCode.match(/^export default async function operations\(/gm) || []).length !== 1
+    || !runtimeCode.includes('export function getOperationsController(page)')) throw new Error('Unexpected operations runtime exports');
+  // Each low-code module must load by itself: the editor can preload a lifecycle
+  // without its sibling handler. Both copies use the same page-owned capsule.
+  const embedded = runtimeCode.replace(/^export function /gm, 'function ')
+    .replace(/^export default async function operations\(/m, 'async function operations(');
+  if (/^\s*(?:export|import)\b/m.test(embedded)) throw new Error('Unexpected embedded module dependency');
+  return `${MARKER}\n// Self-contained lifecycle; controller identity is shared through the owning page.\n${embedded}\nlet operationsOwnerPage;\nlet operationsOwnerController;\n\nfunction initializeOperationsPage() {\n  const page = $page;\n  if (!page || page.id !== '${pageId}') throw new Error('管理页面上下文不匹配，请刷新页面');\n  operationsOwnerPage = page;\n  const pending = operations({ lifecyclePage: page, data: { target: { command: 'init' } } });\n  operationsOwnerController = getOperationsController(page);\n  return pending;\n}\n\nfunction cleanupOperationsPage(unload = false) {\n  if (!operationsOwnerPage || !operationsOwnerController) return;\n  const page = operationsOwnerPage, controller = operationsOwnerController;\n  if (unload) { operationsOwnerPage = undefined; operationsOwnerController = undefined; }\n  return operations({ cleanupPage: page, cleanupController: controller, disposeController: unload, data: { target: { command: 'clear' } } });\n}\n\nexport default {\n  onPageLoad() { return initializeOperationsPage(); },\n  onPageShow() { return initializeOperationsPage(); },\n  onPageHide() { return cleanupOperationsPage(); },\n  onPageUnload() { return cleanupOperationsPage(true); }\n};\n`;
+}
+
+// Patch reviewed code only, preserving editor metadata, layout, roles and login.
+export function connectOperationsCode(original, runtimeCode) {
+  const app = structuredClone(original);
+  if (app.name !== 'hl-admin-weda' || app.schemaVersion !== '4.0.0') throw new Error('Unexpected operations application');
+  runtimeCode = runtimeCode.replace(/\r\n/g, '\n');
+  for (const pageId of Object.keys(states)) {
+    const pages = app.items.filter(page => page.id === pageId && page.type === 'PAGE');
+    if (pages.length !== 1) throw new Error('Missing or duplicate operations page ' + pageId);
+    const page = pages[0];
+    for (const [codeType, path, code] of [
+      ['handler-fn', `${pageId}/handler/operations`, MARKER + '\n' + runtimeCode],
+      ['lifecycle', `${pageId}/lifecycle`, operationsLifecycle(pageId, runtimeCode)],
+    ]) {
+      const resources = (page.resources || []).filter(item => item.path === path);
+      if (resources.length !== 1 || resources[0].type !== 'CODE' || resources[0].codeType !== codeType
+        || !resources[0].code?.startsWith(MARKER + '\n')) throw new Error('Refuse to overwrite unrelated or missing resource ' + path);
+      resources[0].code = code;
+    }
+  }
+  return app;
 }
 
 export function connectOperations(original, runtimeCode) {
@@ -57,7 +88,7 @@ export function connectOperations(original, runtimeCode) {
     const definition = { varType: 'state', dataType: 'object', initialValue: null, label: '管理操作交互状态' };
     if (page.dataset.state.ops && !isDeepStrictEqual(page.dataset.state.ops, definition)) throw new Error('Existing ops variable differs');
     page.dataset.state.ops = definition;
-    const lifecycle = operationsLifecycle(pageId);
+    const lifecycle = operationsLifecycle(pageId, runtimeCode);
     for (const resource of [
       { type: 'CODE', codeType: 'handler-fn', name: 'operations', path: `${pageId}/handler/operations`, code: MARKER + '\n' + runtimeCode },
       { type: 'CODE', codeType: 'lifecycle', name: 'lifecycle', path: `${pageId}/lifecycle`, code: lifecycle },

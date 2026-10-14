@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-14T09:34:19.448Z",
+  "checkedAt": "2026-10-14T10:13:12.264Z",
   "schemaPackage": "@cloudbase/cals@1.2.25",
   "componentVersion": "gsd-h5-react@3.31.0",
   "schemaValid": true,
@@ -55,7 +55,7 @@
   "unsafeUnitlessLineHeights": 0,
   "remoteDataCallsPresent": true,
   "businessRecordsPresent": false,
-  "appSha256": "8b93238fca5f20000a8b21a3de8cbf98e4e232364913fe38faecc142665bb186",
+  "appSha256": "b59eb26db953215774da8ab0d0041da4da9245266c46fdc88c381786a25f9ff5",
   "visualAndRuntimeVerification": "Recorded separately; static checks do not prove rendered appearance",
   "allowedReadOnlyFunction": "hlAdminCockpit",
   "managementFunctions": [

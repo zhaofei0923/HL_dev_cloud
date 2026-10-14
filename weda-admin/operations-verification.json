@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-14T09:35:13.167667+00:00",
+  "checkedAt": "2026-10-14T10:15:03.889Z",
   "scope": "Native Weda five-page management workflows, fixed-price activation and cockpit date-axis fix",
   "userDecisions": {
     "cockpitRealPreviewAccepted": true,
@@ -7,15 +7,16 @@
   },
   "draft": {
     "appId": "app-pq2auygx",
-    "historyId": 6776231,
+    "historyId": 6776286,
     "fullReadbackMatched": true,
-    "sourceCanonicalSha256": "2dba83b5330fe402f5c6e325ab1c92825d7971610dd9cd08129ca1d38244eee4",
+    "sourceCanonicalSha256": "f76314b4b76bb59f06bee292bdf3fe7dffff6fabbc945734ad00bda0ef377581",
     "published": false,
     "connectedFunctions": [
       "hlAdminCockpit",
       "hlAdminOperations"
     ],
-    "layoutTemplatesAndLoginConfigPreserved": true
+    "layoutTemplatesAndLoginConfigPreserved": true,
+    "latestEditorBaselineHistory": 6776260
   },
   "function": {
     "name": "hlAdminOperations",
@@ -61,8 +62,8 @@
   },
   "checks": {
     "fullWorkspace": {
-      "tests": 1252,
-      "pass": 1252,
+      "tests": 1269,
+      "pass": 1269,
       "fail": 0
     },
     "officialSchemaAndComponentContractsValid": true,
@@ -152,6 +153,65 @@
     "consoleAuthoredDescriptionPreserved": true,
     "backendRedeployed": false,
     "actualCloudEditorVerified": false,
-    "cloudEditorLimitation": "Edge tab acquisition timed out; user must refresh actual CloudBase preview and verify query/detail plus page switching"
+    "cloudEditorLimitation": "Edge tab acquisition timed out; user must refresh actual CloudBase preview and verify query/detail plus page switching",
+    "status": "superseded-after-reported-cloud-dependency-load-failure",
+    "historyId": 6776231
+  },
+  "lifecycleModuleLoadingRepair": {
+    "checkedAt": "2026-10-14T10:15:03.889Z",
+    "userConstraint": "Code and official cloud APIs only; no browser or UI automation",
+    "reportedError": "[低码模块加载失败] [/plans/handler/operations] /plans/lifecycle: Failed to fetch",
+    "diagnosis": "Exact cloud loader accepts relative imports when the sibling is provided; lifecycle-only preload reproduces the reported failed fallback. The editor dependency-filter input itself was not obtained.",
+    "implementation": "Self-contained reviewed lifecycle body; independent handler and lifecycle share a strict non-enumerable page Symbol capsule. Init creates the controller; cleanup captures the owner and original capsule; stale versions and responses cannot clear or restore a newer controller.",
+    "cloudBaselineHistory": 6776260,
+    "savedHistoryId": 6776286,
+    "cloudFullReadbackMatched": true,
+    "codeOnlyResourceReplacements": 10,
+    "allOtherLatestCloudContentPreserved": true,
+    "backendRedeployed": false,
+    "published": false,
+    "regression": {
+      "independentLifecycleAndSharedControllerTests": 20,
+      "pass": 20,
+      "codeOnlyPreservationTests": 3,
+      "relatedTests": 61,
+      "relatedPass": 61
+    },
+    "exactCloudLoader": {
+      "source": "https://qbase.cdn-go.cn/lcap/lcap-resource-cdngo/-/0.1.4/_files/static/weda-render/main.0ab216cf8f7a4031dead.bundle.js",
+      "bundleSha256": "1a36c2538da885c177b3f0f4e6fbee7fe8e5c144ff6aa9cfbce87e755e3cf216",
+      "helperChunkSha256": "446e1e767ef63c00ae3c243c0cc66521040cd1c5a64919092024b3c298a7b7f4",
+      "method": "Offline exact cloud compiler/discovery/module-factory checks plus an isolated native-page runtime fixture. No lifecycle hook, live identity, cloud business endpoint or browser is used.",
+      "sourceCanonicalSha256": "f76314b4b76bb59f06bee292bdf3fe7dffff6fabbc945734ad00bda0ef377581",
+      "lifecycleOnlyPagesPassed": 5,
+      "totalNetworkFetchAttempts": 0,
+      "nativePageSymbolCheck": {
+        "exactCloudFactory": "HC",
+        "nativeProxyForwardsSymbol": true,
+        "rawPageSharesSymbol": true,
+        "definePropertyNonEnumerable": true,
+        "localExternalMobxVersion": "5.15.7",
+        "localObservableForwardsSymbol": true,
+        "limitation": "The editor-injected page object and cloud external MobX version are not supplied by this renderer artifact and were not instantiated."
+      },
+      "nativePageRuntimeCheck": {
+        "exactCloudPageFactory": "HC",
+        "actualRuntimeSha256": "57a815b835c22e916a566fb51400911996288afacfe173e28ea7af67dd2ffc3b",
+        "isolatedFixtureOnly": true,
+        "realIdentityUsed": false,
+        "networkRequests": 0,
+        "fixtureReadCalls": 2,
+        "independentRuntimeModules": 2,
+        "strictGetOperationsControllerAccepted": true,
+        "sharedController": true,
+        "capsuleNonEnumerable": true,
+        "capsuleConfigurable": true,
+        "initAndHandlerReadPassed": true,
+        "cleanupPassed": true,
+        "limitation": "Cloud dataset state setter is replaced by a minimal local assignment adapter. No editor-injected page object, lifecycle hook, live identity or business endpoint was exercised."
+      }
+    },
+    "actualCloudEditorVerified": false,
+    "manualAcceptance": "Refresh and merge the saved cloud draft, preview each management page, query/select details, switch pages, and verify no module-load or cleanup error. PDF new-window viewing and administrator business acceptance remain manual."
   }
 }

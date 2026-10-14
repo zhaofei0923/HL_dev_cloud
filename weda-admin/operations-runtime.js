@@ -1,6 +1,9 @@
 // Native Weda handler. Only the server determines actor identity and permission.
 const PAGES = ['matchmakers', 'certifications', 'salons', 'plans', 'orders'];
-const controllers = new WeakMap();
+// The editor evaluates lifecycle and handler resources as separate modules.
+// Store their shared controller on the owning page, outside serialized state.
+const CONTROLLER_KEY = Symbol.for('hl.admin.operations.controller');
+const CONTROLLER_VERSION = 'hl-admin-operations-runtime-v2';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const string = (value, max = 500) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) : '';
 const display = value => value === null || value === undefined || value === '' ? '—' : String(value);
@@ -47,6 +50,58 @@ function publish(ctx, patch) {
   ctx.model = { ...ctx.model, ...patch };
   ctx.page.setState({ ops: ctx.model });
 }
+function controllerAnchor(page) {
+  try { return object(page) ? page[CONTROLLER_KEY] : null; } catch { return null; }
+}
+function controllerShape(capsule, page) {
+  try {
+    return object(capsule) && capsule.pageId === page.id && object(capsule.ctx)
+      && capsule.ctx.capsule === capsule && typeof capsule.version === 'string'
+      && typeof capsule.token === 'symbol' && typeof capsule.dispose === 'function';
+  } catch { return false; }
+}
+export function getOperationsController(page) {
+  const capsule = controllerAnchor(page);
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(page, CONTROLLER_KEY);
+    return controllerShape(capsule, page) && capsule.version === CONTROLLER_VERSION
+      && descriptor?.value === capsule && descriptor.enumerable === false && descriptor.configurable === true
+      ? capsule : null;
+  } catch { return null; }
+}
+function eraseModel(model, replacement) {
+  if (!object(model)) return;
+  for (const key of Object.keys(model)) {
+    if (!Object.hasOwn(replacement, key)) { try { delete model[key]; } catch {} }
+  }
+  // Existing published references must lose private fields before setState,
+  // including when a hidden page's state setter is no longer callable.
+  for (const [key, value] of Object.entries(replacement)) { try { model[key] = value; } catch {} }
+}
+function unavailable(page) {
+  try { page.setState({ ops: { ...initial(page.id), error: '管理页面尚未正确初始化，请刷新页面后重试。' } }); } catch {}
+}
+function initializeController(page) {
+  const previous = controllerAnchor(page);
+  if (controllerShape(previous, page)) {
+    try { previous.dispose(); } catch {}
+  } else if (previous !== undefined && previous !== null) return null;
+  const ctx = { page, pageId: page.id, active: false, started: false, generation: 0, readSequence: 0,
+    detailSequence: 0, materialSequence: 0, evidenceSequence: 0, model: initial(page.id), pdfUrl: null, pdfWindows: [] };
+  const capsule = { version: CONTROLLER_VERSION, pageId: page.id, ctx, token: Symbol('hl.operations.instance'),
+    // Disposing an older runtime never publishes over a newer controller.
+    dispose() { clear(ctx, '', false); } };
+  ctx.capsule = capsule;
+  try {
+    Object.defineProperty(page, CONTROLLER_KEY, { value: capsule, enumerable: false, configurable: true, writable: false });
+    if (getOperationsController(page) !== capsule) throw new Error('CONTROLLER_ANCHOR_UNAVAILABLE');
+    return capsule;
+  } catch {
+    clear(ctx, '', false);
+    try { if (controllerAnchor(page) === capsule) Reflect.deleteProperty(page, CONTROLLER_KEY); } catch {}
+    return null;
+  }
+}
 function clearDetail(ctx) {
   ctx.detailSequence++;
   ctx.materialSequence++;
@@ -55,19 +110,46 @@ function clearDetail(ctx) {
   return { selected: null, detail: null, detailText: '', materials: [], material: null, evidenceText: '', evidenceLoading: false, remark: '', feedback: '', source: '', sourceLabel: '', educationLevel: '', financialAssetRange: '', assetRangeLabel: '', evidenceReference: '', confirmation: null, detailLoading: false, canApprove: false, canReject: false, canRevoke: false, canCancel: false, canToggle: false };
 }
 function closePdf(ctx) {
-  for (const opened of ctx.pdfWindows || []) { try { opened.close(); } catch {} }
-  if (ctx.pdfUrl) URL.revokeObjectURL(ctx.pdfUrl);
+  const openedWindows = ctx.pdfWindows || [], url = ctx.pdfUrl;
   ctx.pdfUrl = null; ctx.pdfWindows = [];
+  try {
+    for (const opened of openedWindows) { try { opened.close(); } catch {} }
+  } finally {
+    try { if (url) URL.revokeObjectURL(url); } catch {}
+    finally { ctx.pdfUrl = null; ctx.pdfWindows = []; }
+  }
 }
-function clear(ctx, message = '') {
+function clear(ctx, message = '', notify = true) {
   ctx.generation++;
   ctx.active = false;
+  ctx.started = false;
   ctx.readSequence++;
-  clearDetail(ctx);
-  publish(ctx, { ...initial(ctx.page.id), error: message });
+  ctx.detailSequence++;
+  ctx.materialSequence++;
+  ctx.evidenceSequence++;
+  const clean = { ...initial(ctx.pageId), error: message };
+  const previousModel = ctx.model;
+  eraseModel(previousModel, clean);
+  ctx.model = clean;
+  // A cloned observable dataset may hold a different object from ctx.model.
+  // Only the still-owning capsule may scrub that page's published state.
+  if (controllerAnchor(ctx.page) === ctx.capsule) {
+    try {
+      const published = ctx.page.dataset?.state?.ops;
+      if (published !== previousModel && published !== clean) eraseModel(published, clean);
+    } catch {}
+  }
+  closePdf(ctx);
+  if (notify && controllerAnchor(ctx.page) === ctx.capsule) {
+    try { ctx.page.setState({ ops: clean }); } catch {}
+  }
 }
 function current(ctx, generation) {
-  return ctx.active && ctx.generation === generation && $w.page === ctx.page && ctx.page.__internal__?.active !== false;
+  try {
+    const page = $w.page;
+    return ctx.active && ctx.generation === generation && getOperationsController(page) === ctx.capsule
+      && page.id === ctx.pageId && page.__internal__?.active !== false;
+  } catch { return false; }
 }
 function codeOf(error) { return String(error?.code ?? error?.errCode ?? error?.status ?? '').toUpperCase(); }
 function forbidden(error) { return /^(?:401|403)|UNAUTH|FORBIDDEN|PERMISSION|TOKEN_EXPIRED|INVALID_ACCESS_TOKEN|LOGIN_REQUIRED/.test(codeOf(error)); }
@@ -246,9 +328,18 @@ export default async function operations(input = {}) {
   const page = command === 'clear' && input.cleanupPage ? input.cleanupPage
     : command === 'init' && input.lifecyclePage ? input.lifecyclePage : $w.page;
   if (!page || !PAGES.includes(page.id)) return;
-  let ctx = controllers.get(page);
-  if (!ctx) { ctx = { page, active: true, generation: 0, readSequence: 0, detailSequence: 0, materialSequence: 0, evidenceSequence: 0, model: initial(page.id) }; controllers.set(page, ctx); }
-  if (command === 'clear') { clear(ctx); return; }
+  let capsule = getOperationsController(page);
+  if (command === 'clear') {
+    if (!capsule || Object.hasOwn(input, 'cleanupController') && input.cleanupController !== capsule) return;
+    clear(capsule.ctx);
+    if (input.disposeController === true) {
+      try { if (controllerAnchor(page) === capsule) Reflect.deleteProperty(page, CONTROLLER_KEY); } catch {}
+    }
+    return;
+  }
+  if (command === 'init' && !capsule) capsule = initializeController(page);
+  if (!capsule) { unavailable(page); return; }
+  const ctx = capsule.ctx;
   if (command === 'init') { if (!ctx.active || !ctx.started) { ctx.started = true; return loadList(ctx); } return; }
   if (!ctx.active && ['query', 'reset'].includes(command)) { if (command === 'reset') publish(ctx, { keyword: '', filter: '' }); return loadList(ctx); }
   if (!ctx.active) return;
