@@ -4,6 +4,7 @@ exports.dashboardController = void 0;
 const matchmaker_workspace_1 = require("../../utils/matchmaker-workspace");
 const api_1 = require("../../services/api");
 const matchmaker_1 = require("../../services/matchmaker");
+const matchmaker_access_view_1 = require("../../utils/matchmaker-access-view");
 const matchmaker_page_cache_1 = require("../../utils/matchmaker-page-cache");
 const DASHBOARD_ROUTE = '/matchmaker/dashboard';
 function defaultDashboard() {
@@ -37,32 +38,7 @@ function defaultDashboard() {
         }
     };
 }
-function certificationView(matchmaker) {
-    const status = Number((matchmaker && matchmaker.certificationStatus) || 0);
-    const remark = (matchmaker && matchmaker.certificationRemark) || '';
-    if (status === 2) {
-        return {
-            canOperate: true,
-            statusText: '已认证',
-            statusTagClass: 'gold',
-            statusNote: '主理人权限已开通，可使用会员经营、资源池互推和沙龙发起。'
-        };
-    }
-    if (status === 1) {
-        return {
-            canOperate: false,
-            statusText: '已拒绝',
-            statusTagClass: 'rose',
-            statusNote: remark || '本次申请暂未通过，请完善资料后重新提交。'
-        };
-    }
-    return {
-        canOperate: false,
-        statusText: '待审批',
-        statusTagClass: '',
-        statusNote: '主理人申请已提交，后台审批通过后将开放会员经营、资源池和沙龙发起权限。'
-    };
-}
+const certificationView = (matchmaker) => (0, matchmaker_access_view_1.matchmakerAccessView)(matchmaker, '主理人权限已开通，可使用会员经营、资源池互推和沙龙发起。');
 function isAccessDenied(err) {
     const code = Number(err?.code);
     return (0, api_1.isSessionRecoverableError)(err) || code === 403 || code === 40300 || code === 40301;
@@ -81,9 +57,9 @@ exports.dashboardController = (0, matchmaker_workspace_1.defineMatchmakerControl
         dashboard: defaultDashboard(),
         loading: false,
         canOperate: false,
-        statusText: '待审批',
+        statusText: '待开通',
         statusTagClass: '',
-        statusNote: '申请已提交，后台审核通过后将开放会员经营、资源池和沙龙发起权限。'
+        statusNote: '主理人一次性开通费 ¥6980，长期有效。付款确认后自动开通。'
     },
     onShow() {
         return this.loadDashboard();
@@ -213,7 +189,7 @@ exports.dashboardController = (0, matchmaker_workspace_1.defineMatchmakerControl
             return false;
         if (this.data.canOperate)
             return true;
-        wx.showToast({ title: '主理人认证通过后可使用', icon: 'none' });
+        wx.showToast({ title: '开通主理人后可使用', icon: 'none' });
         return false;
     },
     async applyAgain() {
@@ -261,6 +237,11 @@ exports.dashboardController = (0, matchmaker_workspace_1.defineMatchmakerControl
     },
     goUserProfile() {
         wx.switchTab({ url: '/pages/user/profile' });
+    },
+    goActivation() {
+        if (!this.synchronizeSession() || this.data.loading)
+            return;
+        wx.navigateTo({ url: '/pages/matchmaker/activation' });
     },
     logout() {
         const app = getApp();

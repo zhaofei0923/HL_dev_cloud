@@ -80,8 +80,11 @@ test('claim transaction rechecks member ownership, matchmaker validity, and sour
   assert.match(transaction, /Number\(currentMatchmaker\.status\) !== 1/);
   assert.match(transaction, /Number\(currentMatchmaker\.certificationStatus\) !== 2/);
   assert.match(transaction, /currentSource\.phone[\s\S]*String\(currentSource\.phone\)[\s\S]*!== phone/);
-  assert.match(transaction, /where\(\{ phone \}\)\.limit\(3\)\.get\(\)/);
-  assert.match(transaction, /where\(\{ openid: trustedOpenid \}\)\.limit\(3\)\.get\(\)/);
+  assert.match(confirm, /getAll\(C\.users, \{ phone \}, 3\)/);
+  assert.match(confirm, /getAll\(C\.users, \{ openid: trustedOpenid \}, 3\)/);
+  assert.match(transaction, /phoneOwnerRows\.map\(row => salonTransactionDocument\(transaction, C\.users, row\._id\)\)/);
+  assert.match(transaction, /openidOwnerRows\.map\(row => salonTransactionDocument\(transaction, C\.users, row\._id\)\)/);
+  assert.doesNotMatch(transaction, /\.where\(/);
   assert.match(transaction, /currentPhoneOwners\.length !== 1/);
   assert.match(transaction, /currentOpenidOwners\.length !== 1/);
 });
@@ -109,8 +112,9 @@ test('invite generation is transactionally locked against a concurrent claim', (
   assert.match(invite, /memberRef\.get\(\)/);
   assert.match(invite, /targetRef\.get\(\)/);
   assert.match(invite, /const claimRef = transaction\.collection\(C\.identityClaims\)\.doc\(identityClaimDocumentId\(memberRow\.id\)\)/);
-  assert.match(invite, /const claimQuery = transaction\.collection\(C\.identityClaims\)/);
-  assert.match(invite, /const currentClaim = [^;]+[\s\S]*snapshots\[3\]\.data/);
+  assert.match(invite, /salonTransactionDocument\(transaction, C\.identityClaims, identityClaimDocumentId\(memberRow\.id\)\)/);
+  assert.match(invite, /const currentClaim = snapshots\[3\]/);
+  assert.doesNotMatch(invite.slice(invite.indexOf('db.runTransaction')), /\.where\(/);
   assert.match(invite, /currentClaim[\s\S]*String\(currentClaim\.status\) === 'claimed'/);
   assert.match(invite, /const claimInviteVersion = hashClaimToken\(token\)/);
   assert.match(invite, /targetRef\.update\(\{\s*data: \{ claimInviteVersion, updatedAt: timestamp \}\s*\}\)/);

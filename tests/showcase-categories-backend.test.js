@@ -148,6 +148,8 @@ function fixture(count = 7) {
       userId: index + 1, realName: `会员${index + 1}`, city: '上海', gender: 2,
       education: '博士', displayEnabled: true, assetCategoryConsent: false, assetRangeDisclosure: false, photos: [] })),
     hl_members: [], hl_match_records: [], hl_member_interactions: [], hl_member_certifications: [],
+    // These cases verify category qualification, hydration and disclosure, not paywall behavior.
+    hl_vip_entitlements: [{ _id: 'vip_user_1', userId: 1, legacyLifetime: true, grants: [] }],
     hl_matchmakers: [], hl_counters: [], hl_salon_events: [], hl_member_private_archives: []
   };
 }

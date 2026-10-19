@@ -23,6 +23,8 @@
         <text class="picker-value">{{primaryMemberName}}</text>
       </view>
     </picker>
+    <text wx:if="{{ownError}}" class="section-note">{{ownError}}</text>
+    <button wx:if="{{ownHasMore}}" class="btn ghost" loading="{{ownLoadingMore}}" disabled="{{ownLoadingMore}}" bindtap="loadMoreOwnMembers">加载更多服务会员</button>
   </view>
 
   <view class="card list-shell resources-list-shell">
@@ -54,5 +56,8 @@
       <text class="empty-title">{{loading ? '正在加载资源' : '暂无可展示资源'}}</text>
       <text class="empty-note">{{loading ? '请稍候，正在整理认证资源。' : '暂时没有符合展示条件的合作会员。'}}</text>
     </view>
+    <text wx:if="{{resourceError}}" class="section-note">{{resourceError}}</text>
+    <button wx:if="{{resourceHasMore}}" class="btn ghost" loading="{{resourceLoadingMore}}" disabled="{{resourceLoadingMore}}" bindtap="loadMoreResources">{{resourceError ? '重试加载更多' : '加载更多合作资源'}}</button>
+    <button wx:elif="{{resourceError}}" class="btn ghost" disabled="{{loading}}" bindtap="load">重新加载</button>
   </view>
 </view>

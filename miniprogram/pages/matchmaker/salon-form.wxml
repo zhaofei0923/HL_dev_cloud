@@ -2,7 +2,7 @@
   <view class="card hero salon-form-hero">
     <text class="eyebrow">新沙龙</text>
     <text class="title">创建沙龙活动</text>
-    <text class="subtitle">补齐标题、时间、地点和席位上限；提交后需管理员审核，通过后展示给会员。</text>
+    <text class="subtitle">补齐标题、时间、地点和席位上限，发布后会员即可查看和报名。</text>
   </view>
 
   <view class="card form-card">
@@ -61,6 +61,6 @@
       </view>
     </view>
 
-    <button class="btn gold save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="save">提交活动审核</button>
+    <button class="btn gold save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="save">发布活动</button>
   </view>
 </view>

@@ -99,7 +99,7 @@ test('login and detail entry actions use switchTab for retained user pages', asy
     assert.equal(calls.navigation[0].url, destination);
   }
   const { page, calls } = runtime('pages/user/membership.js');
-  await page.contactMatchmaker();
+  await page.completeMatchmakingProfile();
   assert.equal(calls.navigation[0].method, 'switchTab');
   assert.equal(calls.navigation[0].url, '/pages/user/profile');
 });

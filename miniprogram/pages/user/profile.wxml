@@ -4,7 +4,7 @@
     <image class="profile-summary-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
     <view class="profile-summary-copy">
       <text class="profile-kicker">我的档案</text>
-      <text class="profile-name">{{preview.displayName || '我的资料'}}</text>
+      <view class="profile-name-row"><text class="profile-name">{{preview.displayName || '我的资料'}}</text><text wx:if="{{isVipBadge}}" class="profile-vip-badge" aria-label="有效VIP会员">VIP</text></view>
       <text class="profile-meta">{{preview.metaText || '完善资料，让主理人更了解你'}}</text>
     </view>
     <text class="profile-visibility {{form.displayEnabled ? 'open' : ''}}">{{form.displayEnabled ? '展示中' : '仅自己'}}</text>
@@ -58,10 +58,25 @@
   </view>
 
   <view class="profile-menu">
-    <view class="profile-menu-row" bindtap="goMembership" aria-role="button" aria-label="查看会员服务">
+    <view wx:if="{{adminEntryVisible}}" class="profile-menu-row" bindtap="goAdminBackend" aria-role="button" aria-label="进入管理后台">
       <view class="profile-menu-copy">
-        <text class="profile-menu-title">会员服务</text>
-        <text class="profile-menu-note">查看会员状态与可用权益</text>
+        <text class="profile-menu-title">管理后台</text>
+        <text class="profile-menu-note">{{adminEntryReady ? '审核与运营管理' : '后台尚未开放'}}</text>
+      </view>
+      <text class="profile-menu-state">{{adminEntryOpening ? '确认中' : '进入'}}</text>
+      <view class="profile-menu-chevron"></view>
+    </view>
+    <view class="profile-menu-row" bindtap="goMembership" aria-role="button" aria-label="查看我的特权">
+      <view class="profile-menu-copy">
+        <text class="profile-menu-title">我的特权</text>
+        <text class="profile-menu-note">VIP会员权益与人工牵线服务</text>
+      </view>
+      <view class="profile-menu-chevron"></view>
+    </view>
+    <view class="profile-menu-row" bindtap="goOrders" aria-role="button" aria-label="查看我的订单">
+      <view class="profile-menu-copy">
+        <text class="profile-menu-title">我的订单</text>
+        <text class="profile-menu-note">购买记录、支付状态与权益处理结果</text>
       </view>
       <view class="profile-menu-chevron"></view>
     </view>
@@ -97,7 +112,7 @@
 
     <view class="card privacy-card profile-subpanel">
       <text class="section-title">添加主理人</text>
-      <text class="section-note">可扫码或输入邀请码；提交后需由主理人审批。</text>
+      <text class="section-note">可扫码或输入邀请码，确认加入后即成为名下免费会员。</text>
       <view class="matchmaker-option-grid">
         <view class="matchmaker-option" bindtap="scanMatchmakerInvite">
           <text class="option-title">扫码添加</text>

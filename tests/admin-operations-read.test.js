@@ -283,6 +283,11 @@ test('certification status uses showcase rules for still-effective conclusions a
 test('six canonical plans have fixed prices and independent default-enabled configuration versions', async () => {
   const rt = runtime(), result = await rt.service.listPlans({});
   assert.equal(result.total, 6);
+  assert.deepEqual(result.list.filter(plan => plan.productType === 'matchmaking')
+    .map(plan => [plan.planCode, plan.title, plan.amountFen, plan.durationDays, plan.serviceCount]), [
+    ['matchmaking_double', '人工牵线2次', 298000, 30, 2],
+    ['matchmaking_month_6', '人工牵线1个月', 698000, 30, 6]
+  ]);
   for (const canonical of DEFAULT_MEMBERSHIP_PLANS) {
     const row = result.list.find(plan => plan.planCode === canonical.planCode);
     assert.equal(row.amountFen, canonical.amountFen); assert.equal(row.title, canonical.title);
@@ -292,6 +297,22 @@ test('six canonical plans have fixed prices and independent default-enabled conf
   }
   const detail = await rt.service.detailPlan({ planCode: 'vip_week' });
   assert.equal(detail.amountFen, 6160); assert.match(detail.version, /^v1_[a-f0-9]{64}$/);
+});
+
+test('new matchmaking contract fields stay canonical even with a conflicting stored count or title', async () => {
+  for (const [planCode, title, amountFen, serviceCount] of [
+    ['matchmaking_double', '人工牵线2次', 298000, 2],
+    ['matchmaking_month_6', '人工牵线1个月', 698000, 6]
+  ]) {
+    const rt = runtime();
+    rt.rows[C.plans] = [{ _id: `configured-${planCode}`, planCode, title: '历史套餐标题', amountFen: 100,
+      durationDays: 365, productType: 'vip', serviceCount: 1, active: false, updatedAt: BEFORE }];
+    const detail = await rt.service.detailPlan({ planCode });
+    assert.deepEqual([detail.title, detail.amountFen, detail.durationDays, detail.productType, detail.serviceCount],
+      [title, amountFen, 30, 'matchmaking', serviceCount]);
+    assert.equal(detail.active, false);
+    assert.equal(detail.version, versionFor('plans', rt.rows[C.plans][0]));
+  }
 });
 
 test('persisted plan only overrides activation; versions keep original fields including absent active and code alias', async () => {
@@ -313,6 +334,24 @@ test('legacy and retired plans are read-only while duplicate canonical aliases f
   assert.equal(detail.retired, true); assert.equal(detail.readOnly, true); assert.equal(detail.canUpdate, false);
   rt.rows[C.plans].push({ _id: 'legacy-duplicate', code: 'matchmaking_month' });
   await assert.rejects(rt.service.listPlans({}), code(40960));
+});
+
+test('retired one- and three-service products preserve historical counts and remain read-only', async () => {
+  const rt = runtime();
+  rt.rows[C.plans] = [
+    { _id: 'original-single', planCode: 'matchmaking_single', title: '人工牵线单次', serviceCount: 1, amountFen: 298000 },
+    { _id: 'original-month', planCode: 'matchmaking_month_3', title: '人工牵线1个月', serviceCount: 3, amountFen: 698000 }
+  ].map(plan => ({ ...plan, productType: 'matchmaking', durationDays: 30, active: true }));
+  const list = await rt.service.listPlans({});
+  for (const original of rt.rows[C.plans]) {
+    const detail = await rt.service.detailPlan({ planCode: original.planCode });
+    const row = list.list.find(item => item.planCode === original.planCode);
+    for (const view of [detail, row]) {
+      assert.equal(view.retired, true); assert.equal(view.readOnly, true); assert.equal(view.canUpdate, false);
+      assert.equal(view.serviceCount, original.serviceCount); assert.equal(view.amountFen, original.amountFen);
+      assert.equal(view.title, original.title);
+    }
+  }
 });
 
 test('order amount remains its snapshot, secret payment fields are not read, and sandbox/test flags are explicit', async () => {

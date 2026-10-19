@@ -2,7 +2,7 @@
   <view class="card hero invite-hero">
     <text class="eyebrow">{{activityInvite ? '活动邀请' : (autoMode ? '会员注册' : '主理人邀请')}}</text>
     <text class="title">{{activityInvite ? '确认沙龙邀请' : (autoMode ? '注册成为会员' : '确认添加主理人')}}</text>
-    <text class="subtitle">{{activityInvite ? '补齐报名资料后，回到活动页确认报名。参加活动不会变更你的主理人归属。' : (autoMode ? '通过微信分享链接进入后，系统会自动注册为该主理人名下免费会员。' : '通过扫码或手动邀请码进入，提交后仍需主理人审批，通过后才会成为该主理人名下会员。')}}</text>
+    <text class="subtitle">{{activityInvite ? '补齐报名资料后，回到活动页确认报名。参加活动不会变更你的主理人归属。' : (autoMode ? '通过微信分享链接进入后，系统会自动注册为该主理人名下免费会员。' : '确认加入后，即可成为该主理人名下免费会员。')}}</text>
     <view class="summary-strip">
       <view class="summary-item">
         <text class="summary-value">{{code || '待识别'}}</text>
@@ -13,7 +13,7 @@
         <text class="summary-label">添加方式</text>
       </view>
       <view class="summary-item">
-        <text class="summary-value">{{activityInvite ? '活动页' : (autoMode ? '自动归属' : '审批')}}</text>
+        <text class="summary-value">{{activityInvite ? '活动页' : (autoMode ? '自动归属' : '直接加入')}}</text>
         <text class="summary-label">{{activityInvite ? '确认报名' : '归属确认'}}</text>
       </view>
     </view>
@@ -24,7 +24,10 @@
     <text class="section-note">{{errorText}}</text>
     <button wx:if="{{activityInvite}}" class="btn gold invite-action" bindtap="loadInvite" loading="{{loading}}" disabled="{{loading}}">重新确认报名资料</button>
     <button wx:if="{{activityInvite}}" class="btn secondary invite-action" bindtap="goSalonDetail">查看活动详情</button>
-    <button wx:else class="btn ghost invite-action" bindtap="goProfile">返回我的资料</button>
+    <block wx:else>
+      <button class="btn gold invite-action" bindtap="loadInvite" loading="{{loading}}" disabled="{{loading}}">重新确认邀请</button>
+      <button class="btn ghost invite-action" bindtap="goProfile">返回我的资料</button>
+    </block>
   </view>
 
   <view wx:elif="{{invite}}" class="card invite-card">
@@ -50,11 +53,11 @@
       </view>
     </view>
 
-    <view wx:if="{{invite.alreadyAssigned}}" class="notice-inline">
-      <text class="item-meta">{{autoMode ? '当前账号已有关联主理人，系统会继续确认是否为同一主理人。' : '你已有关联主理人，暂不能申请添加其他主理人。'}}</text>
+    <view wx:if="{{invite.alreadyAssigned && !autoDone}}" class="notice-inline">
+      <text class="item-meta">{{autoMode ? '当前账号已有关联主理人，系统会继续确认是否为同一主理人。' : '你已有关联主理人，暂不能添加其他主理人。'}}</text>
     </view>
     <view wx:elif="{{!autoMode && invite.existingRequest && invite.existingRequest.status === 'pending'}}" class="notice-inline">
-      <text class="item-meta">你已提交过申请，请等待主理人审批。</text>
+      <text class="item-meta">你之前的邀请尚未完成，请点击“确认加入”直接完成。</text>
     </view>
     <view wx:if="{{autoMessage}}" class="notice-inline {{autoDone ? 'success' : 'warning'}}">
       <text class="item-meta">{{autoMessage}}</text>

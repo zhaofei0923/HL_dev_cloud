@@ -89,21 +89,21 @@
 
 <view wx:else class="page safe-bottom">
   <view class="card approval-hero">
-    <text class="eyebrow">主理人申请</text>
+    <text class="eyebrow">主理人开通</text>
     <text class="title">{{statusText}}</text>
-    <text class="subtitle">{{loading ? '正在确认主理人申请状态。' : statusNote}}</text>
+    <text class="subtitle">{{loading ? '正在确认主理人开通状态。' : statusNote}}</text>
     <view class="summary-strip">
       <view class="summary-item">
         <text class="summary-value">{{statusText}}</text>
-        <text class="summary-label">申请状态</text>
+        <text class="summary-label">开通状态</text>
       </view>
       <view class="summary-item">
-        <text class="summary-value">后台</text>
-        <text class="summary-label">审批处理</text>
+        <text class="summary-value">¥6980</text>
+        <text class="summary-label">一次性开通</text>
       </view>
       <view class="summary-item">
-        <text class="summary-value">通过</text>
-        <text class="summary-label">开放工作台</text>
+        <text class="summary-value">长期</text>
+        <text class="summary-label">权限有效</text>
       </view>
     </view>
   </view>
@@ -111,26 +111,26 @@
   <view class="card approval-card">
     <view class="row approval-head">
       <view>
-        <text class="section-title">申请进度</text>
-        <text class="section-note">{{loading ? '请稍候，正在读取最新申请状态。' : statusNote}}</text>
+        <text class="section-title">开通工作台</text>
+        <text class="section-note">{{loading ? '请稍候，正在读取最新状态。' : statusNote}}</text>
       </view>
       <text class="tag {{statusTagClass}}">{{loading ? '确认中' : statusText}}</text>
     </view>
     <view class="approval-flow">
       <view class="flow-item active">
         <text class="flow-dot">1</text>
-        <text class="flow-copy">提交申请</text>
+        <text class="flow-copy">确认方案</text>
       </view>
       <view class="flow-item {{dashboard.matchmaker.certificationStatus === 0 ? 'active' : ''}}">
         <text class="flow-dot">2</text>
-        <text class="flow-copy">后台审批</text>
+        <text class="flow-copy">完成付款</text>
       </view>
       <view class="flow-item {{dashboard.matchmaker.certificationStatus === 2 ? 'active' : ''}}">
         <text class="flow-dot">3</text>
         <text class="flow-copy">开通工作台</text>
       </view>
     </view>
-    <button wx:if="{{dashboard.matchmaker.certificationStatus === 1}}" class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="applyAgain">重新提交申请</button>
+    <button class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="goActivation">查看开通方案</button>
     <button class="btn ghost approval-btn" bindtap="goUserProfile">返回我的</button>
   </view>
 </view>

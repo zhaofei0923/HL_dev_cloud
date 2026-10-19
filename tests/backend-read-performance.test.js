@@ -46,7 +46,57 @@ async function legacyEvents(filters={}) {
   const views=await Promise.all(rows.map(row=>eventView(row)));
   return paginate(views,filters.page,filters.pageSize);
 }
-exports.__test={member,matchmaker,salon,chat,C,collectionsForPath,publicShowcaseRows,legacyOwnList,legacyDashboardStats,legacyEvents};
+async function legacyNotificationList(userId, filters = {}) {
+  const isPremiumMember = await hasPremiumMemberEntitlement(userId);
+  const rows = (await getAll(C.messages, { receiverId: Number(userId) }, 2000))
+    .filter(row => Number(row.status || 1) !== 0)
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0) || Number(b.id || 0) - Number(a.id || 0));
+  const page = paginate(rows, filters.page, filters.pageSize || 20);
+  return { ...page, unreadCount: rows.filter(row => !isMessageRead(row)).length,
+    list: await Promise.all(page.list.map(row => notificationMessageView(row, userId, isPremiumMember))) };
+}
+async function legacyMembershipOverview(userId) {
+  const [user, assignment, normalPlans, unresolvedOrders, vipOverview, readiness] = await Promise.all([
+    getUserOrThrow(userId), activeMemberAssignment(userId), activeMembershipPlans(), unresolvedUserPaymentOrders(userId),
+    vipMembership.overview(userId), vipMembership.getMatchmakingReadiness(userId)
+  ]);
+  let integration = membershipPaymentIntegration(userId);
+  let plans = normalPlans.filter(plan => plan.planCode !== paymentTestPlan().planCode);
+  if (integration.testMode) {
+    const testPlan = paymentTestPlan(process.env);
+    const testOrder = await getOne(C.paymentOrders, { _id: paymentTestDocumentId(process.env, userId) });
+    const completed = testOrder && (testOrder.status === 'paid'
+      || (testPlan.planCode === 'vip_week' && !['pending', 'confirming'].includes(testOrder.status)));
+    plans = completed ? [] : [testPlan];
+    if (completed) integration = { ...integration, available: false, createPath: '', reason: 'payment_test_completed' };
+  }
+  let payment = membershipPaymentAvailability({ config: integration, assignment, user,
+    plans: plans.filter(plan => plan.productType !== 'matchmaking') });
+  let matchmakingPayment = matchmakingPaymentIntegration();
+  if (matchmakingPayment.available && (!user.phone || !plans.some(plan => plan.productType === 'matchmaking' && plan.active))) {
+    matchmakingPayment = { ...matchmakingPayment, available: false,
+      reason: !user.phone ? 'phone_required' : 'plans_not_configured' };
+  }
+  const pendingOrder = unresolvedOrders[0] || null;
+  if (pendingOrder && pendingOrder.fulfillmentStatus === 'requires_review') {
+    payment = { ...payment, available: false, createPath: '', reason: 'payment_requires_review' };
+    matchmakingPayment = { ...matchmakingPayment, available: false, createPath: '', reason: 'payment_requires_review' };
+  }
+  const premium = vipOverview.isPremiumMember;
+  return { isPremiumMember: premium, phoneBound: !!user.phone,
+    phoneMasked: user.phone ? String(user.phone).slice(0, 3) + '****' + String(user.phone).slice(-4) : '',
+    needsMatchmaker: !assignment,
+    membership: premium || assignment ? { memberType: premium ? 'vip' : 'free', serviceLevel: assignment?.serviceLevel || '',
+      expireAt: vipOverview.expireAt, lifetime: vipOverview.lifetime } : null,
+    membershipTier: vipOverview.membershipTier, entitlements: vipOverview.entitlements, vipMembership: vipOverview.vipMembership,
+    matchmakingPackages: (await vipMembership.packages(userId)).list, matchmakingReadiness: readiness,
+    matchmakingProgress: vipOverview.matchmakingProgress, plans,
+    pendingOrder: pendingOrder ? publicPaymentOrder(pendingOrder) : null,
+    pendingOrderPayment: pendingOrder ? membershipOrderPaymentIntegration(userId, pendingOrder) : null,
+    unresolvedOrderCount: unresolvedOrders.length, payment, matchmakingPayment };
+}
+exports.__test={member,matchmaker,salon,chat,messages,membership,C,collectionsForPath,publicShowcaseRows,
+  legacyOwnList,legacyDashboardStats,legacyEvents,legacyNotificationList,legacyMembershipOverview};
 `;
 
 function runtime(input) {
@@ -105,7 +155,11 @@ function runtime(input) {
             writes.push({ name, id, data: structuredClone(data) });
             Object.assign(row, structuredClone(data));
           },
-          async get() { const row = (fixtures[name] || []).find(item => item._id === id); return { data: structuredClone(row) }; },
+          async get() {
+            const row = (fixtures[name] || []).find(item => item._id === id);
+            reads.push({ name, kind: 'doc', id, returned: row ? 1 : 0 });
+            return { data: structuredClone(row) };
+          },
           set() { throw new Error('unexpected document creation'); }
         };
       },
@@ -304,4 +358,150 @@ test('own member totals and public showcase pagination are complete beyond 1000 
   assert.equal(publicRows.length, 1004);
   assert.ok(publicRows.some(row => row.id === 'profile_2006'));
   assert.doesNotMatch(JSON.stringify(publicRows), /PRIVATE_PROOF|PRIVATE_PHONE|openid|privateArchive/);
+});
+
+function notificationFixture(count = 20, { premium = false, favorite = false } = {}) {
+  const f = fixture(count);
+  f.hl_messages = Array.from({ length: count }, (_, index) => ({ _id: `notification-${index + 1}`,
+    id: index + 1, receiverId: 1, senderId: index + 2, status: 1, isRead: index % 2,
+    messageType: favorite ? 'member_favorite' : 'online_reminder', content: `通知${index + 1}`,
+    conversationId: 1000 + index, createdAt: '2026-10-19T00:00:00.000Z' }));
+  if (premium) f.hl_vip_entitlements = [{ _id: 'vip_user_1', userId: 1,
+    legacyLifetime: true, legacyExpireAt: null, grants: [] }];
+  return f;
+}
+
+test('20 visible notifications preserve DTOs while sender reads fall from 40 to two batches', async () => {
+  const f = notificationFixture();
+  const optimized = runtime(f), legacy = runtime(f);
+  const result = await optimized.hooks.messages.list(1);
+  assert.deepEqual(plain(result), plain(await legacy.hooks.legacyNotificationList(1)));
+  assert.equal(legacy.reads.length, 44);
+  assert.equal(optimized.reads.length, 6);
+  assert.equal(optimized.reads.filter(read => read.name === 'hl_profiles').length, 1);
+  assert.equal(result.unreadCount, 10);
+  assert.deepEqual(Array.from(result.list, row => row.id), Array.from({ length: 20 }, (_, index) => 20 - index));
+  assert.equal(optimized.writes.length, 0);
+});
+
+test('free-member hidden favorite notifications never read sender identities', async () => {
+  const f = notificationFixture(20, { favorite: true });
+  const optimized = runtime(f), legacy = runtime(f);
+  const result = await optimized.hooks.messages.list(1);
+  assert.deepEqual(plain(result), plain(await legacy.hooks.legacyNotificationList(1)));
+  assert.equal(optimized.reads.length, 4);
+  assert.equal(legacy.reads.length, 4);
+  assert.equal(optimized.reads.filter(read => read.name === 'hl_profiles').length, 0);
+  assert.ok(optimized.reads.filter(read => read.name === 'hl_users')
+    .every(read => read.query.id === 1));
+  assert.doesNotMatch(JSON.stringify(result), /姓名|PRIVATE|wx-/);
+  assert.equal(optimized.writes.length, 0);
+});
+
+test('notification batch projection preserves nickname and city seeds for sparse-profile default avatars', async () => {
+  for (const seed of [{ city: '上海' }, { nickname: '小红', city: '深圳' }]) {
+    const f = notificationFixture(1);
+    Object.assign(f.hl_users[1], { avatarUrl: '', gender: 2 });
+    Object.assign(f.hl_profiles[0], { realName: '', photos: [], gender: 2, city: '', nickname: '', ...seed });
+    const optimized = runtime(f), legacy = runtime(f);
+    const actual = await optimized.hooks.messages.list(1);
+    const expected = await legacy.hooks.legacyNotificationList(1);
+    assert.deepEqual(plain(actual), plain(expected));
+    assert.equal(optimized.reads.filter(read => read.name === 'hl_profiles').length, 1);
+    const profileRead = optimized.reads.find(read => read.name === 'hl_profiles');
+    assert.equal(profileRead.fields.nickname, true);
+    assert.equal(profileRead.fields.city, true);
+    assert.match(actual.list[0].sender.avatarUrl, /avatar-female-2\.png$/);
+    assert.equal(optimized.writes.length, 0);
+  }
+});
+
+test('notification batching preserves premium visibility, page boundaries, unread totals and missing senders', async () => {
+  for (const premium of [false, true]) {
+    const f = notificationFixture(25, { premium });
+    f.hl_messages[21].messageType = 'member_favorite';
+    f.hl_messages[20].senderId = '003';
+    f.hl_messages[19].senderId = 999;
+    f.hl_messages[18].senderId = 0;
+    f.hl_messages[17].status = '0';
+    f.hl_messages.push({ id: 999, receiverId: 2, senderId: 1, status: 1, isRead: 0, content: 'OTHER_ACCOUNT_NOTIFICATION' });
+    for (const page of [1, 2, 4, 99]) {
+      const filters = { page, pageSize: 7 };
+      const optimized = runtime(f), legacy = runtime(f);
+      const result = await optimized.hooks.messages.list(1, filters);
+      assert.deepEqual(plain(result), plain(await legacy.hooks.legacyNotificationList(1, filters)));
+      const expectedSenders = new Set(f.hl_messages.filter(row => row.receiverId === 1 && Number(row.status || 1) !== 0)
+        .sort((a, b) => b.id - a.id).slice((page - 1) * 7, page * 7)
+        .filter(row => row.senderId && (row.messageType !== 'member_favorite' || premium))
+        .map(row => Number(row.senderId)));
+      for (const read of optimized.reads.filter(row => row.fields && ['hl_users', 'hl_profiles'].includes(row.name))) {
+        const requested = read.query[read.name === 'hl_users' ? 'id' : 'userId'].values;
+        assert.ok(requested.every(id => expectedSenders.has(id)), 'only currently visible page senders may be enriched');
+      }
+      assert.equal(result.total, 24);
+      assert.equal(result.unreadCount, 13);
+      assert.doesNotMatch(JSON.stringify(result), /OTHER_ACCOUNT_NOTIFICATION|PRIVATE/);
+      assert.equal(optimized.writes.length, 0);
+    }
+  }
+});
+
+test('notification enrichment refreshes on each request and rejects inactive callers', async () => {
+  const r = runtime(notificationFixture(1));
+  const first = await r.hooks.messages.list(1);
+  r.fixtures.hl_profiles[0].realName = '已更新称呼';
+  const second = await r.hooks.messages.list(1);
+  assert.notDeepEqual(plain(first), plain(second));
+  assert.match(JSON.stringify(second), /已更新称呼/);
+  r.fixtures.hl_users[0].status = 0;
+  await assert.rejects(r.hooks.messages.list(1), /账号不可用/);
+  assert.equal(r.writes.length, 0);
+});
+
+function membershipOverviewFixture(count = 0) {
+  const f = fixture(0);
+  f.hl_users[0].phone = '13800138000';
+  f.hl_matchmaking_packages = [{ _id: 'matchmaking_user_1', userId: 1,
+    packageIds: Array.from({ length: count }, (_, index) => `package_${index}`) },
+  ...Array.from({ length: count }, (_, index) => ({ _id: `package_${index}`, id: `package_${index}`,
+    userId: 1, planTitle: `已购套餐${index}`, totalCount: 6, usedCount: 1, status: 'active',
+    startAt: '2026-10-01T00:00:00.000Z', expireAt: '2099-11-01T00:00:00.000Z' }))];
+  return f;
+}
+
+test('membership overview reuses its existing readiness and package snapshot with identical DTOs', async () => {
+  for (const [count, before, after] of [[0, 29, 23], [5, 39, 28]]) {
+    const f = membershipOverviewFixture(count);
+    const optimized = runtime(f), legacy = runtime(f);
+    const result = await optimized.hooks.membership.overview(1);
+    assert.deepEqual(plain(result), plain(await legacy.hooks.legacyMembershipOverview(1)));
+    assert.equal(legacy.reads.length, before);
+    assert.equal(optimized.reads.length, after);
+    assert.equal(optimized.reads.filter(read => read.name === 'hl_matchmaking_packages').length, count + 1);
+    assert.equal(optimized.reads.filter(read => read.name === 'hl_profiles').length, 1);
+    assert.equal(optimized.writes.length, 0);
+  }
+});
+
+test('membership overview keeps package sorting, service readiness, status changes and caller checks', async () => {
+  const f = membershipOverviewFixture(3);
+  f.hl_users.push({ _id: 'mm-user', id: 2, status: 1, nickname: '服务主理人' });
+  f.hl_matchmakers[0].userId = 2;
+  f.hl_members.push({ _id: 'own-member', id: 1, userId: 1, matchmakerId: 1, status: 1 });
+  f.hl_profiles.push({ _id: 'own-profile', userId: 1, realName: '会员', updatedAt: '2026-10-19T00:00:00.000Z' });
+  f.hl_matchmaking_packages[1].expireAt = '2099-12-01T00:00:00.000Z';
+  f.hl_matchmaking_packages[2].status = 'refunded';
+  f.hl_matchmaking_packages[3].expireAt = '2020-01-01T00:00:00.000Z';
+  const optimized = runtime(f), legacy = runtime(f);
+  const first = await optimized.hooks.membership.overview(1);
+  assert.deepEqual(plain(first), plain(await legacy.hooks.legacyMembershipOverview(1)));
+  assert.deepEqual(Array.from(first.matchmakingPackages, row => [row.id, row.status]),
+    [['package_2', 'expired'], ['package_1', 'refunded'], ['package_0', 'active']]);
+  assert.equal(first.matchmakingReadiness.activeAssignment, true);
+  optimized.fixtures.hl_matchmaking_packages.find(row => row._id === 'package_0').usedCount = 3;
+  const second = await optimized.hooks.membership.overview(1);
+  assert.equal(second.matchmakingPackages.find(row => row.id === 'package_0').remainingCount, 3);
+  optimized.fixtures.hl_users[0].status = 0;
+  await assert.rejects(optimized.hooks.membership.overview(1));
+  assert.equal(optimized.writes.length, 0);
 });

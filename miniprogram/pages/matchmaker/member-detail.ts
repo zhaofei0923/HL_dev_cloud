@@ -1,6 +1,8 @@
-import { memberApi } from '../../services/member'
+import { memberApi, type MatchmakingReadiness } from '../../services/member'
 import { chatApi } from '../../services/chat'
 import { normalizeMemberProfile } from '../../utils/member-format'
+import { apiErrorMessage } from '../../services/api'
+import { pageSessionScope } from '../../utils/page-session'
 
 type DetailRow = {
   label: string
@@ -153,6 +155,9 @@ function archiveSections(archive: any): DetailSection[] {
 }
 
 Page({
+  _readinessVisible: true,
+  _detailScope: '',
+  _detailGeneration: 0,
   data: {
     id: '',
     scope: 'own',
@@ -172,7 +177,11 @@ Page({
     claimInvite: null as any,
     claimPhone: '',
     claimPhoneFocus: false,
-    claimPhoneSaving: false
+    claimPhoneSaving: false,
+    matchmakingReadiness: null as MatchmakingReadiness | null,
+    matchmakingReadinessLoading: false,
+    matchmakingReadinessSaving: false,
+    matchmakingReadinessError: ''
   },
 
   onLoad(options: Record<string, string | undefined>) {
@@ -186,26 +195,63 @@ Page({
   },
 
   onShow() {
-    if (this.data.id) void this.load()
+    this._readinessVisible = true
+    this.setData({ matchmakingReadinessLoading: false, matchmakingReadinessSaving: false })
+    if (this.data.id) return this.load()
+  },
+
+  onHide() {
+    this._readinessVisible = false
+    this._detailGeneration += 1
+    this.clearDetail()
+  },
+  onUnload() { this.onHide() },
+
+  clearDetail() {
+    this.setData({ member: null, privateSections: [], profilePrivateSections: [], matchingPrivateSections: [],
+      servicePrivateSections: [], privateLifePhotos: [], complianceVerified: false, claimInvite: null,
+      claimPhone: '', claimPhoneFocus: false, loading: false, displaySaving: false, chatStarting: false,
+      claimInviteLoading: false, claimPhoneSaving: false, matchmakingReadiness: null,
+      matchmakingReadinessLoading: false, matchmakingReadinessSaving: false, matchmakingReadinessError: '' })
+  },
+
+  ensureDetailSession() {
+    const scope = pageSessionScope()
+    if (scope !== this._detailScope) {
+      this._detailScope = scope
+      this._detailGeneration += 1
+      this.clearDetail()
+    }
+    if (!scope && this._readinessVisible) wx.redirectTo({ url: '/pages/index/index' })
+    return scope
+  },
+
+  isDetailCurrent(scope: string, generation: number) {
+    return this._readinessVisible && scope === pageSessionScope() && generation === this._detailGeneration
   },
 
   async load() {
-    if (!this.data.id) return
-    this.setData({ loading: true })
+    const scope = this.ensureDetailSession()
+    if (!scope || !this._readinessVisible || !this.data.id) return
+    const generation = ++this._detailGeneration
+    this.setData({ loading: true, displaySaving: false, chatStarting: false, claimInviteLoading: false, claimPhoneSaving: false })
     try {
       let row: any = null
       if (this.data.isOwn) {
         row = await memberApi.detail(this.data.id)
       } else {
-        const cached = wx.getStorageSync('selectedMatchmakerMember')
-        if (cached && String(cached.id) === this.data.id) {
-          row = cached
-        } else {
-          const result: any = await memberApi.resources({ page: 1, pageSize: 100 })
+        const seen = new Set<string>()
+        for (let page = 1; !row; page += 1) {
+          const result: any = await memberApi.resources({ page, pageSize: 100 })
+          if (!this.isDetailCurrent(scope, generation)) return
           row = (result.list || []).find((item: any) => String(item.id) === this.data.id)
+          const incoming = (result.list || []).filter((item: any) => !seen.has(String(item.id)))
+          incoming.forEach((item: any) => seen.add(String(item.id)))
+          if (!incoming.length || seen.size >= Number(result.total || 0)) break
         }
       }
-      const archive = row && row.privateArchive
+      if (!this.isDetailCurrent(scope, generation)) return
+      const archive = this.data.isOwn && row && row.privateArchive
       const privateSections = archiveSections(archive)
       const privateLifePhotos = archive && archive.personalProfile
         ? (Array.isArray(archive.personalProfile.lifePhotos) ? archive.personalProfile.lifePhotos : [])
@@ -223,11 +269,13 @@ Page({
         claimInvite: row && row.identityStatus === 'pending' ? this.data.claimInvite : null,
         claimPhone: row && row.phone ? String(row.phone) : this.data.claimPhone
       })
+      void this.loadMatchmakingReadiness()
     } catch (err) {
+      if (!this.isDetailCurrent(scope, generation)) return
       console.warn('load matchmaker member detail failed', err)
-      this.setData({ member: null })
+      this.clearDetail()
     } finally {
-      this.setData({ loading: false })
+      if (this.isDetailCurrent(scope, generation)) this.setData({ loading: false })
     }
   },
 
@@ -235,13 +283,61 @@ Page({
     wx.navigateBack()
   },
 
+  async loadMatchmakingReadiness() {
+    const scope = this.ensureDetailSession(), generation = this._detailGeneration, memberUserId = Number(this.data.member?.userId)
+    this.setData({ matchmakingReadiness: null, matchmakingReadinessError: '' })
+    if (!scope || !this.data.isOwn || !Number.isSafeInteger(memberUserId) || memberUserId <= 0) return
+    this.setData({ matchmakingReadinessLoading: true })
+    try {
+      const readiness = await memberApi.matchmakingReadiness(memberUserId)
+      if (this.isDetailCurrent(scope, generation) && Number(this.data.member?.userId) === memberUserId) this.setData({ matchmakingReadiness: readiness })
+    } catch (err) {
+      if (this.isDetailCurrent(scope, generation) && Number(this.data.member?.userId) === memberUserId) this.setData({ matchmakingReadinessError: '暂时无法确认人工牵线准备状态，请重试。' })
+      console.warn('load matchmaking readiness failed', err)
+    } finally {
+      if (this.isDetailCurrent(scope, generation) && Number(this.data.member?.userId) === memberUserId) this.setData({ matchmakingReadinessLoading: false })
+    }
+  },
+
+  confirmMatchmakingReadiness() {
+    const scope = this.ensureDetailSession(), generation = this._detailGeneration
+    if (!scope || !this._readinessVisible) return
+    const memberUserId = Number(this.data.member?.userId)
+    if (!this.data.isOwn || !memberUserId || this.data.matchmakingReadinessSaving || !this.data.matchmakingReadiness) return
+    wx.showModal({ title: '确认人工牵线准备', content: '请确认已与会员本人核对服务资料和牵线意向。本操作仅确认服务准备，不替会员同意具体牵线。',
+      success: async result => {
+        if (!result.confirm || !this.isDetailCurrent(scope, generation) || Number(this.data.member?.userId) !== memberUserId) return
+        this.setData({ matchmakingReadinessSaving: true })
+        try {
+          const readiness = await memberApi.confirmMatchmakingReadiness(memberUserId, true)
+          if (!this.isDetailCurrent(scope, generation) || Number(this.data.member?.userId) !== memberUserId) return
+          this.setData({ matchmakingReadiness: readiness })
+          wx.showToast({ title: '已确认人工牵线服务准备', icon: 'none' })
+        } catch (err) {
+          if (this.isDetailCurrent(scope, generation)) wx.showToast({ title: apiErrorMessage(err) || '确认未完成，请重试', icon: 'none' })
+        } finally {
+          if (this.isDetailCurrent(scope, generation) && Number(this.data.member?.userId) === memberUserId) this.setData({ matchmakingReadinessSaving: false })
+        }
+      }
+    })
+  },
+
+  viewMatchmakingRequests() {
+    if (!this.ensureDetailSession() || !this._readinessVisible) return
+    const memberUserId = Number(this.data.member?.userId)
+    if (this.data.isOwn && Number.isSafeInteger(memberUserId) && memberUserId > 0) wx.navigateTo({ url: `/pages/user/vip-privileges?tab=matchmaking&memberUserId=${memberUserId}` })
+  },
+
   setDetailTab(e: WechatMiniprogram.TouchEvent) {
+    if (!this.ensureDetailSession() || !this._readinessVisible) return
     const tab = String(e.currentTarget.dataset.tab || 'profile')
     if (!['profile', 'matching', 'service'].includes(tab)) return
     this.setData({ activeDetailTab: tab })
   },
 
   async onDisplayEnabledChange(e: any) {
+    const scope = this.ensureDetailSession(), generation = this._detailGeneration
+    if (!scope || !this._readinessVisible) return
     if (!this.data.isOwn || !this.data.member || this.data.displaySaving) return
     const displayEnabled = !!e.detail.value
     const previousMember = this.data.member
@@ -257,6 +353,7 @@ Page({
     })
     try {
       const updated: any = await memberApi.update(this.data.id, { displayEnabled })
+      if (!this.isDetailCurrent(scope, generation)) return
       const member = {
         ...normalizeMemberProfile(updated, true),
         privateArchive: previousMember.privateArchive
@@ -264,14 +361,17 @@ Page({
       this.setData({ member })
       wx.showToast({ title: displayEnabled ? '已开启展示' : '已关闭展示', icon: 'none' })
     } catch (err) {
+      if (!this.isDetailCurrent(scope, generation)) return
       console.warn('update member display failed', err)
       this.setData({ member: previousMember })
     } finally {
-      this.setData({ displaySaving: false })
+      if (this.isDetailCurrent(scope, generation)) this.setData({ displaySaving: false })
     }
   },
 
   async startChat() {
+    const scope = this.ensureDetailSession(), generation = this._detailGeneration
+    if (!scope || !this._readinessVisible) return
     const member = this.data.member
     if (member && member.identityStatus === 'pending') {
       wx.showToast({ title: '会员认领后才能在线联系', icon: 'none' })
@@ -289,21 +389,25 @@ Page({
       const conversation = await chatApi.getOrCreateConversation(targetUserId
         ? { targetUserId }
         : { targetMemberId: memberId })
+      if (!this.isDetailCurrent(scope, generation)) return
       wx.navigateTo({ url: `/pages/matchmaker/chat?id=${conversation.id}` })
     } catch (err) {
       console.warn('start matchmaker chat failed', err)
     } finally {
-      this.setData({ chatStarting: false })
+      if (this.isDetailCurrent(scope, generation)) this.setData({ chatStarting: false })
     }
   },
 
   async prepareClaimInvite() {
+    if (!this.ensureDetailSession() || !this._readinessVisible) return
     if (!this.data.isOwn || !this.data.member || this.data.claimInviteLoading) return
     if (this.data.claimInvite) return
     await this.requestClaimInvite()
   },
 
   async requestClaimInvite() {
+    const scope = this.ensureDetailSession(), generation = this._detailGeneration
+    if (!scope || !this._readinessVisible || !this.data.isOwn || !this.data.member || this.data.claimInviteLoading) return
     if (!this.data.member.phone) {
       this.setData({ claimPhoneFocus: true })
       wx.showToast({ title: '请先补录会员手机号', icon: 'none' })
@@ -312,6 +416,7 @@ Page({
     this.setData({ claimInviteLoading: true })
     try {
       const claimInvite: any = await memberApi.createIdentityClaimInvite(this.data.id)
+      if (!this.isDetailCurrent(scope, generation)) return
       if (claimInvite.status === 'claimed') {
         wx.showToast({ title: '该会员已绑定微信', icon: 'none' })
         await this.load()
@@ -322,11 +427,13 @@ Page({
     } catch (err) {
       console.warn('create member identity claim invite failed', err)
     } finally {
-      this.setData({ claimInviteLoading: false })
+      if (this.isDetailCurrent(scope, generation)) this.setData({ claimInviteLoading: false })
     }
   },
 
   regenerateClaimInvite() {
+    const scope = this.ensureDetailSession(), generation = this._detailGeneration
+    if (!scope || !this._readinessVisible) return
     if (!this.data.member || this.data.claimInviteLoading) return
     wx.showModal({
       title: '重新生成邀请？',
@@ -334,13 +441,14 @@ Page({
       confirmText: '重新生成',
       confirmColor: '#8f493f',
       success: res => {
-        if (!res.confirm) return
+        if (!res.confirm || !this.isDetailCurrent(scope, generation)) return
         void this.requestClaimInvite()
       }
     })
   },
 
   onClaimPhoneInput(e: WechatMiniprogram.Input) {
+    if (!this.ensureDetailSession() || !this._readinessVisible) return
     this.setData({ claimPhone: e.detail.value })
   },
 
@@ -349,7 +457,9 @@ Page({
   },
 
   async saveClaimPhoneAndPrepare() {
-    if (this.data.claimPhoneSaving) return
+    const scope = this.ensureDetailSession(), generation = this._detailGeneration
+    let operationGeneration = generation
+    if (!scope || !this._readinessVisible || !this.data.member || !this.data.isOwn || this.data.claimPhoneSaving) return
     const phone = String(this.data.claimPhone || '').replace(/\s+/g, '')
     if (!/^1[3-9]\d{9}$/.test(phone)) {
       wx.showToast({ title: '请输入有效手机号', icon: 'none' })
@@ -358,22 +468,27 @@ Page({
     this.setData({ claimPhoneSaving: true })
     try {
       await memberApi.update(this.data.id, { phone })
-      await this.load()
+      if (!this.isDetailCurrent(scope, generation)) return
+      const reload = this.load()
+      operationGeneration = this._detailGeneration
+      await reload
+      if (!this.isDetailCurrent(scope, operationGeneration)) return
       await this.prepareClaimInvite()
     } catch (err) {
       console.warn('save member claim phone failed', err)
     } finally {
-      this.setData({ claimPhoneSaving: false })
+      if (this.isDetailCurrent(scope, operationGeneration)) this.setData({ claimPhoneSaving: false })
     }
   },
 
   onShareAppMessage(options: any) {
+    const canShare = this.ensureDetailSession() && this._readinessVisible
     const isClaimShare = options
       && options.from === 'button'
       && options.target
       && options.target.dataset
       && options.target.dataset.claim === 'member'
-    if (isClaimShare && this.data.claimInvite && this.data.claimInvite.sharePath) {
+    if (canShare && isClaimShare && this.data.claimInvite && this.data.claimInvite.sharePath) {
       return {
         title: '主理人邀请你认领 HL 会员档案',
         path: this.data.claimInvite.sharePath,

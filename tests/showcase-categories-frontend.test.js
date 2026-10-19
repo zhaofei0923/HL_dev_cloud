@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { runtime, deferred, flush } = require('./helpers/miniprogram-runtime');
+const { runtime: baseRuntime, deferred, flush } = require('./helpers/miniprogram-runtime');
+
+// Category layout and cache tests explicitly use an entitled VIP viewer.
+const runtime = (page, options = {}) => baseRuntime(page, { source: true, ...options, memberApi: {
+  vipOverview: async () => ({ isPremiumMember: true, membershipTier: 'vip', entitlements: {} }), ...options.memberApi
+} });
 
 const categories = ['recommend', 'popularity', 'education', 'assets'];
 const event = category => ({ currentTarget: { dataset: { category } } });

@@ -1,8 +1,9 @@
 import { createRequire } from 'node:module';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { PaymentMcpClient } from './cloudbase-payment-mcp-client.mjs';
+import { certificationEnvironment } from './admin-operations-key-policy.mjs';
 
 const ENV_ID='cloud1-d2gza7q9c8d69c721',REGION='ap-shanghai',NAME='hlAdminOperations',AUDIT='hl_admin_audit_logs';
 const [sdkFile,buildDirectory,mode='inspect']=process.argv.slice(2);
@@ -34,14 +35,7 @@ try{
   // or print the JWT signing secret or any payment credential into this service.
   const original=await manager.functions.getFunctionDetail('hlApi');
   const variables=Object.fromEntries((original.Environment?.Variables||[]).map(item=>[item.Key,item.Value]));
-  const envVariables={};
-  if(typeof variables.MEMBER_CERTIFICATION_ENCRYPTION_KEY==='string'&&variables.MEMBER_CERTIFICATION_ENCRYPTION_KEY){
-    envVariables.MEMBER_CERTIFICATION_ENCRYPTION_KEY=variables.MEMBER_CERTIFICATION_ENCRYPTION_KEY;
-  }
-  if(typeof variables.JWT_SECRET==='string'&&Buffer.byteLength(variables.JWT_SECRET)>=32){
-    envVariables.MEMBER_CERTIFICATION_JWT_DERIVED_KEY='hex:'+createHmac('sha256',Buffer.from(variables.JWT_SECRET))
-      .update('hl.member-certification.encryption.jwt-derived.v1','utf8').digest('hex');
-  }
+  const envVariables=certificationEnvironment(variables);
   evidence.cryptoReadiness={dedicated:!!envVariables.MEMBER_CERTIFICATION_ENCRYPTION_KEY,legacyDerived:!!envVariables.MEMBER_CERTIFICATION_JWT_DERIVED_KEY,jwtSigningSecretCopied:false};
   if(!Object.keys(envVariables).length)throw new Error('Certificate decryption configuration unavailable');
   phase='inspect-audit-collection';

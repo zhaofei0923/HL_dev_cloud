@@ -1,5 +1,6 @@
 const cloud = require('wx-server-sdk');
 const crypto = require('node:crypto');
+const { miniprogramAdminEntry } = require('./admin-entry-policy');
 const {
   activeAttendance,
   latestAttendanceRows,
@@ -18,13 +19,34 @@ const {
 const {
   buildMembershipFulfillment,
   createPendingPaymentOrder,
-  isReusablePaymentOrder,
   normalizeMembershipPlan,
   paymentOrderIdentity,
   paymentDetailsMatch,
   paymentConfirmationMatches,
-  paymentIntegrationConfig
+  paymentIntegrationConfig,
+  paymentProviderConfig,
+  MATCHMAKER_LIFETIME_PLAN,
+  assertMatchmakerLifetimeProduct
 } = require('./membership-payment-policy');
+const { createMatchmakerActivationService, matchmakerActivationSnapshot, matchmakerActivationEligibility } = require('./matchmaker-activation-service');
+const { createVipMembershipService, VIP_COLLECTIONS, DEFAULT_MEMBERSHIP_PLANS, RETIRED_MATCHMAKING_PLAN_CODES } = require('./vip-membership-service');
+const { DIRECT_PURCHASE_CONTRACT, isDirectPurchaseOrder, assertPurchaseContract } = require('./purchase-contract-policy');
+const { paymentTestAccess, paymentTestRunId, paymentTestDocumentId, paymentTestPushOnly, paymentTestPlan,
+  assertTestCheckout, assertCurrentTestCheckout } = require('./payment-test-policy');
+const {
+  buildVirtualCloseProof,
+  buildVirtualConfirmation,
+  buildVirtualRefundProof,
+  buildVirtualSignData,
+  clientPaymentSignatures,
+  createVirtualPaymentClient,
+  assertVirtualLoginCode,
+  assertVirtualOrderNumber,
+  assertVirtualPayer,
+  mapVirtualOrderState,
+  validateGoodsDeliverPush,
+  virtualPaymentConfig
+} = require('./virtual-payment-policy');
 const {
   createLockedRelationshipPreview,
   isPremiumMembership,
@@ -36,6 +58,7 @@ const {
   defaultMemberNo,
   validateMemberIntake
 } = require('./member-intake-policy');
+const { createMemberAssignmentService } = require('./member-assignment-policy');
 const {
   assetPreferencePatch, categoryRank, normalizeCertificationReview, normalizeCertificationRequest, normalizeShowcaseCategory,
   assetCertificationExpiresAt, ownCertificationOverview, popularityCounts, publicCertificationFields, sanitizeProfileCertification
@@ -85,8 +108,12 @@ const C = {
   identityClaims: 'hl_member_identity_claims',
   membershipPlans: 'hl_membership_plans',
   paymentOrders: 'hl_payment_orders',
-  counters: 'hl_counters'
+  counters: 'hl_counters',
+  ...VIP_COLLECTIONS
 };
+
+const memberAssignments = createMemberAssignmentService({ db, error: createHttpError,
+  listMembers: userId => memberAssignmentRows(userId) });
 
 const MATCHMAKER_CERTIFICATION_STATUSES = new Set([0, 1, 2]);
 const SALON_REVIEW_STATUSES = new Set(['upcoming', 'rejected']);
@@ -391,9 +418,9 @@ async function ensureCollections() {
   return collectionsReady;
 }
 
-function collectionsForPath(path) {
+function baseCollectionsForPath(path) {
   const common = [C.users, C.profiles, C.counters];
-  if (path === '/user/profile') return [...common, C.memberCertifications];
+  if (path === '/user/profile') return [...common, C.memberCertifications, C.members, VIP_COLLECTIONS.entitlements];
   if (path === '/matchmaker/status') return [C.users, C.matchmakers];
   if (path === '/member/invite-options') return [C.users, C.matchmakers, C.members, C.profiles];
   if (path === '/member/gifts') return [C.users];
@@ -432,6 +459,21 @@ function collectionsForPath(path) {
     return [...common, C.members, C.messages, C.conversations, C.memberInteractions];
   }
   return common;
+}
+
+function collectionsForPath(path) {
+  const names = baseCollectionsForPath(path);
+  if (path === '/matchmaker/status' || path === '/member/invite-options') return names;
+  if (path.startsWith('/auth/member-claim')) return [...new Set([...names, ...Object.values(VIP_COLLECTIONS)])];
+  if (/^\/member\/(?:vip|matchmaking)(?:\/|$)/.test(path) || path.startsWith('/internal/payment-orders')) {
+    return [...new Set([...names, ...Object.values(VIP_COLLECTIONS), C.conversations])];
+  }
+  if (/^\/(?:member|chat|messages|matchmaker)(?:\/|$)/.test(path)) {
+    return [...new Set([...names, VIP_COLLECTIONS.entitlements,
+      ...(path === '/member/membership-plans' || path === '/member/payment-orders'
+        ? Object.values(VIP_COLLECTIONS) : [])])];
+  }
+  return names;
 }
 
 async function ensureCollectionsForPath(path) {
@@ -1246,6 +1288,43 @@ async function assertDailyFreeFavoriteQuota(userId, targetUserId) {
   return stats;
 }
 
+async function memberFavoriteQuota(userId, targetUserId = null) {
+  if (await hasPremiumMemberEntitlement(userId)) {
+    return { dateKey: shanghaiDateKey(), limit: 0, used: 0, remaining: 0, unlimited: true, targetCounted: false };
+  }
+  return dailyFreeFavoriteStats(userId, targetUserId);
+}
+
+async function assertVipDiscoveryAccess(userId, filters = {}) {
+  const category = normalizeShowcaseCategory(filters.category);
+  const advanced = ['ageMin', 'ageMax', 'education', 'maritalStatus', 'incomeRange']
+    .some(key => filters[key] !== undefined && filters[key] !== null && String(filters[key]).trim() !== '');
+  if ((category !== 'recommend' || advanced) && !(await hasPremiumMemberEntitlement(userId))) {
+    throw createHttpError(category !== 'recommend' ? '开通VIP后可查看专区' : '开通VIP后可使用高级筛选', 403, 40302);
+  }
+}
+
+async function withVipBadges(page) {
+  const ids = [...new Set((page.list || []).map(row => Number(row.userId)).filter(id => id > 0))];
+  const [users, records] = await Promise.all([
+    getFirstRowsByNumericField(C.users, 'id', ids, [], { complete: true, fields: { id: true, status: true, mergedIntoUserId: true } }),
+    getFirstRowsByNumericField(VIP_COLLECTIONS.entitlements, 'userId', ids, [], { complete: true,
+      fields: { userId: true, lifetime: true, legacyLifetime: true, expireAt: true } })
+  ]);
+  const legacyIds = ids.filter(id => !records.get(id));
+  const legacy = legacyIds.length ? await rowsByFieldBatches(C.members, 'userId', legacyIds,
+    { fields: { userId: true, status: true, memberType: true, expireAt: true } }) : [];
+  const states = new Map(ids.map(id => {
+    const user = users.get(id), record = records.get(id);
+    const active = record ? (record.lifetime === true || record.legacyLifetime === true
+      || !!record.expireAt && isPremiumMembership({ memberType: 'vip', expireAt: record.expireAt }))
+      : legacy.some(row => Number(row.userId) === id && Number(row.status) === 1 && isPremiumMembership(row));
+    return [id, !!user && Number(user.status) === 1 && !user.mergedIntoUserId && !!active];
+  }));
+  return { ...page, list: (page.list || []).map(row => ({ ...row, vipBadge: !!states.get(Number(row.userId)),
+    membershipTier: states.get(Number(row.userId)) ? 'vip' : 'free' })) };
+}
+
 function quotaAfterFreeFavoriteUse(stats) {
   const used = stats.targetCounted ? stats.used : stats.used + 1;
   return {
@@ -1705,9 +1784,7 @@ async function createChatConversationAtomically(normalizedIds, participantKey, c
 
   return db.runTransaction(async transaction => {
     const ref = transaction.collection(C.conversations).doc(documentId);
-    const query = transaction.collection(C.conversations).where({ _id: documentId }).limit(1);
-    const snapshot = await query.get();
-    const existing = snapshot && Array.isArray(snapshot.data) ? snapshot.data[0] : null;
+    const existing = await salonTransactionDocument(transaction, C.conversations, documentId);
     if (existing && Number(existing.status || 1) !== 0) {
       const patch = conversationMetadataPatch(existing, metadata);
       if (!Object.keys(patch).length) return { ...existing, _id: existing._id || documentId };
@@ -1962,10 +2039,10 @@ function isMessageRead(row) {
   return Number(row.isRead) === 1 || row.isRead === true;
 }
 
-async function notificationMessageView(row, currentUserId, isPremiumMember = false) {
+async function notificationMessageView(row, currentUserId, isPremiumMember = false, context = {}) {
   const favoriteMessage = String(row.messageType || '') === 'member_favorite';
   const sender = row.senderId && (!favoriteMessage || isPremiumMember)
-    ? await chatParticipantView(row.senderId)
+    ? await chatParticipantView(row.senderId, context)
     : null;
   let conversationId = row.conversationId ? Number(row.conversationId) : null;
   if (favoriteMessage && !isPremiumMember) conversationId = null;
@@ -1994,10 +2071,24 @@ const messages = {
       .filter(row => Number(row.status || 1) !== 0)
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0) || Number(b.id || 0) - Number(a.id || 0));
     const page = paginate(rows, filters.page, filters.pageSize || 20);
+    // Resolve only identities visible on this page; hidden favorite senders
+    // must never be loaded merely to render a free member's notifications.
+    const senderIds = page.list
+      .filter(row => row.senderId && (String(row.messageType || '') !== 'member_favorite' || isPremiumMember))
+      .map(row => row.senderId);
+    const [usersById, profilesByUserId] = await Promise.all([
+      getFirstRowsByNumericField(C.users, 'id', senderIds, [], { complete: true, fields: {
+        id: true, nickname: true, avatarUrl: true, gender: true
+      } }),
+      getFirstRowsByNumericField(C.profiles, 'userId', senderIds, [], { complete: true, fields: {
+        userId: true, realName: true, photos: true, gender: true, nickname: true, city: true
+      } })
+    ]);
+    const context = { usersById, profilesByUserId };
     return {
       ...page,
       unreadCount: rows.filter(row => !isMessageRead(row)).length,
-      list: await Promise.all(page.list.map(row => notificationMessageView(row, userId, isPremiumMember)))
+      list: await Promise.all(page.list.map(row => notificationMessageView(row, userId, isPremiumMember, context)))
     };
   },
 
@@ -2246,14 +2337,25 @@ async function matchmakerInvitePreview(data = {}) {
   };
 }
 
+async function memberAssignmentRows(userId) {
+  const found = await Promise.all([Number(userId), String(userId)].map(value => getAll(C.members, { userId: value }, Infinity)));
+  return [...new Map(found.flat().map(row => [row._id, row])).values()];
+}
+
+async function memberAssignmentUserOrThrow(userId) {
+  const user = await getUserOrThrow(userId);
+  if (Number(user.status) !== 1 || user.mergedIntoUserId) throw createHttpError('user unavailable for member assignment', 409, 40901);
+  return user;
+}
+
 async function activeMemberAssignment(userId) {
-  const rows = await getAll(C.members, { userId: Number(userId), status: 1 });
+  const rows = (await memberAssignmentRows(userId)).filter(row => Number(row.status) === 1);
+  if (rows.length > 1) throw createHttpError('duplicate active member assignments', 409, 40901);
   return rows[0] || null;
 }
 
 async function hasPremiumMemberEntitlement(userId) {
-  const rows = await getAll(C.members, { userId: Number(userId), status: 1 }, 100);
-  return rows.some(row => isPremiumMembership(row));
+  return (await vipMembership.getEntitlement(userId)).isPremiumMember;
 }
 
 function relationshipType(value) {
@@ -2303,50 +2405,9 @@ async function memberRequestView(row) {
 }
 
 async function createMemberMatchmakerRequest(userId, data = {}) {
-  await getUserOrThrow(userId);
-  const matchmaker = await resolveMatchmakerForRequest(data);
-  if (!matchmaker || Number(matchmaker.status) !== 1) {
-    throw createHttpError('matchmaker not found', 404, 40400);
-  }
-  if (Number(matchmaker.certificationStatus) !== 2) {
-    throw createHttpError('matchmaker is not certified', 403, 40301);
-  }
-
-  const assignment = await activeMemberAssignment(userId);
-  if (assignment && Number(assignment.matchmakerId) === Number(matchmaker.id)) {
-    return {
-      status: 'approved',
-      member: await memberView(assignment),
-      request: null
-    };
-  }
-  if (assignment) {
-    throw createHttpError('member already has a matchmaker', 409, 40901);
-  }
-
-  const existingRows = (await getAll(C.memberRequests, { userId: Number(userId), matchmakerId: Number(matchmaker.id) }))
-    .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
-  const pending = existingRows.find(row => row.status === 'pending');
-  if (pending) return memberRequestView(pending);
-
-  const reusable = existingRows.find(row => ['rejected', 'cancelled'].includes(row.status));
-  const requestPatch = {
-    status: 'pending',
-    applySource: requestApplySource(data),
-    applyMessage: data.message || '',
-    reviewRemark: '',
-    reviewedAt: null,
-    reviewerId: null
-  };
-  const row = reusable
-    ? await updateRow(C.memberRequests, reusable, requestPatch)
-    : await addRow(C.memberRequests, {
-      id: await nextId('memberRequest'),
-      userId: Number(userId),
-      matchmakerId: Number(matchmaker.id),
-      ...requestPatch
-    });
-  return memberRequestView(row);
+  // Entered codes and scanned invitations use the same atomic assignment as
+  // shared invitations; the source is metadata, not an approval requirement.
+  return acceptMemberMatchmakerInvite(userId, data, { requireShareSource: false });
 }
 
 async function approveMemberMatchmakerRequest(matchmakerUserId, requestId) {
@@ -2362,33 +2423,27 @@ async function approveMemberMatchmakerRequest(matchmakerUserId, requestId) {
     throw createHttpError('member already has another matchmaker', 409, 40901);
   }
 
-  let memberRow = await getOne(C.members, { matchmakerId: mm.id, userId: Number(request.userId) });
-  if (memberRow) {
-    memberRow = await updateRow(C.members, memberRow, {
-      memberNo: memberRow.memberNo || defaultMemberNo(memberRow.id, memberRow.createdAt || new Date()),
-      status: 1
-    });
-  } else {
-    const memberId = await nextId('member');
-    memberRow = await addRow(C.members, {
-      id: memberId,
+  const [user, principalUser] = await Promise.all([
+    memberAssignmentUserOrThrow(request.userId), memberAssignmentUserOrThrow(matchmakerUserId)
+  ]);
+  const snapshot = await memberAssignments.prepare(request.userId, [
+    { collection: C.matchmakers, row: mm }, { collection: C.users, row: user },
+    { collection: C.users, row: principalUser }, { collection: C.memberRequests, row: request }
+  ]);
+  const requestPatch = { status: 'approved', reviewRemark: '', reviewedAt: nowIso(), reviewerId: Number(matchmakerUserId) };
+  const changed = await memberAssignments.mutate(snapshot, { matchmakerId: mm.id,
+    patch: memberRow => ({ memberNo: memberRow.memberNo || defaultMemberNo(memberRow.id, memberRow.createdAt || new Date()), status: 1 }),
+    create: memberId => ({
       memberNo: defaultMemberNo(memberId),
-      matchmakerId: mm.id,
-      userId: Number(request.userId),
       memberType: 'free',
       serviceLevel: '',
       expireAt: null,
       remark: 'member request approved',
       status: 1
-    });
-  }
-
-  const reviewed = await updateRow(C.memberRequests, request, {
-    status: 'approved',
-    reviewRemark: '',
-    reviewedAt: nowIso(),
-    reviewerId: Number(matchmakerUserId)
+    }), updates: [{ collection: C.memberRequests, documentId: request._id, patch: requestPatch }]
   });
+  const memberRow = changed.member;
+  const reviewed = changed.snapshot.dependencies.find(item => item.collection === C.memberRequests).row;
   await addRow(C.messages, {
     id: await nextId('message'),
     senderId: Number(matchmakerUserId),
@@ -2414,8 +2469,8 @@ async function validateInviteEventForMatchmaker(eventId, matchmaker) {
   return event;
 }
 
-async function acceptMemberMatchmakerInvite(userId, data = {}) {
-  await getUserOrThrow(userId);
+async function acceptMemberMatchmakerInvite(userId, data = {}, options = {}) {
+  const inviteUser = await memberAssignmentUserOrThrow(userId);
   if (data.eventId && ['salonShare', 'memberSalonShare'].includes(requestApplySource(data))) {
     // An activity invitation is registration, never approval of an assignment.
     const registration = await salon.register(data.eventId, userId, data);
@@ -2429,7 +2484,7 @@ async function acceptMemberMatchmakerInvite(userId, data = {}) {
   if (Number(matchmaker.certificationStatus) !== 2) {
     throw createHttpError('matchmaker is not certified', 403, 40301);
   }
-  if (!isShareInviteSource(data)) {
+  if (options.requireShareSource !== false && !isShareInviteSource(data)) {
     throw createHttpError('share invite source is required');
   }
 
@@ -2441,41 +2496,33 @@ async function acceptMemberMatchmakerInvite(userId, data = {}) {
 
   const existingRows = (await getAll(C.memberRequests, { userId: Number(userId), matchmakerId: Number(matchmaker.id) }))
     .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
-  let request = existingRows[0] || null;
-  let memberRow = assignment || await getOne(C.members, { matchmakerId: matchmaker.id, userId: Number(userId) });
-  const isNewAssignment = !memberRow || Number(memberRow.status) !== 1;
-
-  if (memberRow) {
-    memberRow = await updateRow(C.members, memberRow, {
-      memberNo: memberRow.memberNo || defaultMemberNo(memberRow.id, memberRow.createdAt || new Date()),
-      memberType: memberRow.memberType || 'free',
-      status: 1
-    });
-  } else {
-    const memberId = await nextId('member');
-    memberRow = await addRow(C.members, {
-      id: memberId,
-      memberNo: defaultMemberNo(memberId),
-      matchmakerId: Number(matchmaker.id),
-      userId: Number(userId),
-      memberType: 'free',
-      serviceLevel: '',
-      expireAt: null,
-      remark: 'share invite accepted',
-      status: 1
-    });
-  }
-
+  let request = existingRows.find(row => row.status === 'pending') || existingRows[0] || null;
+  const settledRequests = existingRows.filter(row => row === request || row.status === 'pending');
   const requestPatch = {
     status: 'approved',
     applySource: requestApplySource(data),
     applyMessage: data.message || '',
-    reviewRemark: 'share invite accepted',
+    reviewRemark: 'member invite accepted',
     reviewedAt: nowIso(),
     reviewerId: Number(matchmaker.userId)
   };
+  const principalUser = await memberAssignmentUserOrThrow(matchmaker.userId);
+  const snapshot = await memberAssignments.prepare(userId, [
+    { collection: C.matchmakers, row: matchmaker }, { collection: C.users, row: inviteUser },
+    { collection: C.users, row: principalUser },
+    ...settledRequests.map(row => ({ collection: C.memberRequests, row })),
+    ...(event ? [{ collection: C.salonEvents, row: event }] : [])
+  ]);
+  const changed = await memberAssignments.mutate(snapshot, { matchmakerId: matchmaker.id,
+    patch: memberRow => ({ memberNo: memberRow.memberNo || defaultMemberNo(memberRow.id, memberRow.createdAt || new Date()),
+      memberType: memberRow.memberType || 'free', status: 1 }),
+    create: memberId => ({ memberNo: defaultMemberNo(memberId), memberType: 'free', serviceLevel: '', expireAt: null,
+      remark: 'member invite accepted', status: 1 }),
+    updates: settledRequests.map(row => ({ collection: C.memberRequests, documentId: row._id, patch: requestPatch })) });
+  const memberRow = changed.member;
+  const isNewAssignment = !changed.wasActive;
   request = request
-    ? await updateRow(C.memberRequests, request, requestPatch)
+    ? changed.snapshot.dependencies.find(item => item.collection === C.memberRequests && item.row._id === request._id).row
     : await addRow(C.memberRequests, {
       id: await nextId('memberRequest'),
       userId: Number(userId),
@@ -2489,7 +2536,7 @@ async function acceptMemberMatchmakerInvite(userId, data = {}) {
       senderId: Number(matchmaker.userId),
       receiverId: Number(userId),
       contentType: 'system',
-      content: '你已通过微信邀请成为主理人名下会员。',
+      content: '您已成为主理人名下会员。',
       isRead: 0
     });
   }
@@ -2731,7 +2778,11 @@ async function sourceAccountConflictReasons(sourceUserId) {
     registrations,
     paymentOrders,
     salonEvents,
-    conversations
+    conversations,
+    vipEntitlements,
+    matchmakingPackages,
+    matchmakingRequests,
+    wechatExchanges
   ] = await Promise.all([
     getAll(C.matchmakers, { userId: sourceId }, 1),
     getAll(C.members, { userId: sourceId, status: 1 }, 1),
@@ -2749,7 +2800,11 @@ async function sourceAccountConflictReasons(sourceUserId) {
     getAll(C.registrations, { userId: sourceId }, 1),
     getAll(C.paymentOrders, { userId: sourceId }, 1),
     getAll(C.salonEvents, { organizerId: sourceId }, 1),
-    getAll(C.conversations, null, 2000)
+    getAll(C.conversations, null, 2000),
+    getAll(VIP_COLLECTIONS.entitlements, { userId: sourceId }, 1),
+    getAll(VIP_COLLECTIONS.matchmakingPackages, { userId: sourceId }, 1),
+    getAll(VIP_COLLECTIONS.matchmakingRequests, _.or([{ memberUserId: sourceId }, { targetUserId: sourceId }]), 1),
+    getAll(VIP_COLLECTIONS.wechatExchanges, _.or([{ requesterId: sourceId }, { recipientId: sourceId }]), 1)
   ]);
   const conversationConflict = conversations.some(row => (
     Array.isArray(row.participantIds) && row.participantIds.some(id => Number(id) === sourceId)
@@ -2770,7 +2825,11 @@ async function sourceAccountConflictReasons(sourceUserId) {
     giftsTargeted,
     registrations,
     paymentOrders,
-    salonEvents
+    salonEvents,
+    vipEntitlements,
+    matchmakingPackages,
+    matchmakingRequests,
+    wechatExchanges
   ];
   return groups.some(rows => rows.length > 0) || conversationConflict
     ? ['independent_business_data']
@@ -2779,6 +2838,7 @@ async function sourceAccountConflictReasons(sourceUserId) {
 
 async function createMemberIdentityClaimInvite(matchmakerUserId, memberId) {
   const matchmakerRow = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
+  const matchmakerUser = await getUserOrThrow(matchmakerRow.userId);
   const memberRow = await getById(C.members, memberId);
   if (!memberRow || Number(memberRow.status) !== 1 || Number(memberRow.matchmakerId) !== Number(matchmakerRow.id)) {
     throw createHttpError('member not found', 404, 40400);
@@ -2789,26 +2849,26 @@ async function createMemberIdentityClaimInvite(matchmakerUserId, memberId) {
   const claimInviteVersion = hashClaimToken(token);
   const timestamp = nowIso();
   const expiresAt = claimExpiresAt(Date.now());
+  const targetPhone = String(targetUser.phone || '').trim();
+  const phoneOwnerRows = targetPhone ? await getAll(C.users, { phone: targetPhone }, 3) : [];
   const result = await db.runTransaction(async transaction => {
     const matchmakerRef = transaction.collection(C.matchmakers).doc(matchmakerRow._id);
     const memberRef = transaction.collection(C.members).doc(memberRow._id);
     const targetRef = transaction.collection(C.users).doc(targetUser._id);
     const claimRef = transaction.collection(C.identityClaims).doc(identityClaimDocumentId(memberRow.id));
-    const claimQuery = transaction.collection(C.identityClaims)
-      .where({ _id: identityClaimDocumentId(memberRow.id) })
-      .limit(1);
     const snapshots = await Promise.all([
       matchmakerRef.get(),
       memberRef.get(),
       targetRef.get(),
-      claimQuery.get()
+      salonTransactionDocument(transaction, C.identityClaims, identityClaimDocumentId(memberRow.id)),
+      Promise.all(phoneOwnerRows.map(row => salonTransactionDocument(transaction, C.users, row._id))),
+      salonTransactionDocument(transaction, C.users, matchmakerUser._id)
     ]);
     const currentMatchmaker = snapshots[0] && snapshots[0].data;
     const currentMember = snapshots[1] && snapshots[1].data;
     const currentTarget = snapshots[2] && snapshots[2].data;
-    const currentClaim = snapshots[3] && Array.isArray(snapshots[3].data)
-      ? snapshots[3].data[0]
-      : null;
+    const currentClaim = snapshots[3];
+    const currentMatchmakerUser = snapshots[5];
 
     if (
       !currentMatchmaker
@@ -2816,6 +2876,10 @@ async function createMemberIdentityClaimInvite(matchmakerUserId, memberId) {
       || Number(currentMatchmaker.userId) !== Number(matchmakerUserId)
       || Number(currentMatchmaker.status) !== 1
       || Number(currentMatchmaker.certificationStatus) !== 2
+      || !currentMatchmakerUser
+      || Number(currentMatchmakerUser.id) !== Number(currentMatchmaker.userId)
+      || Number(currentMatchmakerUser.status) !== 1
+      || currentMatchmakerUser.mergedIntoUserId
       || !currentMember
       || Number(currentMember.id) !== Number(memberRow.id)
       || Number(currentMember.status) !== 1
@@ -2824,6 +2888,7 @@ async function createMemberIdentityClaimInvite(matchmakerUserId, memberId) {
       || !currentTarget
       || Number(currentTarget.id) !== Number(targetUser.id)
       || Number(currentTarget.status) !== 1
+      || currentTarget.mergedIntoUserId
     ) {
       throw createHttpError('会员或主理人状态已变化，请重新生成邀请', 409, 40922);
     }
@@ -2834,15 +2899,10 @@ async function createMemberIdentityClaimInvite(matchmakerUserId, memberId) {
       return { status: 'claimed', identityStatusText: '已绑定微信' };
     }
 
-    const targetPhone = String(currentTarget.phone || '').trim();
-    if (!targetPhone) {
+    if (!targetPhone || String(currentTarget.phone || '').trim() !== targetPhone) {
       throw createHttpError('该会员尚未留存手机号，请补录后再生成认领邀请', 422, 42220);
     }
-    const phoneSnapshot = await transaction.collection(C.users)
-      .where({ phone: targetPhone })
-      .limit(3)
-      .get();
-    const phoneOwners = (phoneSnapshot.data || []).filter(row => Number(row.status) !== 0);
+    const phoneOwners = snapshots[4].filter(row => row && Number(row.status) !== 0 && String(row.phone || '') === targetPhone);
     if (phoneOwners.length !== 1 || Number(phoneOwners[0].id) !== Number(currentTarget.id)) {
       throw createHttpError('会员手机号归属异常，请联系平台人工核验', 409, 40920);
     }
@@ -2943,9 +3003,12 @@ async function confirmMemberIdentityClaim(sourceUserId, token, phoneCode) {
     throw createHttpError('当前微信账号已有独立业务记录，请联系主理人进行人工合并', 409, 40925);
   }
 
-  const [sourceProfile, targetProfile] = await Promise.all([
+  const [sourceProfile, targetProfile, phoneOwnerRows, openidOwnerRows, matchmakerUser] = await Promise.all([
     getOne(C.profiles, { userId: Number(sourceUser.id) }),
-    getOne(C.profiles, { userId: Number(context.targetUser.id) })
+    getOne(C.profiles, { userId: Number(context.targetUser.id) }),
+    getAll(C.users, { phone }, 3),
+    getAll(C.users, { openid: trustedOpenid }, 3),
+    getUserOrThrow(context.matchmakerRow.userId)
   ]);
   if (!targetProfile || !targetProfile._id) {
     throw createHttpError('手工会员档案不完整，请联系主理人核验', 409, 40926);
@@ -2969,8 +3032,9 @@ async function confirmMemberIdentityClaim(sourceUserId, token, phoneCode) {
       targetRef.get(),
       targetProfileRef.get(),
       sourceProfileRef ? sourceProfileRef.get() : Promise.resolve(null),
-      transaction.collection(C.users).where({ phone }).limit(3).get(),
-      transaction.collection(C.users).where({ openid: trustedOpenid }).limit(3).get()
+      Promise.all(phoneOwnerRows.map(row => salonTransactionDocument(transaction, C.users, row._id))),
+      Promise.all(openidOwnerRows.map(row => salonTransactionDocument(transaction, C.users, row._id))),
+      salonTransactionDocument(transaction, C.users, matchmakerUser._id)
     ]);
     const currentClaim = snapshots[0] && snapshots[0].data;
     const currentMember = snapshots[1] && snapshots[1].data;
@@ -2979,13 +3043,17 @@ async function confirmMemberIdentityClaim(sourceUserId, token, phoneCode) {
     const currentTarget = snapshots[4] && snapshots[4].data;
     const currentTargetProfile = snapshots[5] && snapshots[5].data;
     const currentSourceProfile = snapshots[6] && snapshots[6].data;
-    const currentPhoneOwners = ((snapshots[7] && snapshots[7].data) || [])
-      .filter(row => Number(row.status) !== 0);
-    const currentOpenidOwners = ((snapshots[8] && snapshots[8].data) || [])
-      .filter(row => Number(row.status) !== 0);
+    const currentPhoneOwners = snapshots[7]
+      .filter(row => row && Number(row.status) !== 0 && String(row.phone || '') === phone);
+    const currentOpenidOwners = snapshots[8]
+      .filter(row => row && Number(row.status) !== 0 && String(row.openid || '') === trustedOpenid);
+    const currentMatchmakerUser = snapshots[9];
 
     if (currentClaim && String(currentClaim.status) === 'claimed') {
-      if (Number(currentClaim.claimedBySourceUserId) !== Number(sourceUser.id)) {
+      if (Number(currentClaim.claimedBySourceUserId) !== Number(sourceUser.id)
+        || !currentTarget || Number(currentTarget.status) !== 1 || currentTarget.mergedIntoUserId
+        || Number(currentClaim.canonicalUserId) !== Number(currentTarget.id)
+        || String(currentTarget.openid || '') !== trustedOpenid) {
         throw createHttpError('该档案已由其他微信账号认领', 409, 40921);
       }
       return { canonicalUser: currentTarget, idempotent: true };
@@ -3006,6 +3074,10 @@ async function confirmMemberIdentityClaim(sourceUserId, token, phoneCode) {
       || Number(currentMatchmaker.id) !== Number(context.matchmakerRow.id)
       || Number(currentMatchmaker.status) !== 1
       || Number(currentMatchmaker.certificationStatus) !== 2
+      || !currentMatchmakerUser
+      || Number(currentMatchmakerUser.id) !== Number(currentMatchmaker.userId)
+      || Number(currentMatchmakerUser.status) !== 1
+      || currentMatchmakerUser.mergedIntoUserId
       || Number(currentClaim.matchmakerId) !== Number(currentMatchmaker.id)
       || Number(currentClaim.targetUserId) !== Number(currentTarget.id)
       || Number(currentClaim.memberId) !== Number(context.memberRow.id)
@@ -3013,6 +3085,8 @@ async function confirmMemberIdentityClaim(sourceUserId, token, phoneCode) {
       || String(currentTarget.claimInviteVersion || '') !== String(currentClaim.claimInviteVersion)
       || Number(currentSource.status) !== 1
       || Number(currentTarget.status) !== 1
+      || currentSource.mergedIntoUserId
+      || currentTarget.mergedIntoUserId
       || String(currentSource.openid || '') !== trustedOpenid
       || (currentSource.phone && String(currentSource.phone) !== phone)
       || !isManualIdentity(currentTarget.openid)
@@ -3187,7 +3261,269 @@ function publicPaymentOrder(row) {
   const safe = stripInternal(row) || {};
   delete safe.payerOpenid;
   delete safe.memberRecordId;
+  delete safe.memberMatchmakerId;
+  delete safe.virtualPaymentAttempts;
+  delete safe.paymentTestPlanCode;
+  delete safe.paymentTestRunId;
+  delete safe.userDocumentId;
+  delete safe.matchmakerDocumentId;
+  delete safe.matchmakerAuthorizationSnapshot;
+  safe.fulfillmentStatus = safe.fulfillmentStatus || (safe.status === 'paid' ? 'fulfilled' : '');
+  safe.fulfillmentMessage = safe.fulfillmentMessage || '';
   return safe;
+}
+
+// Member-facing history is separate from payment recovery and never mutates
+// orders, probes, reservations, entitlements, or provider state.
+const MEMBER_ORDER_STATUSES = ['pending', 'confirming', 'paid', 'closed', 'failed', 'refunded'];
+const MEMBER_ORDER_FLAGS = ['isTest', 'isDemo', 'testMode', 'isGuard', 'isProbe', 'isSandbox', 'paymentGuard', 'guard'];
+const MEMBER_ORDER_SOURCES = ['source', 'dataSource', 'origin', 'recordType', 'kind'];
+const MEMBER_ORDER_TEST_MARKERS = ['test', 'demo', 'seed', 'sandbox', 'probe', 'mock', 'guard'];
+const MEMBER_ORDER_FIELDS = Object.fromEntries([
+  '_id', 'id', 'userId', 'outTradeNo', 'planCode', 'planTitle', 'amountFen', 'durationDays', 'status',
+  'fulfillmentStatus', 'fulfillmentMessage', 'createdAt', 'updatedAt', 'paidAt', 'productType', 'serviceCount',
+  'paymentProvider', 'refundedAt', 'transactionId', 'virtualPaymentEnv', 'paymentTestPlanCode', 'paymentTestRunId', 'lifetime',
+  'probeArchivedAt', ...MEMBER_ORDER_FLAGS, ...MEMBER_ORDER_SOURCES
+].map(field => [field, true]));
+
+function memberOrderUnavailable() {
+  return createHttpError('订单不存在或暂不可查看', 404, 40400);
+}
+
+async function memberOrderRead(query, { fields = MEMBER_ORDER_FIELDS, offset = 0, limit = 20, count = false, ordered = false } = {}) {
+  // Deliberately bypass helpers that may create a missing collection on error.
+  try {
+    let ref = db.collection(C.paymentOrders).where(query);
+    if (count) return await ref.count();
+    ref = ref.field(fields);
+    if (ordered) ref = ref.orderBy('createdAt', 'desc').orderBy('outTradeNo', 'desc').orderBy('_id', 'desc');
+    return await ref.skip(offset).limit(limit).get();
+  } catch (_) {
+    throw createHttpError('订单暂不可读取，请稍后重试', 503, 50301);
+  }
+}
+
+function memberOrderQuery(userId, outTradeNo) {
+  const markerValues = MEMBER_ORDER_TEST_MARKERS.flatMap(value => [value, value.toUpperCase(), value[0].toUpperCase() + value.slice(1)]);
+  const query = {
+    userId: _.in([Number(userId), String(Number(userId))]), id: _.gt(0), amountFen: _.gt(0),
+    status: _.in(MEMBER_ORDER_STATUSES),
+    outTradeNo: outTradeNo || db.RegExp({ regexp: '^(?!.*(?:guard|probe|sandbox|test))[a-z0-9][a-z0-9_-]{7,31}$', options: 'i' }),
+    planCode: db.RegExp({ regexp: '^(?!hl_payment_probe$)[a-z0-9][a-z0-9_-]{1,31}$' }),
+    planTitle: db.RegExp({ regexp: '\\S' }),
+    _id: db.RegExp({ regexp: '^(?!.*(?:guard|probe|sandbox)).+$', options: 'i' }),
+    paymentTestPlanCode: _.exists(false), paymentTestRunId: _.exists(false), probeArchivedAt: _.exists(false),
+    virtualPaymentEnv: _.nin([1, '1']),
+    ...Object.fromEntries(MEMBER_ORDER_FLAGS.map(field => [field, _.nin([true, 1, 'true', 'TRUE', '1'])])),
+    ...Object.fromEntries(MEMBER_ORDER_SOURCES.map(field => [field, _.nin(markerValues)]))
+  };
+  return _.and([query,
+    _.or([{ paymentProvider: _.exists(false) }, { paymentProvider: _.in(['jsapi', 'virtual']) }]),
+    _.or([{ durationDays: _.gt(0), productType: _.exists(false) },
+      { durationDays: _.gt(0), productType: _.in(['vip', 'matchmaking']) },
+      { durationDays: 0, productType: 'matchmaker', lifetime: true, planCode: MATCHMAKER_LIFETIME_PLAN.planCode, amountFen: MATCHMAKER_LIFETIME_PLAN.amountFen }]),
+    _.or([{ fulfillmentStatus: _.exists(false) }, { fulfillmentStatus: _.in(['', 'fulfilled', 'requires_review']) }])
+  ]);
+}
+
+function memberOrderDto(row, userId) {
+  const validDate = value => typeof value === 'string' && value.length > 0 && Number.isFinite(Date.parse(value));
+  const lifetimeActivation = row && row.productType === 'matchmaker' && row.planCode === MATCHMAKER_LIFETIME_PLAN.planCode
+    && row.amountFen === MATCHMAKER_LIFETIME_PLAN.amountFen && row.durationDays === 0 && row.lifetime === true && row.serviceCount === 0;
+  if (!row || Number(row.userId) !== Number(userId) || !Number.isSafeInteger(row.id) || row.id <= 0
+    || typeof row.outTradeNo !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,31}$/.test(row.outTradeNo)
+    || /guard|probe|sandbox|test/i.test(row.outTradeNo) || /guard|probe|sandbox/i.test(String(row._id || ''))
+    || !Number.isSafeInteger(row.amountFen) || row.amountFen <= 0
+    || !Number.isSafeInteger(row.durationDays) || (!lifetimeActivation && row.durationDays <= 0)
+    || !MEMBER_ORDER_STATUSES.includes(row.status)
+    || typeof row.planCode !== 'string' || !/^[a-z0-9][a-z0-9_-]{1,31}$/.test(row.planCode)
+    || row.planCode === 'hl_payment_probe' || typeof row.planTitle !== 'string' || !row.planTitle.trim()
+    || !validDate(row.createdAt)
+    || ['paymentTestPlanCode', 'paymentTestRunId', 'probeArchivedAt'].some(field => Object.prototype.hasOwnProperty.call(row, field))
+    || Number(row.virtualPaymentEnv) === 1
+    || MEMBER_ORDER_FLAGS.some(field => [true, 1, 'true', 'TRUE', '1'].includes(row[field]))
+    || MEMBER_ORDER_SOURCES.some(field => MEMBER_ORDER_TEST_MARKERS.includes(String(row[field] || '').toLowerCase()))) {
+    throw memberOrderUnavailable();
+  }
+  const paymentProvider = row.paymentProvider === undefined ? 'jsapi' : row.paymentProvider;
+  const productType = row.productType === undefined ? 'vip' : row.productType;
+  const fulfillmentStatus = row.fulfillmentStatus || '';
+  const serviceCount = row.serviceCount === undefined && productType === 'vip' ? 0 : row.serviceCount;
+  if (!['jsapi', 'virtual'].includes(paymentProvider) || !['vip', 'matchmaking', 'matchmaker'].includes(productType)
+    || (productType === 'matchmaker' && (!lifetimeActivation || paymentProvider !== 'virtual'))
+    || !['', 'fulfilled', 'requires_review'].includes(fulfillmentStatus)
+    || !Number.isSafeInteger(serviceCount) || serviceCount < 0 || (productType === 'matchmaking' && serviceCount <= 0)
+    || (row.updatedAt !== undefined && !validDate(row.updatedAt))
+    || (row.paidAt !== undefined && row.paidAt !== null && row.paidAt !== '' && !validDate(row.paidAt))
+    || (row.refundedAt !== undefined && row.refundedAt !== null && row.refundedAt !== '' && !validDate(row.refundedAt))
+    || (row.transactionId !== undefined && row.transactionId !== ''
+      && (typeof row.transactionId !== 'string' || !/^[a-zA-Z0-9_-]{8,64}$/.test(row.transactionId)))) {
+    throw memberOrderUnavailable();
+  }
+  return {
+    outTradeNo: row.outTradeNo, planCode: row.planCode, planTitle: row.planTitle,
+    amountFen: row.amountFen, durationDays: row.durationDays, status: row.status,
+    fulfillmentStatus, fulfillmentMessage: typeof row.fulfillmentMessage === 'string' ? row.fulfillmentMessage : '',
+    createdAt: row.createdAt, updatedAt: row.updatedAt || row.createdAt, paidAt: row.paidAt || null,
+    productType, serviceCount, paymentProvider, ...(lifetimeActivation ? { lifetime: true } : {}),
+    ...(row.refundedAt ? { refundedAt: row.refundedAt } : {}),
+    ...(row.transactionId ? { transactionId: row.transactionId } : {})
+  };
+}
+
+const memberOrders = {
+  async authorize(token) {
+    const session = tokenService.verify(token, { expectedType: TOKEN_TYPES.ACCESS });
+    if (!Number.isSafeInteger(session.userId) || session.userId <= 0) throw createHttpError('登录状态已失效，请重新登录', 401, 40100);
+    let users;
+    try {
+      users = await db.collection(C.users).where({ id: session.userId })
+        .field({ id: true, status: true, authVersion: true, mergedIntoUserId: true }).limit(2).get();
+    } catch (_) { throw createHttpError('订单暂不可读取，请稍后重试', 503, 50301); }
+    const user = users.data?.length === 1 ? users.data[0] : null;
+    if (!user || Number(user.status) !== 1 || user.mergedIntoUserId
+      || Number(session.authVersion || 1) !== Number(user.authVersion || 1)) {
+      throw createHttpError('登录状态已失效，请重新登录', 401, 40100);
+    }
+    return session.userId;
+  },
+
+  async list(userId, data = {}) {
+    const page = data.page === undefined ? 1 : Number(data.page);
+    const requestedSize = data.pageSize === undefined ? 20 : Number(data.pageSize);
+    if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(requestedSize) || requestedSize < 1) {
+      throw createHttpError('订单分页参数无效', 400, 40001);
+    }
+    const pageSize = Math.min(requestedSize, 50), offset = (page - 1) * pageSize;
+    if (!Number.isSafeInteger(offset)) throw createHttpError('订单分页参数无效', 400, 40001);
+    const query = memberOrderQuery(userId);
+    const [count, result] = await Promise.all([
+      memberOrderRead(query, { count: true }), memberOrderRead(query, { offset, limit: pageSize, ordered: true })
+    ]);
+    const total = Number(count.total);
+    if (!Number.isSafeInteger(total) || total < 0 || !Array.isArray(result.data)) throw memberOrderUnavailable();
+    return { list: result.data.map(row => memberOrderDto(row, userId)), page, pageSize, total,
+      hasMore: offset + result.data.length < total };
+  },
+
+  async detail(userId, outTradeNo) {
+    if (typeof outTradeNo !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,31}$/.test(outTradeNo)) throw memberOrderUnavailable();
+    const owned = await memberOrderRead(memberOrderQuery(userId, outTradeNo), { limit: 2 });
+    if (!Array.isArray(owned.data) || owned.data.length !== 1) throw memberOrderUnavailable();
+    const dto = memberOrderDto(owned.data[0], userId);
+    // Only after finding the caller's eligible order, check number uniqueness
+    // without reading any other payer's financial or identity fields.
+    const matching = await memberOrderRead({ outTradeNo }, { fields: { _id: true }, limit: 2 });
+    if (!Array.isArray(matching.data) || matching.data.length !== 1) throw memberOrderUnavailable();
+    return dto;
+  }
+};
+
+function unresolvedPaymentOrder(order) {
+  return !!order && (['pending', 'confirming'].includes(order.status)
+    || (order.status === 'paid' && order.fulfillmentStatus === 'requires_review'));
+}
+
+async function unresolvedUserPaymentOrders(userId) {
+  const user = Number(userId);
+  // Filter before pagination: completed historical orders must never hide an
+  // older cashier that can still be paid. Legacy orders have no user slot.
+  const groups = await Promise.all([
+    getAll(C.paymentOrders, { userId: user, status: 'pending' }, Infinity),
+    getAll(C.paymentOrders, { userId: user, status: 'confirming' }, Infinity),
+    getAll(C.paymentOrders, { userId: user, status: 'paid', fulfillmentStatus: 'requires_review' }, Infinity)
+  ]);
+  return groups.flat().sort((a, b) => Number(b.fulfillmentStatus === 'requires_review')
+    - Number(a.fulfillmentStatus === 'requires_review') || Number(a.id || 0) - Number(b.id || 0));
+}
+
+async function uniquePaymentOrder(outTradeNo, userId) {
+  const rows = await getAll(C.paymentOrders, { outTradeNo: String(outTradeNo || '') }, 2);
+  // Keep ordinary callers' unknown and other-owner responses identical while
+  // refusing legacy duplicate merchant numbers instead of choosing one row.
+  if (userId !== undefined && !rows.some(row => Number(row.userId) === Number(userId))) {
+    throw createHttpError('支付订单不存在', 404, 40400);
+  }
+  if (rows.length > 1) throw createHttpError('支付订单号存在历史冲突，请联系工作人员核查', 409, 40908);
+  return rows[0] || null;
+}
+
+async function optionalPaymentDocument(ref) {
+  try {
+    const snapshot = await ref.get();
+    return snapshot && snapshot.data || null;
+  } catch (error) {
+    const missing = String(error && (error.errCode || error.code)) === 'DOCUMENT_NOT_EXIST'
+      || /document.*(?:not exist|not found)/i.test(String(error && (error.errMsg || error.message)));
+    if (!missing) throw error;
+    return null;
+  }
+}
+
+async function allocatePaymentOrderId(transaction) {
+  // Payment allocations share one transactional document. No other nextId
+  // caller can reset it or read a later caller's increment. The time floor also
+  // separates these IDs from pre-migration small numeric payment IDs.
+  const ref = transaction.collection(C.counters).doc('paymentOrderAtomic');
+  const current = await optionalPaymentDocument(ref);
+  if (current && (!Number.isSafeInteger(current.value) || current.value < 0)) {
+    throw createHttpError('支付订单序号异常，请联系工作人员', 503, 50301);
+  }
+  const id = Math.max(current ? current.value + 1 : 1, Date.now() * 1000);
+  if (!Number.isSafeInteger(id) || id <= 0) throw createHttpError('支付订单序号不可用', 503, 50301);
+  await ref.set({ data: { key: 'paymentOrderAtomic', value: id, updatedAt: nowIso() } });
+  return id;
+}
+
+function activePaymentMember(order, member) {
+  return !!member && Number(member.status) === 1 && Number(member.userId) === Number(order.userId)
+    && Number(member.id) === Number(order.memberRecordId)
+    && Number.isSafeInteger(Number(member.matchmakerId)) && Number(member.matchmakerId) > 0
+    && (order.memberMatchmakerId === undefined
+      || Number(order.memberMatchmakerId) === Number(member.matchmakerId));
+}
+
+function activePaymentUser(order, user, requirePhone = false) {
+  return !!user && Number(user.id) === Number(order.userId) && Number(user.status) === 1
+    && !user.mergedIntoUserId && user.openid === order.payerOpenid && (!requirePhone || !!user.phone);
+}
+
+async function reservePaymentCheckout(transaction, order, documentId, unresolvedOrders) {
+  const ref = transaction.collection(C.counters).doc(`paymentPendingUser_${Number(order.userId)}`);
+  const slot = await optionalPaymentDocument(ref);
+  const candidates = [...unresolvedOrders];
+  if (slot && slot.blockedReviewDocumentId) {
+    candidates.unshift({ _id: slot.blockedReviewDocumentId });
+  }
+  if (slot && slot.orderDocumentId && !candidates.some(row => row._id === slot.orderDocumentId)) {
+    candidates.push({ _id: slot.orderDocumentId });
+  }
+  for (const candidate of candidates) {
+    const current = await optionalPaymentDocument(transaction.collection(C.paymentOrders).doc(candidate._id));
+    if (!current || !unresolvedPaymentOrder(current)) continue;
+    if (Number(current.userId) !== Number(order.userId) || candidate._id !== documentId) {
+      throw createHttpError('请先查询并处理当前未完成的支付订单', 409, 40905);
+    }
+    if (!slot || slot.orderDocumentId !== documentId) {
+      await ref.set({ data: { key: `paymentPendingUser_${Number(order.userId)}`, userId: Number(order.userId),
+        orderDocumentId: documentId, updatedAt: nowIso() } });
+    }
+    return;
+  }
+  throw createHttpError('支付订单状态已变更，请先查询', 409, 40905);
+}
+
+async function settlePaymentSlot(transaction, order, documentId, release) {
+  const ref = transaction.collection(C.counters).doc(`paymentPendingUser_${Number(order.userId)}`);
+  const slot = await optionalPaymentDocument(ref);
+  if (release && slot && slot.orderDocumentId !== documentId) return;
+  if (!slot && release) return;
+  const slotData = { ...(slot || {}) };
+  // doc(id) selects the system id; the SDK rejects _id inside set's data.
+  delete slotData._id;
+  await ref.set({ data: { ...slotData, key: `paymentPendingUser_${Number(order.userId)}`,
+    userId: Number(order.userId), orderDocumentId: release ? '' : (slot && slot.orderDocumentId || documentId),
+    ...(!release ? { blockedReviewDocumentId: documentId } : {}), updatedAt: nowIso() } });
 }
 
 function publicMembershipPlan(row) {
@@ -3195,6 +3531,8 @@ function publicMembershipPlan(row) {
 }
 
 function trustedPaymentOrder(row, requesterOpenid) {
+  assertPurchaseContract(row);
+  if (row.productType === 'matchmaker' || row.planCode === MATCHMAKER_LIFETIME_PLAN.planCode) assertMatchmakerLifetimeProduct(row);
   const identity = paymentOrderIdentity(row);
   const registered = paymentOrderIdentity();
   if (Object.keys(registered).some(field => identity[field] !== registered[field])) {
@@ -3215,12 +3553,23 @@ function trustedPaymentOrder(row, requesterOpenid) {
   };
 }
 
+function vipCatalogReady() {
+  return String(process.env.VIP_MEMBERSHIP_CATALOG_READY || '').toLowerCase() === 'true';
+}
+
 async function activeMembershipPlans() {
+  const configuredRows = (await getAll(C.membershipPlans, null, 200))
+    .filter(row => !RETIRED_MATCHMAKING_PLAN_CODES.includes(String(row.planCode || '').trim().toLowerCase()));
+  const newCodes = new Set(DEFAULT_MEMBERSHIP_PLANS.map(plan => plan.planCode));
+  const source = vipCatalogReady() || !configuredRows.length
+    ? DEFAULT_MEMBERSHIP_PLANS.map(plan => canonicalMembershipPlan(plan, configuredRows.find(row => row.planCode === plan.planCode)))
+    : configuredRows.filter(row => !newCodes.has(row.planCode) || row.active)
+      .map(row => newCodes.has(row.planCode) ? { ...row, active: false } : row);
   const plans = [];
-  for (const row of await getAll(C.membershipPlans, null, 200)) {
+  for (const row of source) {
     try {
       const normalized = publicMembershipPlan(row);
-      if (normalized.active) plans.push(normalized);
+      if (normalized.active || newCodes.has(normalized.planCode)) plans.push(normalized);
     } catch (err) {
       console.warn('skip invalid membership plan', row && row.planCode, err.message);
     }
@@ -3228,124 +3577,894 @@ async function activeMembershipPlans() {
   return plans.sort((a, b) => b.sortOrder - a.sortOrder || a.amountFen - b.amountFen);
 }
 
+function canonicalMembershipPlan(plan, configured) {
+  return { ...(configured || {}), ...plan,
+    active: vipCatalogReady() && (configured?.active === undefined || isTrue(configured.active)),
+    description: configured?.description || plan.description, badge: configured?.badge || plan.badge,
+    sortOrder: configured?.sortOrder ?? plan.sortOrder };
+}
+
 function membershipPaymentAvailability({ config, assignment, user, plans }) {
   if (!config.available) return { ...config, available: false };
-  if (!assignment) return { ...config, available: false, reason: 'member_assignment_required' };
+  if (!assignment && !plans.some(plan => ['vip', 'matchmaking'].includes(plan.productType))) return { ...config, available: false, reason: 'member_assignment_required' };
   if (!user.phone) return { ...config, available: false, reason: 'phone_required' };
-  if (!plans.length) return { ...config, available: false, reason: 'plans_not_configured' };
+  if (!plans.some(plan => plan.active)) return { ...config, available: false, reason: 'plans_not_configured' };
   return config;
+}
+
+function matchmakingPaymentIntegration() {
+  // Online matchmaking shares the virtual-payment credentials, while its
+  // product publication retains an independent gate. Service preparation is
+  // checked when delivering a human service, not while purchasing the package.
+  return paymentProviderConfig({ ...process.env,
+    PAYMENT_INTEGRATION_READY: process.env.MATCHMAKING_PAYMENT_READY || 'false' });
+}
+
+function membershipPaymentIntegration(userId, productType = 'vip') {
+  if (productType === 'matchmaking') return matchmakingPaymentIntegration();
+  const integration = paymentProviderConfig(process.env);
+  if (productType === 'matchmaker') return integration;
+  if (integration.available || !paymentTestAccess(process.env, userId)) return integration;
+  const testing = paymentProviderConfig({ ...process.env, PAYMENT_INTEGRATION_READY: 'true' });
+  return testing.available ? { ...testing, testMode: true } : integration;
+}
+
+function paymentOrderProvider(order = {}) {
+  if (order.paymentProvider === undefined) return 'jsapi';
+  if (!['virtual', 'jsapi'].includes(order.paymentProvider)) {
+    throw createHttpError('订单支付通道记录无效，请联系工作人员核查', 409, 40907);
+  }
+  return order.paymentProvider;
+}
+
+function assertPaymentProviderContract(order, data = {}) {
+  const requested = data.paymentProvider === undefined ? 'jsapi' : data.paymentProvider;
+  if (!['virtual', 'jsapi'].includes(requested) || paymentOrderProvider(order) !== requested) {
+    throw createHttpError('订单与原支付通道不匹配，请查询原订单', 409, 40907);
+  }
+}
+
+function membershipOrderPaymentIntegration(userId, order) {
+  if (paymentOrderProvider(order) === 'virtual') {
+    const integration = membershipPaymentIntegration(userId, order.productType);
+    if (isPaymentProbeOrder(order)) {
+      let currentBatch = false;
+      if (integration.testMode) {
+        try { currentBatch = assertCurrentTestCheckout(order, process.env); } catch {}
+      }
+      if (!currentBatch) return { ...integration, available: false, reason: 'historical_test_query_required' };
+    }
+    return RETIRED_MATCHMAKING_PLAN_CODES.includes(String(order.planCode || '').trim().toLowerCase())
+      ? { ...integration, available: false, reason: 'retired_plan_query_required' } : integration;
+  }
+  // Existing JSAPI cashiers may still produce a late payment or refund. Keep
+  // their original query path visible even when every new cashier is closed.
+  return { ...paymentIntegrationConfig(process.env), available: false, createPath: '',
+    reason: 'historical_payment_query_required' };
+}
+
+// 虚拟支付（米大师）客户端按进程缓存，access_token 在实例内复用。
+let virtualPaymentClient = null;
+function virtualClient() {
+  if (!virtualPaymentClient) virtualPaymentClient = createVirtualPaymentClient({ appId: paymentOrderIdentity().appId });
+  return virtualPaymentClient;
+}
+
+function assertVirtualOrderConfiguration(order, config) {
+  if (order.paymentProvider !== 'virtual') {
+    throw createHttpError('历史支付订单需先核查原通道，请联系工作人员', 409, 40905);
+  }
+  if (order.virtualPaymentEnv !== config.env || order.virtualPaymentOfferId !== config.offerId) {
+    throw createHttpError('订单支付环境已变更，请恢复原配置核查订单', 409, 40907);
+  }
+}
+
+// Keep every issued cashier number: a cancellation is not proof that a late
+// payment cannot arrive. Business order numbers never change on a retry.
+async function queryVirtualPaymentAttempts(trusted, config) {
+  const order = await uniquePaymentOrder(trusted.outTradeNo);
+  if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+  trustedPaymentOrder(order, trusted.payerOpenid);
+  assertVirtualOrderConfiguration(order, config);
+  const attempts = Array.isArray(order.virtualPaymentAttempts) ? order.virtualPaymentAttempts : [];
+  if (attempts.length > 10) throw createHttpError('支付尝试记录异常，请联系工作人员', 409, 40908);
+  const numbers = new Set();
+  for (const attempt of attempts) {
+    assertVirtualOrderNumber(attempt.outTradeNo);
+    if (numbers.has(attempt.outTradeNo) || attempt.env !== config.env || attempt.offerId !== config.offerId) {
+      throw createHttpError('支付尝试记录与订单环境不匹配', 409, 40907);
+    }
+    numbers.add(attempt.outTradeNo);
+  }
+  // Warm the shared credential once before independent order queries.
+  if (attempts.length) await virtualClient().accessToken(config.appSecret);
+  const results = await Promise.all(attempts.map(async attempt => {
+    const xpayOrder = await virtualClient().queryOrder({
+      appSecret: config.appSecret, appKey: config.appKey, openid: order.payerOpenid,
+      env: attempt.env, outTradeNo: attempt.outTradeNo
+    });
+    if (xpayOrder && (xpayOrder.order_id !== attempt.outTradeNo
+      || Number(xpayOrder.env_type) !== (attempt.env === 1 ? 2 : 1))) {
+      throw createHttpError('微信查询结果与支付尝试不匹配', 409, 40907);
+    }
+    return { attempt, xpayOrder };
+  }));
+  return { order, results };
+}
+
+async function virtualPaymentOrderForAttempt(paymentAttemptNo) {
+  assertVirtualOrderNumber(paymentAttemptNo);
+  const mapping = await optionalPaymentDocument(db.collection(C.counters).doc(`virtualPaymentAttempt_${paymentAttemptNo}`));
+  if (!mapping) return uniquePaymentOrder(paymentAttemptNo);
+  const order = await optionalPaymentDocument(db.collection(C.paymentOrders).doc(mapping.orderDocumentId));
+  if (!order || order.outTradeNo !== mapping.businessOutTradeNo
+    || !Array.isArray(order.virtualPaymentAttempts)
+    || !order.virtualPaymentAttempts.some(attempt => attempt.outTradeNo === paymentAttemptNo
+      && attempt.env === mapping.env && attempt.offerId === mapping.offerId)) {
+    throw createHttpError('支付尝试归属记录异常，请联系工作人员', 409, 40908);
+  }
+  return order;
+}
+
+async function allocateVirtualPaymentAttempt(trusted, config, observedAttempts) {
+  const order = await uniquePaymentOrder(trusted.outTradeNo);
+  const member = order && await getById(C.members, order.memberRecordId);
+  const user = order && await getById(C.users, order.userId);
+  if (!order || (!member && order.productType !== 'vip' && !isDirectPurchaseOrder(order)) || !user) throw createHttpError('支付订单归属已变化，请先核查', 409, 40906);
+  return db.runTransaction(async transaction => {
+    const orderRef = transaction.collection(C.paymentOrders).doc(order._id);
+    const current = await optionalPaymentDocument(orderRef);
+    if (!current) throw createHttpError('支付订单不存在', 404, 40400);
+    trustedPaymentOrder(current, trusted.payerOpenid);
+    assertVirtualOrderConfiguration(current, config);
+    assertMembershipCheckoutMode(current);
+    if (!['pending', 'confirming'].includes(current.status) || current.paymentReviewRequired) {
+      throw createHttpError('订单状态已变化，请先查询付款结果', 409, 40905);
+    }
+    const attempts = Array.isArray(current.virtualPaymentAttempts) ? current.virtualPaymentAttempts : [];
+    if (JSON.stringify(attempts) !== JSON.stringify(observedAttempts)) {
+      throw createHttpError('已有新的支付尝试，请先查询订单，勿同时拉起付款', 409, 40905);
+    }
+    if (attempts.length >= 10) throw createHttpError('支付尝试次数较多，请联系工作人员核查', 409, 40905);
+    const currentMember = member ? await optionalPaymentDocument(transaction.collection(C.members).doc(member._id)) : null;
+    const currentUser = await optionalPaymentDocument(transaction.collection(C.users).doc(user._id));
+    if ((current.productType !== 'vip' && !isDirectPurchaseOrder(current) && !activePaymentMember(current, currentMember)) || !activePaymentUser(current, currentUser, true)) {
+      throw createHttpError('账号或会员关系已变化，请先核查后再付款', 409, 40906);
+    }
+    if (current.productType === 'matchmaking' && !isDirectPurchaseOrder(current)) await vipMembership.assertMatchmakingReady(current.userId, transaction);
+    const paymentAttemptNo = `HLA${crypto.randomBytes(12).toString('hex')}`;
+    const mapRef = transaction.collection(C.counters).doc(`virtualPaymentAttempt_${paymentAttemptNo}`);
+    if (await optionalPaymentDocument(mapRef)) throw createHttpError('支付尝试编号冲突，请重试', 409, 40908);
+    const attempt = { outTradeNo: paymentAttemptNo, env: config.env, offerId: config.offerId, createdAt: nowIso() };
+    await mapRef.set({ data: { key: `virtualPaymentAttempt_${paymentAttemptNo}`, orderDocumentId: order._id,
+      businessOutTradeNo: current.outTradeNo, env: config.env, offerId: config.offerId, createdAt: attempt.createdAt } });
+    const patch = { virtualPaymentAttempts: [...attempts, attempt], updatedAt: attempt.createdAt };
+    await orderRef.update({ data: patch });
+    return { order: publicPaymentOrder({ ...current, ...patch }), paymentAttemptNo };
+  });
+}
+
+// 虚拟支付查单与履约的共享通道：前端查单与发货推送都走这里。
+// 本地状态永远以 hlApi 订单为准，付款事实永远以微信服务端查单为准。
+async function recordVirtualDelivery(orderNo, attemptNo, transactionId, deliveryStatus = '') {
+  const order = await uniquePaymentOrder(orderNo);
+  if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+  return db.runTransaction(async transaction => {
+    const ref = transaction.collection(C.paymentOrders).doc(order._id);
+    const current = await optionalPaymentDocument(ref);
+    if (!current || current.status !== 'paid' || current.transactionId !== transactionId
+      || (current.virtualPaidAttemptNo && current.virtualPaidAttemptNo !== attemptNo)) {
+      throw createHttpError('虚拟支付发货记录与付款订单不匹配', 409, 40908);
+    }
+    if (deliveryStatus && current.fulfillmentStatus !== 'fulfilled') {
+      throw createHttpError('会员权益尚未发放，不能确认发货', 409, 40906);
+    }
+    if (current.virtualDeliveryStatus === 'confirmed' && current.virtualDeliveryOrderNo === attemptNo) return current;
+    const timestamp = nowIso();
+    const patch = { virtualPaidAttemptNo: attemptNo,
+      ...(deliveryStatus ? { virtualDeliveryOrderNo: attemptNo, virtualDeliveryStatus: deliveryStatus,
+        virtualDeliveryUpdatedAt: timestamp,
+        ...(deliveryStatus === 'confirmed' ? { virtualDeliveryConfirmedAt: timestamp } : {}) } : {}) };
+    await ref.update({ data: patch });
+    return { ...current, ...patch };
+  });
+}
+
+async function recordDuplicateVirtualPayments(orderNo, transactionId, confirmations) {
+  const order = await uniquePaymentOrder(orderNo);
+  if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+  await db.runTransaction(async transaction => {
+    const ref = transaction.collection(C.paymentOrders).doc(order._id);
+    const current = await optionalPaymentDocument(ref);
+    if (!current || current.status !== 'paid' || current.transactionId !== transactionId) {
+      throw createHttpError('重复付款复核记录与会员订单不匹配', 409, 40908);
+    }
+    const duplicates = Array.isArray(current.duplicateVirtualPayments) ? [...current.duplicateVirtualPayments] : [];
+    for (const { attempt, confirmation, paidTime } of confirmations) {
+      if (confirmation.transactionId === transactionId || duplicates.some(payment =>
+        payment.paymentAttemptNo === attempt.outTradeNo && payment.transactionId === confirmation.transactionId)) continue;
+      duplicates.push({ paymentAttemptNo: attempt.outTradeNo, transactionId: confirmation.transactionId,
+        amountFen: confirmation.amountFen, paidTime });
+    }
+    await settlePaymentSlot(transaction, current, order._id, false);
+    await ref.update({ data: { duplicateVirtualPayments: duplicates, paymentReviewRequired: true,
+      fulfillmentStatus: 'requires_review', reviewReason: 'duplicate_payment',
+      fulfillmentMessage: '检测到多笔付款，请联系工作人员核查重复收款。', updatedAt: nowIso() } });
+  });
+}
+
+async function reconcileVirtualPaymentOrder(trusted, config, origin = {}) {
+  const local = {
+    outTradeNo: trusted.outTradeNo,
+    amountFen: Number(trusted.amountFen),
+    payerOpenid: trusted.payerOpenid,
+    userId: Number(trusted.userId),
+    status: String(trusted.status)
+  };
+  const identity = paymentOrderIdentity();
+  let queried;
+  try {
+    queried = await queryVirtualPaymentAttempts(trusted, config);
+  } catch (error) {
+    throw createHttpError(error && error.message || '微信订单查询失败，请稍后重试',
+      Number(error && error.status) || 503, Number(error && error.code) || 50301);
+  }
+  const results = queried.results;
+  const refundedResults = results.filter(result => result.xpayOrder && mapVirtualOrderState(result.xpayOrder) === 'REFUNDED');
+  const originalRefund = refundedResults.find(({ attempt, xpayOrder }) => {
+    const transactionId = String(xpayOrder.wxpay_order_id || xpayOrder.channel_order_id || xpayOrder.wx_order_id || '');
+    return queried.order.transactionId && transactionId === queried.order.transactionId
+      && (!queried.order.virtualPaidAttemptNo || queried.order.virtualPaidAttemptNo === attempt.outTradeNo);
+  });
+  if (originalRefund && ['paid', 'refunded'].includes(local.status)) {
+    const { attempt, xpayOrder } = originalRefund;
+    if (queried.order.duplicateVirtualPayments?.length || results.some(result => result.xpayOrder
+      && mapVirtualOrderState(result.xpayOrder) === 'SUCCESS')) {
+      throw createHttpError('该订单存在其他付款待复核，不能按单笔退款解除复核', 409, 40908);
+    }
+    let proof;
+    try { proof = buildVirtualRefundProof({ ...local, outTradeNo: attempt.outTradeNo }, xpayOrder, attempt.env, identity); }
+    catch (error) {
+      if (local.status === 'paid') {
+        await db.runTransaction(async transaction => {
+          const ref = transaction.collection(C.paymentOrders).doc(queried.order._id);
+          const current = await optionalPaymentDocument(ref);
+          if (current?.status !== 'paid' || current.transactionId !== queried.order.transactionId) return;
+          await ref.update({ data: { paymentReviewRequired: true, reviewReason: 'virtual_refund_proof_missing',
+            fulfillmentStatus: 'requires_review', fulfillmentMessage: '平台退款凭据需由主理人核查，剩余权益尚未自动回收。', updatedAt: nowIso() } });
+        });
+      }
+      throw createHttpError('平台退款金额凭据不完整，请联系主理人核查', 409, 40907);
+    }
+    const settled = await membership.refundPayment({ callbackToken: config.callbackToken, ...proof,
+      paymentProvider: 'virtual', outTradeNo: local.outTradeNo });
+    const safe = settled?.order;
+    if (!safe || safe.status !== 'refunded' || safe.outTradeNo !== local.outTradeNo || safe.transactionId !== proof.transactionId
+      || safe.amountFen !== local.amountFen || safe.userId !== local.userId) throw createHttpError('退款权益处理尚未确认', 502, 50201);
+    return { order: safe, providerRefunded: true };
+  }
+  const paidResults = results.filter(result => result.xpayOrder && mapVirtualOrderState(result.xpayOrder) === 'SUCCESS');
+  if (paidResults.length) {
+    const confirmations = paidResults.map(({ attempt, xpayOrder }) => ({ attempt, providerStatus: Number(xpayOrder.status),
+      paidTime: Number(xpayOrder.paid_time),
+      confirmation: buildVirtualConfirmation({ ...local, outTradeNo: attempt.outTradeNo }, xpayOrder, attempt.env, identity) }));
+    const existingTransactionId = String(queried.order.transactionId || '');
+    const selected = confirmations.find(result => result.confirmation.transactionId === existingTransactionId) || confirmations[0];
+    const { attempt, confirmation } = selected;
+    confirmation.outTradeNo = local.outTradeNo;
+    const confirmed = await membership.confirmPayment({ callbackToken: config.callbackToken, ...confirmation,
+      paymentProvider: 'virtual' }, origin);
+    const safe = confirmed && confirmed.order;
+    if (!safe || safe.status !== 'paid' || safe.transactionId !== confirmation.transactionId
+      || safe.amountFen !== local.amountFen || safe.userId !== local.userId) {
+      throw createHttpError('会员权益尚未确认，请稍后查询', 502, 50201);
+    }
+    let delivery = await recordVirtualDelivery(local.outTradeNo, attempt.outTradeNo, confirmation.transactionId);
+    if (new Set(confirmations.map(result => result.confirmation.transactionId)).size > 1) {
+      await recordDuplicateVirtualPayments(local.outTradeNo, confirmation.transactionId, confirmations);
+      throw createHttpError('同一会员订单存在多笔虚拟支付，请联系工作人员复核重复付款', 409, 40908);
+    }
+    if (delivery.paymentReviewRequired === true) {
+      throw createHttpError('会员订单存在重复付款待复核，请联系工作人员', 409, 40908);
+    }
+    if (safe.fulfillmentStatus !== 'fulfilled') return { order: safe, tradeState: 'SUCCESS' };
+    if (selected.providerStatus === 4) {
+      // 已核实的平台已发货状态也能补齐本地确认记录（例如上次成功后记录写入失败）。
+      delivery = await recordVirtualDelivery(local.outTradeNo, attempt.outTradeNo, confirmation.transactionId, 'confirmed');
+    }
+    if (delivery.virtualDeliveryStatus !== 'confirmed' || delivery.virtualDeliveryOrderNo !== attempt.outTradeNo) {
+      await recordVirtualDelivery(local.outTradeNo, attempt.outTradeNo, confirmation.transactionId, 'pending');
+      try {
+        await virtualClient().notifyProvideGoods({ appSecret: config.appSecret, appKey: config.appKey,
+          env: attempt.env, outTradeNo: attempt.outTradeNo });
+        delivery = await recordVirtualDelivery(local.outTradeNo, attempt.outTradeNo, confirmation.transactionId, 'confirmed');
+      } catch (_) {
+        // 权益事务已经完成；平台确认失败必须保留 pending，后续查单或重推继续补偿。
+        throw createHttpError('会员权益已发放，微信发货确认暂未完成，请稍后查询', 503, 50301);
+      }
+    }
+    return { order: publicPaymentOrder(delivery), tradeState: 'SUCCESS' };
+  }
+  if (!results.length || results.every(result => !result.xpayOrder)) {
+    if (!['pending', 'confirming'].includes(local.status)) {
+      throw createHttpError('微信订单不存在与本地付款状态不一致，请联系工作人员', 409, 40907);
+    }
+    return { order: trusted.order, providerOrderAbsent: true };
+  }
+  if (results.some(result => result.xpayOrder && mapVirtualOrderState(result.xpayOrder) === 'NOTPAY')) {
+    if (!['pending', 'confirming'].includes(local.status)) {
+      throw createHttpError('微信未付款状态与已结束的会员订单不匹配', 409, 40907);
+    }
+    return { order: trusted.order, tradeState: 'NOTPAY' };
+  }
+  if (results.every(result => result.xpayOrder && mapVirtualOrderState(result.xpayOrder) === 'CLOSED')) {
+    if (!['pending', 'confirming', 'closed'].includes(local.status)) {
+      throw createHttpError('会员订单状态不可关闭，请查询最新状态', 409, 40905);
+    }
+    let proof;
+    try {
+      proof = buildVirtualCloseProof(local, identity);
+    } catch (error) {
+      throw createHttpError(error.message, Number(error.status) || 409, Number(error.code) || 40907);
+    }
+    const closed = await membership.closePayment({ callbackToken: config.callbackToken, ...proof,
+      paymentProvider: 'virtual', observedVirtualPaymentAttempts: queried.order.virtualPaymentAttempts });
+    const safe = closed && closed.order;
+    if (!safe || safe.status !== 'closed' || safe.amountFen !== local.amountFen || safe.userId !== local.userId) {
+      throw createHttpError('会员订单关闭状态尚未确认，请稍后查询', 502, 50201);
+    }
+    return { order: safe, tradeState: 'CLOSED' };
+  }
+  if (results.some(result => !result.xpayOrder)
+    && results.every(result => !result.xpayOrder || mapVirtualOrderState(result.xpayOrder) === 'CLOSED')) {
+    if (!['pending', 'confirming'].includes(local.status)) {
+      throw createHttpError('微信订单不存在与本地付款状态不一致，请联系工作人员', 409, 40907);
+    }
+    return { order: trusted.order, providerOrderAbsent: true };
+  }
+  if (refundedResults.length) {
+    throw createHttpError('微信退款状态与会员订单不匹配，请联系工作人员', 409, 40907);
+  }
+  throw createHttpError('微信交易状态暂不支持自动处理，请联系工作人员', 409, 40905);
+}
+
+async function recordVirtualPushHandled(orderNo, attemptNo, requestId) {
+  const order = await uniquePaymentOrder(orderNo);
+  if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+  return db.runTransaction(async transaction => {
+    const ref = transaction.collection(C.paymentOrders).doc(order._id);
+    const current = await optionalPaymentDocument(ref);
+    if (!current || current.status !== 'paid' || current.fulfillmentStatus !== 'fulfilled'
+      || current.virtualPaidAttemptNo !== attemptNo || current.virtualDeliveryOrderNo !== attemptNo
+      || current.virtualDeliveryStatus !== 'confirmed') {
+      throw createHttpError('推送履约记录与已发货订单不匹配', 409, 40908);
+    }
+    if (current.virtualPushHandledAt) return current;
+    const patch = { virtualPushHandledAt: nowIso(), virtualPushRequestId: requestId, virtualPushOrderNo: attemptNo };
+    await ref.update({ data: patch });
+    return { ...current, ...patch };
+  });
+}
+
+function isPaymentProbeOrder(order = {}) {
+  return order.planCode === paymentTestPlan().planCode
+    || order.paymentTestPlanCode === 'vip_week'
+    || /^payment_probe_user_[1-9]\d*(?:_run_[a-z][a-z0-9_-]{0,31})?$/.test(String(order._id || ''));
+}
+
+function assertMembershipCheckoutMode(order) {
+  assertPurchaseContract(order);
+  paymentOrderProvider(order);
+  if (RETIRED_MATCHMAKING_PLAN_CODES.includes(String(order.planCode || '').trim().toLowerCase())) {
+    throw createHttpError('该牵线套餐已停售，请先查询并处理原订单，再选择当前套餐', 409, 40905);
+  }
+  if ((order.productType === 'vip' && order.paymentProvider !== 'virtual')
+    || (order.productType === 'matchmaking' && order.paymentProvider !== 'virtual')
+    || (order.productType === 'matchmaker' && order.paymentProvider !== 'virtual')) {
+    throw createHttpError('订单商品与支付通道不匹配，请核查原订单', 409, 40907);
+  }
+  const integration = membershipPaymentIntegration(order.userId, order.productType);
+  if (!integration.available) throw createHttpError('微信支付暂未开放', 503, 50301);
+  if (integration.testMode) assertCurrentTestCheckout(order, process.env);
+  else if (isPaymentProbeOrder(order)) {
+    throw createHttpError('测试支付入口已关闭', 403, 40304);
+  }
+  return integration;
+}
+
+async function vipPublicTarget(actorId, targetId, transaction) {
+  const target = await publicShowcaseTarget({ targetUserId: targetId });
+  const states = await Promise.all([memberInteractionStateMap(actorId, [targetId]), memberInteractionStateMap(targetId, [actorId])]);
+  if (states[0][String(targetId)]?.hide || states[1][String(actorId)]?.hide) {
+    throw createHttpError('当前对象暂不可访问', 403, 40300);
+  }
+  if (transaction) {
+    const lock = await optionalPaymentDocument(transaction.collection(VIP_COLLECTIONS.memberPrivacy)
+      .doc(`visibility_pair_${[Number(actorId), Number(targetId)].sort((a, b) => a - b).join('_')}`));
+    if (lock && Array.isArray(lock.hiddenBy) && lock.hiddenBy.length) throw createHttpError('当前对象暂不可访问', 403, 40300);
+    const profile = await getOne(C.profiles, { userId: Number(targetId) });
+    const current = profile ? await optionalPaymentDocument(transaction.collection(C.profiles).doc(profile._id)) : null;
+    if (!current || !isTrue(current.displayEnabled)) throw createHttpError('当前资料暂不可访问', 404, 40400);
+  }
+  return target;
+}
+
+async function saveMemberHide(userId, targetId, active, existing) {
+  return db.runTransaction(async transaction => {
+    const lockId = `visibility_pair_${[Number(userId), Number(targetId)].sort((a, b) => a - b).join('_')}`;
+    const lockRef = transaction.collection(VIP_COLLECTIONS.memberPrivacy).doc(lockId);
+    const lock = await optionalPaymentDocument(lockRef);
+    const documentId = existing?._id || `member_hide_${Number(userId)}_${Number(targetId)}`;
+    const ref = transaction.collection(C.memberInteractions).doc(documentId);
+    const current = await optionalPaymentDocument(ref);
+    const hiddenBy = new Set((lock?.hiddenBy || []).map(Number));
+    if (active) hiddenBy.add(Number(userId)); else hiddenBy.delete(Number(userId));
+    const timestamp = nowIso();
+    const row = { ...(current || existing || {}), id: current?.id || existing?.id
+      || await allocateVipBusinessId(transaction, 'vipInteractionAtomic'), userId: Number(userId), targetUserId: Number(targetId),
+      actionType: 'hide', active, status: active ? 'active' : 'inactive', createdAt: current?.createdAt || existing?.createdAt || timestamp,
+      updatedAt: timestamp };
+    delete row._id;
+    await ref.set({ data: row });
+    await lockRef.set({ data: { hiddenBy: [...hiddenBy], updatedAt: timestamp } });
+    return { ...row, _id: documentId };
+  });
+}
+
+async function vipServingMatchmaker(actorId, memberUserId, transaction) {
+  const mm = await getCertifiedMatchmakerByUserIdOrThrow(actorId);
+  const assignments = await getAll(C.members, { userId: Number(memberUserId), matchmakerId: Number(mm.id), status: 1 });
+  if (!assignments.length) throw createHttpError('只能确认所属会员的牵线服务', 403, 40300);
+  if (!transaction) return mm;
+  const current = await optionalPaymentDocument(transaction.collection(C.matchmakers).doc(mm._id));
+  const memberRow = await optionalPaymentDocument(transaction.collection(C.members).doc(assignments[0]._id));
+  if (!isCertifiedActiveMatchmaker(current) || !memberRow || Number(memberRow.status) !== 1
+    || Number(memberRow.matchmakerId) !== Number(mm.id) || Number(memberRow.userId) !== Number(memberUserId)) {
+    throw createHttpError('主理人或会员服务关系已变化', 409, 40906);
+  }
+  return current;
+}
+
+async function allocateVipBusinessId(transaction, key) {
+  const ref = transaction.collection(C.counters).doc(key);
+  const previous = await optionalPaymentDocument(ref);
+  if (previous && (!Number.isSafeInteger(previous.value) || previous.value < 0)) throw createHttpError('业务序号异常', 503, 50301);
+  const id = Math.max(previous ? previous.value + 1 : 1, Date.now() * 1000);
+  if (!Number.isSafeInteger(id)) throw createHttpError('业务序号不可用', 503, 50301);
+  await ref.set({ data: { key, value: id, updatedAt: nowIso() } });
+  return id;
+}
+
+async function vipConnectPair({ userAId, userBId, matchmakerId, requestId, transaction }) {
+  const participants = [Number(userAId), Number(userBId)].sort((a, b) => a - b);
+  const participantKey = chatParticipantKey(participants);
+  const recordRef = transaction.collection(C.matchRecords).doc(`matchmaking_${requestId}`);
+  const existingRecord = await optionalPaymentDocument(recordRef);
+  if (existingRecord) return { matchRecordId: existingRecord.id, conversationId: existingRecord.conversationId };
+  const conversationId = conversationDocumentId(participantKey, 'member_pair');
+  const conversationRef = transaction.collection(C.conversations).doc(conversationId);
+  const existingConversation = await optionalPaymentDocument(conversationRef);
+  if (existingConversation?.matchRecordId) throw createHttpError('双方已建立正式牵线，请刷新后查看', 409, 40906);
+  const id = await allocateVipBusinessId(transaction, 'vipMatchRecordAtomic');
+  const numericConversationId = existingConversation?.id || await allocateVipBusinessId(transaction, 'vipConversationAtomic');
+  const timestamp = nowIso();
+  const record = { id, userAId: participants[0], userBId: participants[1], matchmakerId: Number(matchmakerId),
+    matchType: 'paid_matchmaking', status: 'connected', matchmakingRequestId: requestId,
+    conversationId: numericConversationId, createdAt: timestamp, updatedAt: timestamp };
+  const conversation = { ...(existingConversation || {}), id: numericConversationId, conversationType: 'member_pair',
+    participantIds: participants, participantKey, matchmakerId: Number(matchmakerId), matchRecordId: id,
+    chatOpenReason: null, status: 'active', unreadBy: existingConversation?.unreadBy || Object.fromEntries(participants.map(value => [String(value), 0])),
+    lastMessageContent: existingConversation?.lastMessageContent || '', lastMessageAt: existingConversation?.lastMessageAt || '',
+    createdAt: existingConversation?.createdAt || timestamp, updatedAt: timestamp };
+  delete conversation._id;
+  await recordRef.set({ data: record });
+  await conversationRef.set({ data: conversation });
+  return { matchRecordId: id, conversationId: numericConversationId };
+}
+
+async function vipNotify({ senderId, receiverId, messageType, content, transaction }) {
+  const operation = async tx => {
+    const id = await allocateVipBusinessId(tx, 'vipMessageAtomic');
+    const message = { id, senderId: Number(senderId), receiverId: Number(receiverId), messageType,
+      contentType: 'system', content: String(content).slice(0, 500), isRead: 0, createdAt: nowIso(), updatedAt: nowIso() };
+    await tx.collection(C.messages).doc(`vip_message_${id}`).set({ data: message });
+    return message;
+  };
+  return transaction ? operation(transaction) : db.runTransaction(operation);
+}
+
+async function vipVisitorViews(viewerId, visitorIds) {
+  const ids = [...new Set(visitorIds.map(Number).filter(id => Number.isSafeInteger(id) && id > 0 && id !== Number(viewerId)))];
+  const [users, profiles, outgoing, incoming] = await Promise.all([
+    getFirstRowsByNumericField(C.users, 'id', ids, [], { complete: true,
+      fields: { id: true, nickname: true, avatarUrl: true, status: true, gender: true, mergedIntoUserId: true } }),
+    getFirstRowsByNumericField(C.profiles, 'userId', ids, [], { complete: true,
+      fields: { userId: true, realName: true, photos: true, displayEnabled: true } }),
+    memberInteractionStateMap(viewerId, ids),
+    getAll(C.memberInteractions, { targetUserId: Number(viewerId), actionType: 'hide' }, Infinity)
+  ]);
+  const hidden = new Set(latestMemberInteractionRows(incoming).filter(isActiveInteraction).map(row => Number(row.userId)));
+  const result = new Map();
+  for (const id of ids) {
+    const user = users.get(id);
+    const profile = profiles.get(id);
+    if (!user || Number(user.status) !== 1 || user.mergedIntoUserId || !profile || !isTrue(profile.displayEnabled)
+      || hidden.has(id) || outgoing[String(id)]?.hide) continue;
+    result.set(id, { visitorUserId: id, ...salonAttendeeIdentity(user, profile) });
+  }
+  return result;
+}
+
+async function vipFormalPair(userId, targetId, transaction) {
+  const a = Number(userId), b = Number(targetId);
+  const records = await getAll(C.matchRecords, _.or([
+    { userAId: _.in([a, String(a)]), userBId: _.in([b, String(b)]) },
+    { userBId: _.in([a, String(a)]), userAId: _.in([b, String(b)]) }
+  ]), Infinity);
+  for (const snapshot of records) {
+    const row = transaction ? await optionalPaymentDocument(transaction.collection(C.matchRecords).doc(snapshot._id)) : snapshot;
+    if (row?.status === 'connected' && [Number(row.userAId), Number(row.userBId)].includes(a)
+      && [Number(row.userAId), Number(row.userBId)].includes(b)) return true;
+  }
+  return false;
+}
+
+async function vipCanContact(userId, targetId, transaction) {
+  const snapshots = await Promise.all([latestMemberInteraction(userId, targetId, 'favorite'), latestMemberInteraction(targetId, userId, 'favorite')]);
+  const current = transaction ? await Promise.all(snapshots.map(row => row
+    ? optionalPaymentDocument(transaction.collection(C.memberInteractions).doc(row._id)) : null)) : snapshots;
+  if (current.every(isActiveInteraction)) return true;
+  return vipFormalPair(userId, targetId, transaction);
+}
+
+const matchmakerActivation = createMatchmakerActivationService({ db });
+const vipMembership = createVipMembershipService({ db, getAll, getOne, getById, nextId, addRow, updateRow,
+  fulfillMatchmaker: (transaction, order, timestamp) => matchmakerActivation.fulfill(transaction, order, timestamp),
+  refundMatchmaker: (transaction, order, timestamp) => matchmakerActivation.refund(transaction, order, timestamp),
+  assertPublicTarget: vipPublicTarget, assertMatchmaker: vipServingMatchmaker, connectPair: vipConnectPair, notify: vipNotify,
+  visitorViews: vipVisitorViews,
+  resolveVisitorPage: async rows => (await resolveMemberMediaPage({ list: rows })).list,
+  canContact: vipCanContact,
+  hasFormalPair: vipFormalPair,
+  getProfileCompletion: (user, profile) => profileCompletionFor({ ...profile, gender: profile.gender || user.gender,
+    realName: profile.realName || user.nickname }).percent });
+
+async function paidMatchmakerOverview(userId) {
+  const [user, applications, unresolved] = await Promise.all([
+    getUserOrThrow(userId), getAll(C.matchmakers, { userId: Number(userId) }, 2), unresolvedUserPaymentOrders(userId)
+  ]);
+  if (Number(user.status) !== 1 || user.mergedIntoUserId) throw createHttpError('账号状态已变化，请重新登录', 401, 40100);
+  const row = applications.length === 1 ? applications[0] : null;
+  const active = !!row && Number(row.status) === 1 && Number(row.certificationStatus) === 2;
+  const plan = normalizeMembershipPlan(MATCHMAKER_LIFETIME_PLAN, { requireActive: true });
+  let payment = membershipPaymentIntegration(userId, 'matchmaker');
+  const reason = applications.length > 1 ? 'matchmaker_application_conflict' : active ? 'matchmaker_already_active'
+    : !user.phone ? 'phone_required' : row && !matchmakerActivationEligibility(user, row).eligible
+      ? 'matchmaker_application_unavailable' : '';
+  if (reason) payment = { ...payment, available: false, reason };
+  const pendingOrder = unresolved[0] || null;
+  if (pendingOrder?.fulfillmentStatus === 'requires_review') payment = { ...payment, available: false, reason: 'payment_requires_review' };
+  return {
+    matchmaker: row ? { id: Number(row.id), matchmakerNo: row.matchmakerNo || '', status: Number(row.status),
+      certificationStatus: Number(row.certificationStatus || 0), activationSource: row.activationSource || '',
+      activationStatus: row.activationStatus || '', activationLifetime: row.activationLifetime === true } : null,
+    active, activationSource: row?.activationSource || (active ? 'manual' : ''), lifetime: active,
+    plan, payment, phoneBound: !!user.phone,
+    pendingOrder: pendingOrder ? publicPaymentOrder(pendingOrder) : null,
+    pendingOrderPayment: pendingOrder ? membershipOrderPaymentIntegration(userId, pendingOrder) : null
+  };
+}
+
+function reusableTestOrder(order, requesterOpenid) {
+  assertCurrentTestCheckout(order, process.env);
+  trustedPaymentOrder(order, requesterOpenid);
+  if (!['pending', 'confirming'].includes(order.status)) {
+    throw createHttpError('本账号的支付测试已结束，请勿重复付款', 409, 40905);
+  }
+  return order;
+}
+
+function sameProbeArchive(archive, order) {
+  const fields = new Set([...Object.keys(archive), ...Object.keys(order)]);
+  fields.delete('_id');
+  fields.delete('probeArchivedAt');
+  return [...fields].every(field => JSON.stringify(archive[field]) === JSON.stringify(order[field]));
 }
 
 const membership = {
   async overview(userId) {
-    const [user, assignment, plans] = await Promise.all([
+    const [user, assignment, normalPlans, unresolvedOrders, vipOverview] = await Promise.all([
       getUserOrThrow(userId),
       activeMemberAssignment(userId),
-      activeMembershipPlans()
+      activeMembershipPlans(),
+      unresolvedUserPaymentOrders(userId),
+      vipMembership.overview(userId)
     ]);
-    const integration = paymentIntegrationConfig(process.env);
-    const payment = membershipPaymentAvailability({ config: integration, assignment, user, plans });
-    const premium = !!assignment && isPremiumMembership(assignment);
-    const lifetime = !!assignment
-      && isPremiumMembership({ ...assignment, expireAt: null })
-      && (assignment.expireAt === null || assignment.expireAt === undefined || String(assignment.expireAt).trim() === '');
+    let integration = membershipPaymentIntegration(userId);
+    let plans = normalPlans.filter(plan => plan.planCode !== paymentTestPlan().planCode);
+    if (integration.testMode) {
+      const testPlan = paymentTestPlan(process.env);
+      const testOrder = await getOne(C.paymentOrders, { _id: paymentTestDocumentId(process.env, userId) });
+      const completed = testOrder && (testOrder.status === 'paid'
+        || (testPlan.planCode === 'vip_week' && !['pending', 'confirming'].includes(testOrder.status)));
+      plans = completed ? [] : [testPlan];
+      if (completed) integration = { ...integration, available: false, createPath: '', reason: 'payment_test_completed' };
+    }
+    let payment = membershipPaymentAvailability({ config: integration, assignment, user,
+      plans: plans.filter(plan => plan.productType !== 'matchmaking') });
+    let matchmakingPayment = matchmakingPaymentIntegration();
+    if (matchmakingPayment.available && (!user.phone || !plans.some(plan => plan.productType === 'matchmaking' && plan.active))) {
+      matchmakingPayment = { ...matchmakingPayment, available: false,
+        reason: !user.phone ? 'phone_required' : 'plans_not_configured' };
+    }
+    const pendingOrder = unresolvedOrders[0] || null;
+    if (pendingOrder && pendingOrder.fulfillmentStatus === 'requires_review') {
+      payment = { ...payment, available: false, createPath: '', reason: 'payment_requires_review' };
+      matchmakingPayment = { ...matchmakingPayment, available: false, createPath: '', reason: 'payment_requires_review' };
+    }
+    const premium = vipOverview.isPremiumMember;
     return {
       isPremiumMember: premium,
       phoneBound: !!user.phone,
       phoneMasked: user.phone ? `${String(user.phone).slice(0, 3)}****${String(user.phone).slice(-4)}` : '',
       needsMatchmaker: !assignment,
-      membership: assignment ? {
-        memberType: assignment.memberType || 'free',
-        serviceLevel: assignment.serviceLevel || '',
-        expireAt: assignment.expireAt || null,
-        lifetime
-      } : null,
+      membership: premium || assignment ? { memberType: premium ? 'vip' : 'free',
+        serviceLevel: assignment?.serviceLevel || '', expireAt: vipOverview.expireAt, lifetime: vipOverview.lifetime } : null,
+      membershipTier: vipOverview.membershipTier,
+      entitlements: vipOverview.entitlements,
+      vipMembership: vipOverview.vipMembership,
+      matchmakingPackages: vipOverview.matchmakingPackages,
+      matchmakingReadiness: vipOverview.matchmakingReadiness,
+      matchmakingProgress: vipOverview.matchmakingProgress,
       plans,
-      payment
+      pendingOrder: pendingOrder ? publicPaymentOrder(pendingOrder) : null,
+      pendingOrderPayment: pendingOrder ? membershipOrderPaymentIntegration(userId, pendingOrder) : null,
+      unresolvedOrderCount: unresolvedOrders.length,
+      payment,
+      matchmakingPayment
     };
   },
 
   async createOrder(userId, data = {}) {
-    const integration = paymentIntegrationConfig(process.env);
+    const planCode = String(data.planCode || '').trim().toLowerCase();
+    const activationPurchase = planCode === MATCHMAKER_LIFETIME_PLAN.planCode;
+    const canonicalPlan = activationPurchase ? MATCHMAKER_LIFETIME_PLAN : DEFAULT_MEMBERSHIP_PLANS.find(plan => plan.planCode === planCode);
+    let integration = membershipPaymentIntegration(userId, canonicalPlan?.productType);
     if (!integration.available) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
-    const [user, assignment] = await Promise.all([
+    const [user, assignment, unresolvedOrders] = await Promise.all([
       getUserOrThrow(userId),
-      activeMemberAssignment(userId)
+      activeMemberAssignment(userId),
+      unresolvedUserPaymentOrders(userId)
     ]);
-    if (!assignment) throw createHttpError('请先绑定主理人后再开通会员', 409, 40903);
-    if (!user.phone) throw createHttpError('付款前请先授权微信手机号', 400, 40003);
     const payerOpenid = String(user.openid || '').trim();
     if (!payerOpenid || /^(manual_|seed-|mock_)/.test(payerOpenid)) {
       throw createHttpError('当前账号不是可支付的微信登录账号', 409, 40904);
     }
-    const planCode = String(data.planCode || '').trim().toLowerCase();
-    const planRow = await getOne(C.membershipPlans, { planCode });
-    if (!planRow) throw createHttpError('会员套餐不存在', 404, 40400);
+    const testPlan = paymentTestPlan(process.env);
+    if ((integration.testMode && planCode !== testPlan?.planCode)
+      || (!integration.testMode && planCode === paymentTestPlan().planCode)) {
+      throw createHttpError('该支付套餐未向当前账号开放', 403, 40304);
+    }
+    let application = null;
+    if (activationPurchase && !unresolvedOrders.length) {
+      if (!user.phone) throw createHttpError('付款前请先授权微信手机号', 400, 40003);
+      const existingApplications = await getAll(C.matchmakers, { userId: Number(userId) }, 2);
+      if (existingApplications.length > 1) throw createHttpError('主理人申请记录重复，请联系工作人员核查后再付款', 409, 40906);
+      const existing = existingApplications[0];
+      if (existing && !matchmakerActivationEligibility(user, existing).eligible) throw createHttpError('当前主理人状态不允许重复付费开通，请刷新查看', 409, 40906);
+      application = existing || null;
+    }
+    const configuredPlan = integration.testMode || activationPurchase ? null : await getOne(C.membershipPlans, { planCode });
+    const planRow = activationPurchase ? MATCHMAKER_LIFETIME_PLAN : integration.testMode ? testPlan : canonicalPlan
+      ? canonicalMembershipPlan(canonicalPlan, configuredPlan) : configuredPlan;
+    integration = membershipPaymentIntegration(userId, planRow?.productType);
+    if (!integration.available) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
     let plan;
-    try {
-      plan = normalizeMembershipPlan(planRow, { requireActive: true });
-    } catch (err) {
-      throw createHttpError(err.message || '会员套餐不可用', 400, 40001);
+    let planError;
+    if (planRow) {
+      try { plan = normalizeMembershipPlan(planRow, { requireActive: true }); }
+      catch (err) { planError = createHttpError(err.message || '会员套餐不可用', 400, 40001); }
     }
 
     const timestamp = nowIso();
-    const reusableOrder = (await getAll(C.paymentOrders, { userId: Number(userId) }, 100))
-      .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
-      .find(row => isReusablePaymentOrder(row, plan, timestamp));
-    if (reusableOrder) {
-      return {
-        order: publicPaymentOrder(reusableOrder),
-        payment: integration
-      };
-    }
-
-    const id = await nextId('paymentOrder');
-    const order = createPendingPaymentOrder({
-      id,
-      outTradeNo: paymentOrderNo(id),
-      userId,
-      memberRecordId: assignment.id,
-      payerOpenid,
-      plan,
-      now: timestamp
+    const result = await db.runTransaction(async transaction => {
+      // The same user slot covers every plan and the controlled probe. Reading
+      // and writing it in this transaction prevents concurrent new cashiers.
+      const slotRef = transaction.collection(C.counters).doc(`paymentPendingUser_${Number(userId)}`);
+      const slot = await optionalPaymentDocument(slotRef);
+      const candidates = [...unresolvedOrders];
+      if (slot && slot.blockedReviewDocumentId) {
+        candidates.unshift({ _id: slot.blockedReviewDocumentId });
+      }
+      if (slot && slot.orderDocumentId && !candidates.some(row => row._id === slot.orderDocumentId)) {
+        candidates.push({ _id: slot.orderDocumentId });
+      }
+      for (const candidate of candidates) {
+        const current = await optionalPaymentDocument(transaction.collection(C.paymentOrders).doc(candidate._id));
+        if (!current || !unresolvedPaymentOrder(current)) continue;
+        if (Number(current.userId) !== Number(userId)) throw createHttpError('支付订单归属异常', 409, 40906);
+        trustedPaymentOrder(current, payerOpenid);
+        if (integration.testMode && isPaymentProbeOrder(current)) assertTestCheckout(current);
+        await slotRef.set({ data: { key: `paymentPendingUser_${Number(userId)}`, userId: Number(userId),
+          orderDocumentId: candidate._id,
+          ...(current.fulfillmentStatus === 'requires_review' ? { blockedReviewDocumentId: candidate._id } : {}),
+          updatedAt: timestamp } });
+        return { order: { ...current, _id: candidate._id }, reused: true };
+      }
+      if (RETIRED_MATCHMAKING_PLAN_CODES.includes(planCode)) {
+        throw createHttpError('该历史套餐已停止新购，请选择当前套餐', 409, 40905);
+      }
+      if (!planRow) throw createHttpError('会员套餐不存在', 404, 40400);
+      if (vipCatalogReady() && !integration.testMode && !canonicalPlan) {
+        throw createHttpError('该历史套餐已停止新购，请选择当前套餐', 409, 40905);
+      }
+      if (planError) throw planError;
+      const directPurchase = !integration.testMode && !!canonicalPlan && ['vip', 'matchmaking', 'matchmaker'].includes(plan.productType);
+      if (!assignment && plan.productType !== 'vip' && !directPurchase) throw createHttpError('请先绑定主理人后再开通会员', 409, 40903);
+      const currentUser = await optionalPaymentDocument(transaction.collection(C.users).doc(user._id));
+      if (!activePaymentUser({ userId, payerOpenid }, currentUser)) throw createHttpError('当前微信账号状态已变化，请重新登录', 403, 40304);
+      if (!currentUser.phone) throw createHttpError('付款前请先授权微信手机号', 400, 40003);
+      let currentApplication = null;
+      let applicationDocumentId = '';
+      if (activationPurchase) {
+        applicationDocumentId = application?._id || `paid_matchmaker_user_${Number(userId)}`;
+        const applicationRef = transaction.collection(C.matchmakers).doc(applicationDocumentId);
+        currentApplication = await optionalPaymentDocument(applicationRef);
+        if (!currentApplication && !application) {
+          const applicationId = await allocateVipBusinessId(transaction, 'paidMatchmakerAtomic');
+          currentApplication = { id: applicationId, userId: Number(userId), matchmakerNo: defaultMatchmakerNo(applicationId),
+            inviteCode: `HLP${applicationId.toString(36).toUpperCase()}`, inviteCodeStatus: 'active', inviteCodeUpdatedAt: timestamp,
+            level: 1, parentId: null, teamId: null, hasStore: 0, certificationStatus: 0, certificationRemark: '',
+            totalPerformance: 0, status: 1, createdAt: timestamp, updatedAt: timestamp };
+          await applicationRef.set({ data: currentApplication });
+          await transaction.collection(C.users).doc(user._id).update({ data: { currentRole: 'matchmaker', updatedAt: timestamp } });
+        }
+        if (!matchmakerActivationEligibility(currentUser, currentApplication).eligible
+          || application && Number(currentApplication.id) !== Number(application.id)) throw createHttpError('主理人申请已变化，请刷新后再付款', 409, 40906);
+      }
+      const member = assignment ? await optionalPaymentDocument(transaction.collection(C.members).doc(assignment._id)) : null;
+      if (plan.productType !== 'vip' && !directPurchase && !activePaymentMember({ userId, memberRecordId: assignment.id, memberMatchmakerId: assignment.matchmakerId }, member)) {
+        throw createHttpError('会员关系已变更，请先核查后再付款', 409, 40906);
+      }
+      if (plan.productType === 'matchmaking' && !directPurchase) await vipMembership.assertMatchmakingReady(userId, transaction);
+      const probeDocumentId = integration.testMode ? paymentTestDocumentId(process.env, userId) : '';
+      let probeArchive;
+      if (integration.testMode) {
+        const existingProbe = await optionalPaymentDocument(transaction.collection(C.paymentOrders).doc(probeDocumentId));
+        if (existingProbe) {
+          assertCurrentTestCheckout(existingProbe, process.env);
+          trustedPaymentOrder(existingProbe, payerOpenid);
+          // A weekly batch owns one business order even if it is closed. A
+          // further test needs a separately authorized operator-owned run.
+          if (testPlan.planCode === 'vip_week') {
+            const existing = reusableTestOrder(existingProbe, payerOpenid);
+            return { order: { ...existing, _id: probeDocumentId }, reused: true };
+          }
+          if (existingProbe.status !== 'closed') {
+            const existing = reusableTestOrder(existingProbe, payerOpenid);
+            return { order: { ...existing, _id: probeDocumentId }, reused: true };
+          }
+          // The protected close endpoint records CLOSED only after the bridge
+          // has queried WeChat. A paid, failed, refunded or unresolved probe is
+          // never replaced. Keep this closed cashier's evidence under its own
+          // immutable history document before reusing the fixed test entry.
+          if (existingProbe.tradeState !== 'CLOSED' || existingProbe.transactionId || existingProbe.paidAt
+            || ['fulfilled', 'requires_review'].includes(existingProbe.fulfillmentStatus)
+            || !Number.isSafeInteger(existingProbe.id) || existingProbe.id <= 0) {
+            throw createHttpError('历史测试订单不可重新付款，请联系工作人员核查', 409, 40905);
+          }
+          const archiveRef = transaction.collection(C.paymentOrders).doc(`payment_order_${existingProbe.id}`);
+          const archived = await optionalPaymentDocument(archiveRef);
+          if (archived && !sameProbeArchive(archived, existingProbe)) {
+            throw createHttpError('历史支付归档存在冲突，请联系工作人员核查', 409, 40908);
+          }
+          if (!archived) {
+            const data = { ...existingProbe, probeArchivedAt: timestamp };
+            delete data._id;
+            probeArchive = { ref: archiveRef, data };
+          }
+        }
+        if (!paymentTestAccess(process.env, userId)) throw createHttpError('支付测试入口已关闭', 403, 40304);
+      }
+      const id = await allocatePaymentOrderId(transaction);
+      const documentId = integration.testMode ? probeDocumentId : `payment_order_${id}`;
+      const ref = transaction.collection(C.paymentOrders).doc(documentId);
+      if (!integration.testMode && await optionalPaymentDocument(ref)) {
+        throw createHttpError('支付订单序号冲突，请联系工作人员', 409, 40908);
+      }
+      const order = createPendingPaymentOrder({ id, outTradeNo: paymentOrderNo(id), userId,
+        memberRecordId: member?.id || 0, memberMatchmakerId: member?.matchmakerId, payerOpenid, plan, now: timestamp,
+        ...(directPurchase ? { fulfillmentContract: DIRECT_PURCHASE_CONTRACT } : {}) });
+      if (activationPurchase) Object.assign(order, { userDocumentId: user._id, matchmakerDocumentId: applicationDocumentId,
+        matchmakerId: Number(currentApplication.id), matchmakerAuthorizationSnapshot: matchmakerActivationSnapshot({ ...currentApplication, _id: applicationDocumentId }) });
+      if (plan.productType === 'matchmaking' && !matchmakingPaymentIntegration().available) {
+        throw createHttpError('人工牵线收款暂未开放', 503, 50301);
+      }
+      const virtualConfig = virtualPaymentConfig(process.env);
+      if (!virtualConfig.configured) throw createHttpError('虚拟支付配置已变化，请稍后重试', 503, 50301);
+      Object.assign(order, { paymentProvider: 'virtual', virtualPaymentEnv: virtualConfig.env,
+        virtualPaymentOfferId: virtualConfig.offerId, virtualPaymentAttempts: [] });
+      if (integration.testMode && testPlan.planCode === 'vip_week') {
+        Object.assign(order, { paymentTestPlanCode: 'vip_week', paymentTestRunId: paymentTestRunId(process.env) });
+      }
+      if (integration.testMode) {
+        if (!paymentTestAccess(process.env, userId)) throw createHttpError('支付测试入口已关闭', 403, 40304);
+        assertCurrentTestCheckout({ ...order, _id: documentId }, process.env);
+      }
+      if (probeArchive) await probeArchive.ref.set({ data: probeArchive.data });
+      await ref.set({ data: order });
+      await slotRef.set({ data: { key: `paymentPendingUser_${Number(userId)}`, userId: Number(userId),
+        orderDocumentId: documentId, updatedAt: timestamp } });
+      return { order: { ...order, _id: documentId }, reused: false };
     });
-    const saved = await addRow(C.paymentOrders, order);
     return {
-      order: publicPaymentOrder(saved),
-      payment: integration
+      order: publicPaymentOrder(result.order),
+      payment: result.order.fulfillmentStatus === 'requires_review'
+        ? { ...membershipOrderPaymentIntegration(userId, result.order), available: false,
+          createPath: '', reason: 'payment_requires_review' }
+        : membershipOrderPaymentIntegration(userId, result.order),
+      reused: result.reused,
+      recoveryRequired: result.reused
     };
   },
 
   async getOrder(userId, outTradeNo) {
-    const row = await getOne(C.paymentOrders, {
-      outTradeNo: String(outTradeNo || ''),
-      userId: Number(userId)
-    });
+    const row = await uniquePaymentOrder(outTradeNo, userId);
     if (!row) throw createHttpError('支付订单不存在', 404, 40400);
     return publicPaymentOrder(row);
   },
 
   async internalCheckout(data = {}) {
     assertPaymentCallbackToken(data.callbackToken);
-    const integration = paymentIntegrationConfig(process.env);
-    if (!integration.available) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
-    const order = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
+    const order = await uniquePaymentOrder(data.outTradeNo);
     if (!order) throw createHttpError('支付订单不存在', 404, 40400);
     trustedPaymentOrder(order, data.requesterOpenid);
+    assertMembershipCheckoutMode(order);
+    if (data.paymentProvider !== 'virtual' || paymentOrderProvider(order) !== 'virtual') {
+      throw createHttpError('历史微信支付订单仅支持查询，请勿重新付款', 403, 40304);
+    }
+    const member = await getById(C.members, order.memberRecordId);
+    if (!member && order.productType !== 'vip' && !isDirectPurchaseOrder(order)) throw createHttpError('会员关系已变更，请联系工作人员', 409, 40906);
+    const user = await getById(C.users, order.userId);
+    if (!user) throw createHttpError('当前微信账号状态已变化，请重新登录', 403, 40304);
+    const unresolvedOrders = await unresolvedUserPaymentOrders(order.userId);
     return db.runTransaction(async transaction => {
       const orderRef = transaction.collection(C.paymentOrders).doc(order._id);
       const snapshot = await orderRef.get();
       const currentOrder = snapshot && snapshot.data;
       if (!currentOrder) throw createHttpError('支付订单不存在', 404, 40400);
       trustedPaymentOrder(currentOrder, data.requesterOpenid);
+      assertMembershipCheckoutMode(currentOrder);
+      if (data.paymentProvider !== 'virtual' || paymentOrderProvider(currentOrder) !== 'virtual') {
+        throw createHttpError('历史微信支付订单仅支持查询，请勿重新付款', 403, 40304);
+      }
       if (!['pending', 'confirming'].includes(String(currentOrder.status))) {
         throw createHttpError('支付订单状态不可下单', 409, 40905);
       }
+      if (currentOrder.productType !== 'vip' && !isDirectPurchaseOrder(currentOrder) && currentOrder.status === 'confirming' && currentOrder.memberMatchmakerId === undefined) {
+        throw createHttpError('历史订单会员归属未留存，请先查单并联系工作人员核查', 409, 40906);
+      }
+      const currentMember = member ? await optionalPaymentDocument(transaction.collection(C.members).doc(member._id)) : null;
+      if (currentOrder.productType !== 'vip' && !isDirectPurchaseOrder(currentOrder) && !activePaymentMember(currentOrder, currentMember)) {
+        throw createHttpError('会员关系已变更，请联系工作人员后再付款', 409, 40906);
+      }
+      if (currentOrder.productType === 'matchmaking' && !isDirectPurchaseOrder(currentOrder)) await vipMembership.assertMatchmakingReady(currentOrder.userId, transaction);
+      const currentUser = await optionalPaymentDocument(transaction.collection(C.users).doc(user._id));
+      if (!activePaymentUser(currentOrder, currentUser, true)) {
+        throw createHttpError('当前微信账号或手机号状态已变化，请重新登录核查', 403, 40304);
+      }
+      await reservePaymentCheckout(transaction, currentOrder, order._id, unresolvedOrders);
+      const relationPatch = currentOrder.productType !== 'vip' && !isDirectPurchaseOrder(currentOrder) && currentOrder.memberMatchmakerId === undefined
+        ? { memberMatchmakerId: Number(currentMember.matchmakerId) } : {};
       if (String(currentOrder.status) === 'pending') {
         const timestamp = nowIso();
-        const patch = { status: 'confirming', checkoutAt: timestamp, updatedAt: timestamp };
+        const patch = { ...relationPatch, status: 'confirming', checkoutAt: timestamp, updatedAt: timestamp };
         await orderRef.update({ data: patch });
         return trustedPaymentOrder({ ...currentOrder, ...patch }, data.requesterOpenid);
+      }
+      if (Object.keys(relationPatch).length) {
+        await orderRef.update({ data: relationPatch });
+        return trustedPaymentOrder({ ...currentOrder, ...relationPatch }, data.requesterOpenid);
       }
       return trustedPaymentOrder(currentOrder, data.requesterOpenid);
     });
@@ -3353,32 +4472,34 @@ const membership = {
 
   async internalQuery(data = {}) {
     assertPaymentCallbackToken(data.callbackToken);
-    const order = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
+    const order = await uniquePaymentOrder(data.outTradeNo);
     if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+    assertPaymentProviderContract(order, data);
     return trustedPaymentOrder(order, data.requesterOpenid);
   },
 
-  async confirmPayment(data = {}) {
+  async confirmPayment(data = {}, origin = {}) {
     assertPaymentCallbackToken(data.callbackToken);
     const transactionId = String(data.transactionId || '').trim();
     if (!/^[a-zA-Z0-9_-]{8,64}$/.test(transactionId)) throw createHttpError('微信支付交易号无效');
-    const existingOrder = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
+    const existingOrder = await uniquePaymentOrder(data.outTradeNo);
     if (!existingOrder) throw createHttpError('支付订单不存在', 404, 40400);
     const existingMember = await getById(C.members, existingOrder.memberRecordId);
-    if (!existingMember || Number(existingMember.userId) !== Number(existingOrder.userId)) {
-      throw createHttpError('支付订单的会员关系不存在', 409, 40906);
-    }
-
+    const existingUser = await getById(C.users, existingOrder.userId);
     const result = await db.runTransaction(async transaction => {
       const orderRef = transaction.collection(C.paymentOrders).doc(existingOrder._id);
-      const memberRef = transaction.collection(C.members).doc(existingMember._id);
-      const [orderSnapshot, memberSnapshot] = await Promise.all([orderRef.get(), memberRef.get()]);
-      const currentOrder = orderSnapshot && orderSnapshot.data;
-      const currentMember = memberSnapshot && memberSnapshot.data;
-      if (!currentOrder || !currentMember) throw createHttpError('支付订单数据不存在', 409, 40906);
-      if (Number(currentMember.userId) !== Number(currentOrder.userId)
-        || Number(currentOrder.memberRecordId) !== Number(currentMember.id)) {
-        throw createHttpError('支付订单的会员关系已变更', 409, 40906);
+      const currentOrder = await optionalPaymentDocument(orderRef);
+      if (!currentOrder) throw createHttpError('支付订单数据不存在', 409, 40906);
+      assertPurchaseContract(currentOrder);
+      assertPaymentProviderContract(currentOrder, data);
+      const memberRef = existingMember ? transaction.collection(C.members).doc(existingMember._id) : null;
+      const currentMember = memberRef ? await optionalPaymentDocument(memberRef) : null;
+      const currentUser = existingUser
+        ? await optionalPaymentDocument(transaction.collection(C.users).doc(existingUser._id)) : null;
+      if (isPaymentProbeOrder(existingOrder) || isPaymentProbeOrder(currentOrder)) {
+        // Recheck this order's fixed test promise at fulfillment. Current
+        // selection and deadline cannot change a genuinely delayed payment.
+        assertTestCheckout(currentOrder);
       }
       if (!paymentConfirmationMatches(currentOrder, data)) {
         throw createHttpError('支付回调与订单不匹配', 409, 40907);
@@ -3395,22 +4516,66 @@ const membership = {
 
       const timestamp = nowIso();
       const successTime = new Date(data.successTime || '').getTime();
+      // A verified payment is a money fact even after its original membership
+      // was removed or reassigned. Keep it for review without resurrecting a
+      // relationship, transferring rights, or issuing an unauthorized refund.
+      let canFulfill = activePaymentUser(currentOrder, currentUser)
+        && (currentOrder.productType === 'vip' || isDirectPurchaseOrder(currentOrder) || (activePaymentMember(currentOrder, currentMember)
+          && Number.isSafeInteger(Number(currentOrder.memberMatchmakerId)) && Number(currentOrder.memberMatchmakerId) > 0));
+      let serviceChanged = false;
+      if (canFulfill && currentOrder.productType === 'matchmaking' && !isDirectPurchaseOrder(currentOrder)) {
+        try { await vipMembership.assertMatchmakingReady(currentOrder.userId, transaction); }
+        catch (error) {
+          if (![403, 404, 409].includes(error.status)) throw error;
+          canFulfill = false;
+          serviceChanged = true;
+        }
+      }
+      let activationRights = null;
+      if (canFulfill && currentOrder.productType === 'matchmaker') {
+        activationRights = await vipMembership.fulfillOrder(transaction, currentOrder, timestamp);
+        if (activationRights.requiresReview || activationRights.fulfilled !== true) canFulfill = false;
+      }
+      const reviewReason = canFulfill ? '' : activationRights?.reviewReason || (!activePaymentUser(currentOrder, currentUser) ? 'account_changed'
+        : !currentMember ? 'membership_missing'
+        : Number(currentMember.status) !== 1 ? 'membership_inactive'
+          : serviceChanged ? 'service_readiness_changed'
+            : currentOrder.memberMatchmakerId === undefined ? 'membership_snapshot_missing' : 'membership_changed');
+      const orderPatch = {
+        status: 'paid', transactionId,
+        confirmationSource: ['wechat_push', 'virtual_query'].includes(origin && origin.source) ? origin.source : 'internal',
+        confirmationRequestId: origin && typeof origin.requestId === 'string'
+          && /^[a-zA-Z0-9_-]{1,128}$/.test(origin.requestId) ? origin.requestId : '',
+        fulfillmentStatus: canFulfill ? 'fulfilled' : 'requires_review',
+        reviewReason,
+        fulfillmentMessage: canFulfill ? '' : currentOrder.productType === 'matchmaker'
+          ? '已确认付款，主理人申请状态已变化，请联系工作人员核查开通或退款。'
+          : '已确认付款，原会员关系已变更或无法核实，请联系工作人员核查权益或退款。',
+        paidAt: Number.isFinite(successTime) ? new Date(successTime).toISOString() : timestamp,
+        callbackReceivedAt: timestamp, updatedAt: timestamp
+      };
+      await settlePaymentSlot(transaction, currentOrder, existingOrder._id, canFulfill);
+      if (!canFulfill) {
+        await orderRef.update({ data: orderPatch });
+        return { order: { ...currentOrder, ...orderPatch }, member: null, idempotent: false };
+      }
+      if (['vip', 'matchmaking', 'matchmaker'].includes(currentOrder.productType)) {
+        const rights = activationRights || await vipMembership.fulfillOrder(transaction, currentOrder, timestamp);
+        await orderRef.update({ data: orderPatch });
+        return { order: { ...currentOrder, ...orderPatch }, member: null, rights, idempotent: false };
+      }
       const entitlement = buildMembershipFulfillment({
         member: currentMember,
         durationDays: Number(currentOrder.durationDays),
         now: timestamp
       });
+      // Outstanding legacy cashiers remain payable. Mirror their renewal into
+      // the independent ledger before changing the old relationship fields.
+      await vipMembership.fulfillOrder(transaction, { ...currentOrder, productType: 'vip' }, timestamp);
       const memberPatch = {
         ...entitlement,
         membershipPaidAt: timestamp,
         lastPaymentOrderNo: currentOrder.outTradeNo,
-        updatedAt: timestamp
-      };
-      const orderPatch = {
-        status: 'paid',
-        transactionId,
-        paidAt: Number.isFinite(successTime) ? new Date(successTime).toISOString() : timestamp,
-        callbackReceivedAt: timestamp,
         updatedAt: timestamp
       };
       await memberRef.update({ data: memberPatch });
@@ -3424,11 +4589,12 @@ const membership = {
 
     return {
       order: publicPaymentOrder(result.order),
-      membership: {
+      membership: result.order.fulfillmentStatus === 'requires_review' || !result.member ? null : {
         memberType: result.member.memberType,
         expireAt: result.member.expireAt || null
       },
-      idempotent: result.idempotent
+      idempotent: result.idempotent,
+      rights: result.rights || null
     };
   },
 
@@ -3438,15 +4604,25 @@ const membership = {
     if (!['CLOSED', 'PAYERROR'].includes(tradeState)) {
       throw createHttpError('微信订单尚未确认关闭或失败', 409, 40905);
     }
-    const existingOrder = await getOne(C.paymentOrders, { outTradeNo: String(data.outTradeNo || '') });
+    const existingOrder = await uniquePaymentOrder(data.outTradeNo);
     if (!existingOrder) throw createHttpError('支付订单不存在', 404, 40400);
     return db.runTransaction(async transaction => {
       const orderRef = transaction.collection(C.paymentOrders).doc(existingOrder._id);
       const snapshot = await orderRef.get();
       const currentOrder = snapshot && snapshot.data;
       if (!currentOrder) throw createHttpError('支付订单不存在', 404, 40400);
+      assertPurchaseContract(currentOrder);
+      assertPaymentProviderContract(currentOrder, data);
       if (!paymentDetailsMatch(currentOrder, data)) {
         throw createHttpError('微信查询结果与订单不匹配', 409, 40907);
+      }
+      if (currentOrder.paymentProvider === 'virtual'
+        && (!Array.isArray(data.observedVirtualPaymentAttempts)
+          || !Array.isArray(currentOrder.virtualPaymentAttempts)
+          || JSON.stringify(currentOrder.virtualPaymentAttempts) !== JSON.stringify(data.observedVirtualPaymentAttempts))) {
+        // A new cashier can be issued while the earlier CLOSED query is in flight.
+        // Its absence from the observed snapshot cannot prove that it is closed.
+        throw createHttpError('支付尝试已变化，请重新查询订单后再确认关闭', 409, 40905);
       }
       const status = tradeState === 'CLOSED' ? 'closed' : 'failed';
       if (currentOrder.status === status) return { order: publicPaymentOrder(currentOrder), idempotent: true };
@@ -3455,9 +4631,194 @@ const membership = {
       }
       const timestamp = nowIso();
       const patch = { status, tradeState, closedAt: timestamp, updatedAt: timestamp };
+      await settlePaymentSlot(transaction, currentOrder, existingOrder._id, true);
       await orderRef.update({ data: patch });
       return { order: publicPaymentOrder({ ...currentOrder, ...patch }), idempotent: false };
     });
+  },
+
+  async refundPayment(data = {}) {
+    assertPaymentCallbackToken(data.callbackToken);
+    if (data.providerVerified !== true || data.tradeState !== 'REFUND'
+      || typeof data.refundId !== 'string' || !/^[a-zA-Z0-9_-]{8,96}$/.test(data.refundId)) {
+      throw createHttpError('退款结果尚未可信确认', 409, 40907);
+    }
+    const order = await uniquePaymentOrder(data.outTradeNo);
+    if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+    return db.runTransaction(async transaction => {
+      const ref = transaction.collection(C.paymentOrders).doc(order._id);
+      const current = await optionalPaymentDocument(ref);
+      if (current) assertPurchaseContract(current);
+      if (current) assertPaymentProviderContract(current, data);
+      if (!current || !paymentDetailsMatch(current, data) || data.transactionId !== current.transactionId
+        || !Number.isSafeInteger(data.refundAmountFen) || data.refundAmountFen !== current.amountFen) {
+        throw createHttpError('退款凭据与原付款订单不匹配，部分退款请人工核查', 409, 40907);
+      }
+      if (current.status === 'refunded') {
+        if (current.refundId !== data.refundId) throw createHttpError('退款凭据存在冲突，请人工核查', 409, 40908);
+        return { order: publicPaymentOrder(current), idempotent: true };
+      }
+      if (current.status !== 'paid') throw createHttpError('未确认付款的订单不可自动回收权益', 409, 40905);
+      if (current.duplicateVirtualPayments?.length || current.reviewReason === 'duplicate_payment') {
+        throw createHttpError('重复付款尚待售后核查，不能用单笔退款解除复核', 409, 40908);
+      }
+      const timestamp = nowIso();
+      let independent = ['vip', 'matchmaking', 'matchmaker'].includes(current.productType);
+      const revocation = await vipMembership.refundOrder(transaction, { ...current,
+        productType: current.productType || 'vip' }, timestamp);
+      independent = independent || revocation.revoked === true;
+      const patch = { status: 'refunded', refundId: data.refundId, refundAmountFen: data.refundAmountFen,
+        refundedAt: timestamp, updatedAt: timestamp, refundSource: String(data.refundSource || 'verified_provider').slice(0, 64),
+        ...(revocation.requiresReview ? { fulfillmentStatus: 'requires_review', reviewReason: revocation.reviewReason,
+          fulfillmentMessage: '已确认退款，主理人权限状态需由工作人员核查。' } : {}),
+        ...(!independent ? { fulfillmentStatus: 'requires_review', reviewReason: 'legacy_refund',
+          fulfillmentMessage: '历史订单已退款，请由主理人核查剩余会员权益。' } : {}) };
+      await settlePaymentSlot(transaction, current, order._id, independent);
+      await ref.update({ data: patch });
+      return { order: publicPaymentOrder({ ...current, ...patch }), idempotent: false };
+    });
+  },
+
+  // 小程序虚拟支付：为已创建的会员订单生成 requestVirtualPayment 签名参数。
+  // 订单归属、会员关系与金额全部来自 hlApi 内部可信快照；客户端只提交订单号。
+  async virtualCheckout(userId, data = {}) {
+    const config = virtualPaymentConfig(process.env);
+    if (!config.configured) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
+    const outTradeNo = assertVirtualOrderNumber(String(data.outTradeNo || ''));
+    const loginCode = assertVirtualLoginCode(String(data.loginCode || ''));
+    const user = await getUserOrThrow(userId);
+    const payerOpenid = assertVirtualPayer(String(user.openid || '').trim());
+    const order = await uniquePaymentOrder(outTradeNo, userId);
+    if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+    trustedPaymentOrder(order, payerOpenid);
+    assertVirtualOrderConfiguration(order, config);
+    assertMembershipCheckoutMode(order);
+    let login;
+    try {
+      login = await virtualClient().code2session(config.appSecret, loginCode);
+    } catch (error) {
+      throw createHttpError(error && error.message || '微信登录态校验失败，请重新进入小程序', 503, 50301);
+    }
+    if (login.openid !== payerOpenid) throw createHttpError('登录态与当前账号不一致，请重新登录', 403, 40304);
+    const trusted = await membership.internalCheckout({
+      callbackToken: config.callbackToken, outTradeNo, requesterOpenid: payerOpenid, paymentProvider: 'virtual'
+    });
+    const evidence = await queryVirtualPaymentAttempts(trusted, config);
+    if (evidence.results.some(result => result.xpayOrder && mapVirtualOrderState(result.xpayOrder) === 'SUCCESS')) {
+      if (!paymentTestPushOnly(process.env, evidence.order)) {
+        await reconcileVirtualPaymentOrder(trusted, config, { source: 'virtual_query' });
+      }
+      throw createHttpError('已检测到付款，请查询原订单权益，勿再次支付', 409, 40905);
+    }
+    if (evidence.results.some(result => result.xpayOrder
+      && !['NOTPAY', 'CLOSED'].includes(mapVirtualOrderState(result.xpayOrder)))) {
+      throw createHttpError('原支付尝试状态尚未核实，请查询订单或联系工作人员', 409, 40905);
+    }
+    const allocated = await allocateVirtualPaymentAttempt(trusted, config,
+      Array.isArray(evidence.order.virtualPaymentAttempts) ? evidence.order.virtualPaymentAttempts : []);
+    const planCode = trusted.order && trusted.order.planCode;
+    const signData = buildVirtualSignData({
+      offerId: config.offerId, env: config.env, productId: planCode,
+      goodsPrice: Number(trusted.amountFen), outTradeNo: allocated.paymentAttemptNo, attach: String(planCode)
+    });
+    const { paySig, signature } = clientPaymentSignatures({
+      signData, sessionKey: login.sessionKey, appKey: config.appKey
+    });
+    return {
+      order: allocated.order,
+      paymentAttemptNo: allocated.paymentAttemptNo,
+      virtualPayment: { mode: 'short_series_goods', signData, paySig, signature }
+    };
+  },
+
+  // 小程序虚拟支付：前端查单。本地订单状态 + 微信服务端查单对账后履约。
+  async virtualQuery(userId, data = {}) {
+    const config = virtualPaymentConfig(process.env);
+    if (!config.configured) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
+    const outTradeNo = assertVirtualOrderNumber(String(data.outTradeNo || ''));
+    const user = await getUserOrThrow(userId);
+    const payerOpenid = assertVirtualPayer(String(user.openid || '').trim());
+    const trusted = await membership.internalQuery({
+      callbackToken: config.callbackToken, outTradeNo, requesterOpenid: payerOpenid, paymentProvider: 'virtual'
+    });
+    const order = await uniquePaymentOrder(outTradeNo, userId);
+    if (paymentTestPushOnly(process.env, order)) {
+      trustedPaymentOrder(order, payerOpenid);
+      assertVirtualOrderConfiguration(order, config);
+      return { order: publicPaymentOrder(order),
+        tradeState: order.status === 'paid' && order.fulfillmentStatus === 'fulfilled' ? 'SUCCESS' : 'NOTPAY' };
+    }
+    return reconcileVirtualPaymentOrder(trusted, config, { source: 'virtual_query' });
+  },
+
+  // 云开发消息推送入口（xpay_goods_deliver_notify 等）。
+  // 推送只是触发器：先校验字段与归属，再向微信重新查单核实后才履约。
+  async handleVirtualPaymentPush(rawEvent = {}, requestId = '') {
+    const config = virtualPaymentConfig(process.env);
+    const eventName = String(rawEvent.Event || '');
+    if (!config.configured) {
+      console.warn('virtual payment push received before configuration completed', eventName);
+      return { ErrCode: -1, ErrMsg: 'not configured' };
+    }
+    if (eventName === 'xpay_refund_notify') {
+      try {
+        if (rawEvent.MsgType !== 'event' || Number(rawEvent.Env) !== config.env) throw new Error('invalid refund trigger');
+        // Only the locator is used. Monetary fields, RetCode and refund IDs in
+        // the incoming message never authorize entitlement revocation.
+        const attemptNo = assertVirtualOrderNumber(rawEvent.MchOrderId);
+        const payer = assertVirtualPayer(rawEvent.OpenId);
+        const order = await virtualPaymentOrderForAttempt(attemptNo);
+        if (!order || order.payerOpenid !== payer) throw new Error('refund owner mismatch');
+        const result = await reconcileVirtualPaymentOrder(trustedPaymentOrder(order, payer), config, { source: 'wechat_refund_push', requestId });
+        if (!result?.providerRefunded || result.order?.status !== 'refunded') throw new Error('refund not confirmed');
+        return { ErrCode: 0, ErrMsg: 'success' };
+      } catch (_) { return { ErrCode: -1, ErrMsg: 'refund processing requires verification' }; }
+    }
+    if (eventName !== 'xpay_goods_deliver_notify') return { ErrCode: 0, ErrMsg: 'ignored' };
+    let push;
+    let businessOrderId = null;
+    try {
+      push = validateGoodsDeliverPush(rawEvent, config.env);
+    } catch (error) {
+      console.warn('invalid virtual payment deliver push ignored', error.message);
+      return { ErrCode: -1, ErrMsg: 'invalid delivery request' };
+    }
+    try {
+      const order = await virtualPaymentOrderForAttempt(push.outTradeNo);
+      if (!order) {
+        console.warn('virtual payment push for unknown order', push.outTradeNo);
+        return { ErrCode: -1, ErrMsg: 'unknown order' };
+      }
+      businessOrderId = order.id;
+      if (String(order.payerOpenid || '') !== push.openid) {
+        console.warn('virtual payment push payer mismatch', push.outTradeNo);
+        return { ErrCode: -1, ErrMsg: 'payer mismatch' };
+      }
+      if (String(order.planCode || '') !== push.productId || push.quantity !== 1) {
+        console.warn('virtual payment push goods mismatch', push.outTradeNo);
+        return { ErrCode: -1, ErrMsg: 'goods mismatch' };
+      }
+      const trusted = trustedPaymentOrder(order, push.openid);
+      const result = await reconcileVirtualPaymentOrder(trusted, config, { source: 'wechat_push', requestId });
+      if (!result || result.tradeState !== 'SUCCESS' || result.providerRefunded === true || !result.order
+        || result.order.status !== 'paid' || result.order.fulfillmentStatus !== 'fulfilled'
+        || result.order.virtualPaidAttemptNo !== push.outTradeNo
+        || result.order.virtualDeliveryOrderNo !== push.outTradeNo
+        || result.order.virtualDeliveryStatus !== 'confirmed') {
+        console.log(JSON.stringify({ event: eventName, orderId: businessOrderId, attempt: push.outTradeNo,
+          env: config.env, requestId, ACK: -1 }));
+        return { ErrCode: -1, ErrMsg: 'delivery not fulfilled' };
+      }
+      const handled = await recordVirtualPushHandled(order.outTradeNo, push.outTradeNo, requestId);
+      console.log(JSON.stringify({ event: eventName, orderId: handled.id, attempt: push.outTradeNo,
+        env: config.env, requestId, ACK: 0 }));
+      return { ErrCode: 0, ErrMsg: 'success' };
+    } catch (error) {
+      // ErrCode 0 会将平台订单标为已发货；未履约及待人工复核均不能成功应答。
+      console.log(JSON.stringify({ event: eventName, orderId: businessOrderId, attempt: push.outTradeNo,
+        env: config.env, requestId, ACK: -1 }));
+      return { ErrCode: -1, ErrMsg: 'processing failed' };
+    }
   },
 
   async listPlansForAdmin(filters = {}) {
@@ -3490,10 +4851,43 @@ const membership = {
   },
 
   async listOrdersForAdmin(filters = {}) {
-    let rows = await getAll(C.paymentOrders, null, 2000);
-    if (filters.status) rows = rows.filter(row => String(row.status) === String(filters.status));
-    if (filters.userId) rows = rows.filter(row => Number(row.userId) === Number(filters.userId));
-    return paginate(rows.map(publicPaymentOrder).sort((a, b) => Number(b.id || 0) - Number(a.id || 0)), filters.page, filters.pageSize);
+    if (!filters || typeof filters !== 'object' || Array.isArray(filters)) throw createHttpError('订单筛选参数无效');
+    const choice = (field, values) => {
+      const value = filters[field];
+      if (value === undefined || value === null || value === '') return '';
+      if (typeof value !== 'string' || !values.includes(value)) throw createHttpError('订单筛选参数无效');
+      return value;
+    };
+    const positiveInteger = (value, fallback, maximum = Number.MAX_SAFE_INTEGER) => {
+      if (value === undefined || value === null || value === '') return fallback;
+      if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+$/.test(value.trim()))) {
+        throw createHttpError('订单筛选或分页参数无效');
+      }
+      const result = Number(value);
+      if (!Number.isSafeInteger(result) || result <= 0 || result > maximum) throw createHttpError('订单筛选或分页参数无效');
+      return result;
+    };
+    const status = choice('status', ['pending', 'confirming', 'paid', 'closed', 'failed', 'refunded']);
+    const fulfillmentStatus = choice('fulfillmentStatus', ['fulfilled', 'requires_review']);
+    const productType = choice('productType', ['vip', 'matchmaking', 'matchmaker', 'legacy']);
+    const userId = positiveInteger(filters.userId, null);
+    const page = positiveInteger(filters.page, 1), pageSize = positiveInteger(filters.pageSize, 20, 100);
+    if (!Number.isSafeInteger((page - 1) * pageSize)) throw createHttpError('订单分页参数无效');
+    if (filters.keyword !== undefined && filters.keyword !== null
+      && (typeof filters.keyword !== 'string' || filters.keyword.length > 128 || /[\x00-\x1f\x7f]/.test(filters.keyword))) {
+      throw createHttpError('订单检索关键词无效');
+    }
+    const keyword = String(filters.keyword || '').trim().toLowerCase();
+    // Filtering and sorting a capped prefix can hide the latest or review-held
+    // orders forever. Read every page before computing this administration view.
+    let rows = await getAll(C.paymentOrders, null, Infinity);
+    if (status) rows = rows.filter(row => String(row.status) === status);
+    if (fulfillmentStatus) rows = rows.filter(row => (row.fulfillmentStatus || (row.status === 'paid' ? 'fulfilled' : '')) === fulfillmentStatus);
+    if (productType) rows = rows.filter(row => productType === 'legacy' ? !row.productType : row.productType === productType);
+    if (userId !== null) rows = rows.filter(row => Number(row.userId) === userId);
+    if (keyword) rows = rows.filter(row => [row.outTradeNo, row.planTitle, row.planCode, row.transactionId]
+      .some(value => String(value || '').toLowerCase().includes(keyword)));
+    return paginate(rows.map(publicPaymentOrder).sort((a, b) => Number(b.id || 0) - Number(a.id || 0)), page, pageSize);
   }
 };
 
@@ -3534,7 +4928,8 @@ const matchmaker = {
     const normalizedStatus = normalizeCertificationStatus(certificationStatus);
     const updated = await updateRow(C.matchmakers, row, {
       certificationStatus: normalizedStatus,
-      certificationRemark: remark
+      certificationRemark: remark,
+      activationSource: 'manual', activationStatus: normalizedStatus === 2 ? 'manual' : 'revoked'
     });
     return stripInternal(updated);
   },
@@ -3546,7 +4941,8 @@ const matchmaker = {
       id: Number(row.id), userId: Number(row.userId), status: Number(row.status),
       matchmakerNo: row.matchmakerNo || '', level: row.level || 1,
       certificationStatus: Number(row.certificationStatus || 0),
-      certificationRemark: row.certificationRemark || ''
+      certificationRemark: row.certificationRemark || '', activationSource: row.activationSource || '',
+      activationStatus: row.activationStatus || '', activationLifetime: row.activationLifetime === true
     } };
   },
 
@@ -3799,17 +5195,26 @@ function privateArchivePayload(memberRow, intake, recordedByUserId) {
   };
 }
 
-async function upsertMemberPrivateArchive(memberRow, intake, recordedByUserId) {
-  const existing = await getOne(C.memberPrivateArchives, { memberId: Number(memberRow.id) });
+async function upsertMemberPrivateArchive(memberRow, intake, recordedByUserId, options = {}) {
+  const existing = Object.hasOwn(options, 'existing') ? options.existing
+    : await getOne(C.memberPrivateArchives, { memberId: Number(memberRow.id) });
   const payload = privateArchivePayload(memberRow, intake, recordedByUserId);
-  if (existing) return updateRow(C.memberPrivateArchives, existing, payload);
+  const database = options.transaction || db;
+  if (existing) {
+    if (!options.transaction) return updateRow(C.memberPrivateArchives, existing, payload);
+    const patch = { ...payload, updatedAt: nowIso() };
+    const result = await database.collection(C.memberPrivateArchives).doc(existing._id).update({ data: patch });
+    if (result && (result.code || result.errCode)) throw createHttpError('member private archive write failed', 503, 50301);
+    return { ...existing, ...patch };
+  }
   const archive = {
-    id: await nextId('memberPrivateArchive'),
+    id: options.archiveId || await nextId('memberPrivateArchive'),
     ...payload,
     createdAt: nowIso(),
     updatedAt: nowIso()
   };
-  await db.collection(C.memberPrivateArchives).doc(`member_${Number(memberRow.id)}`).set({ data: archive });
+  const result = await database.collection(C.memberPrivateArchives).doc(`member_${Number(memberRow.id)}`).set({ data: archive });
+  if (result && (result.code || result.errCode)) throw createHttpError('member private archive write failed', 503, 50301);
   return archive;
 }
 
@@ -3901,6 +5306,7 @@ const member = {
 
   async addManual(matchmakerUserId, data = {}, options = {}) {
     const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
+    const principalUser = await memberAssignmentUserOrThrow(matchmakerUserId);
     const requireCompleteIntake = options.requireCompleteIntake === true;
     let intake = null;
     if (requireCompleteIntake) {
@@ -3923,6 +5329,7 @@ const member = {
       ? await uniqueActiveUser({ phone: data.phone }, '该手机号对应多条账号，请联系平台人工核验')
       : null;
     if (user) {
+      user = await memberAssignmentUserOrThrow(user.id);
       const assignment = await activeMemberAssignment(user.id);
       if (assignment && Number(assignment.matchmakerId) !== Number(mm.id)) {
         throw createHttpError('member already has another matchmaker', 409, 40901);
@@ -3984,42 +5391,45 @@ const member = {
     if (profile) await updateRow(C.profiles, profile, profilePatch);
     else await addRow(C.profiles, { id: await nextId('profile'), ...profilePatch });
 
-    let row = await getOne(C.members, { matchmakerId: mm.id, userId: user.id });
-    if (!row) {
-      const memberId = await nextId('member');
-      row = await addRow(C.members, {
-        id: memberId,
+    user = await memberAssignmentUserOrThrow(user.id);
+    const snapshot = await memberAssignments.prepare(user.id, [
+      { collection: C.matchmakers, row: mm }, { collection: C.users, row: user }, { collection: C.users, row: principalUser }
+    ]);
+    let row = snapshot.members.find(item => Number(item.status) === 1 && Number(item.matchmakerId) === Number(mm.id))
+      || snapshot.members.find(item => Number(item.matchmakerId) === Number(mm.id));
+    if (requireCompleteIntake) await vipMembership.ensureIndependentEntitlement(user.id);
+    else if (row) await vipMembership.preserveLegacyEntitlement(user.id);
+    const reserved = await memberAssignments.mutate(snapshot, { matchmakerId: mm.id,
+      ...(row ? { memberDocumentId: row._id } : {}),
+      create: memberId => ({
         memberNo: defaultMemberNo(memberId),
-        matchmakerId: mm.id,
-        userId: user.id,
         memberType: requireCompleteIntake ? memberTypeForIntake(intake) : (data.memberType || 'no_consumption'),
         serviceLevel: requireCompleteIntake ? '' : (data.serviceLevel || ''),
         expireAt: requireCompleteIntake ? (intake.businessRegistration.expiryDate || null) : (data.expireAt || null),
         remark: requireCompleteIntake ? '' : (data.remark || ''),
         ...(requireCompleteIntake ? { intakeStatus: 'pending' } : {}),
         status: requireCompleteIntake ? 0 : 1
-      });
-    } else if (!requireCompleteIntake) {
-      row = await updateRow(C.members, row, {
-        memberNo: row.memberNo || defaultMemberNo(row.id, row.createdAt || new Date()),
-        memberType: data.memberType || row.memberType,
-        serviceLevel: data.serviceLevel !== undefined ? data.serviceLevel : row.serviceLevel,
-        expireAt: data.expireAt !== undefined ? data.expireAt : row.expireAt,
-        remark: data.remark !== undefined ? data.remark : row.remark,
-        status: 1
-      });
-    }
+      }),
+      patch: current => ({ memberNo: current.memberNo || defaultMemberNo(current.id, current.createdAt || new Date()),
+        ...(!requireCompleteIntake ? { memberType: data.memberType || current.memberType,
+          serviceLevel: data.serviceLevel !== undefined ? data.serviceLevel : current.serviceLevel,
+          expireAt: data.expireAt !== undefined ? data.expireAt : current.expireAt,
+          remark: data.remark !== undefined ? data.remark : current.remark, status: 1 } : {}) }) });
+    row = reserved.member;
     if (requireCompleteIntake) {
-      await upsertMemberPrivateArchive(row, intake, matchmakerUserId);
-      row = await updateRow(C.members, row, {
-        memberNo: row.memberNo || defaultMemberNo(row.id, row.createdAt || new Date()),
-        memberType: memberTypeForIntake(intake),
-        serviceLevel: row.serviceLevel || '',
-        expireAt: intake.businessRegistration.expiryDate || null,
-        remark: row.remark || '',
-        intakeStatus: 'complete',
-        status: 1
+      const archive = await getOne(C.memberPrivateArchives, { memberId: Number(row.id) });
+      if (archive && (Number(archive.userId) !== Number(user.id) || Number(archive.matchmakerId) !== Number(mm.id))) {
+        throw createHttpError('member private archive owner changed', 409, 40901);
+      }
+      const archiveId = archive?.id || await nextId('memberPrivateArchive');
+      const activated = await memberAssignments.mutate(reserved.snapshot, { matchmakerId: mm.id, memberDocumentId: row._id,
+        extraDocuments: [{ collection: C.memberPrivateArchives, documentId: archive?._id || `member_${Number(row.id)}`, expected: archive }],
+        beforeSave: transaction => upsertMemberPrivateArchive(row, intake, matchmakerUserId, { transaction, existing: archive, archiveId }),
+        patch: current => ({ memberNo: current.memberNo || defaultMemberNo(current.id, current.createdAt || new Date()),
+          memberType: memberTypeForIntake(intake), serviceLevel: current.serviceLevel || '',
+          expireAt: intake.businessRegistration.expiryDate || null, remark: current.remark || '', intakeStatus: 'complete', status: 1 })
       });
+      row = activated.member;
     }
     await ensureMemberMatchmakerConversation(row, mm);
     return memberView(row);
@@ -4102,12 +5512,13 @@ const member = {
   },
 
   async showcase(userId, filters = {}) {
+    await assertVipDiscoveryAccess(userId, filters);
     const [page, favoriteQuota] = await Promise.all([
       publicShowcasePage(userId, filters).then(resolveMemberMediaPage),
-      dailyFreeFavoriteStats(userId)
+      memberFavoriteQuota(userId)
     ]);
     return {
-      ...page,
+      ...await withVipBadges(page),
       category: normalizeShowcaseCategory(filters.category),
       favoriteQuota
     };
@@ -4136,7 +5547,7 @@ const member = {
     }
     const page = await resolveMemberMediaPage({ list: [{ ...target,
       viewerState: { isFavorite: !!state.favorite, isHidden: false, chatAccess } }] });
-    return page.list[0];
+    return (await withVipBadges(page)).list[0];
   },
 
   async hidden(userId, filters = {}) {
@@ -4298,9 +5709,10 @@ const member = {
     if (actionType === 'favorite') {
       const existingFavorite = await latestMemberInteraction(userId, target.userId, 'favorite');
       const wasFavoriteActive = isActiveInteraction(existingFavorite);
-      let favoriteQuota = await dailyFreeFavoriteStats(userId, target.userId);
+      const premium = await hasPremiumMemberEntitlement(userId);
+      let favoriteQuota = await memberFavoriteQuota(userId, target.userId);
       const extra = {};
-      if (active && !wasFavoriteActive) {
+      if (active && !wasFavoriteActive && !premium) {
         const beforeUse = await assertDailyFreeFavoriteQuota(userId, target.userId);
         favoriteQuota = quotaAfterFreeFavoriteUse(beforeUse);
         Object.assign(extra, {
@@ -4309,6 +5721,7 @@ const member = {
           freeFavoriteLimit: DAILY_FREE_FAVORITE_LIMIT
         });
       }
+      if (active && !wasFavoriteActive && premium) Object.assign(extra, { favoriteSource: 'vip_heart' });
       const interaction = !active && !existingFavorite
         ? null : await upsertMemberInteraction(userId, target.userId, 'favorite', active, extra);
       return favoriteActionResponse(userId, target, interaction, active, wasFavoriteActive, favoriteQuota);
@@ -4316,7 +5729,7 @@ const member = {
 
     const existingHide = await latestMemberInteraction(userId, target.userId, 'hide');
     const interaction = !active && !existingHide ? null
-      : await upsertMemberInteraction(userId, target.userId, actionType, active);
+      : await saveMemberHide(userId, target.userId, active, existingHide);
     const stateMap = await memberInteractionStateMap(userId, [target.userId]);
     const viewerState = stateMap[String(target.userId)] || {};
     return {
@@ -4389,6 +5802,7 @@ const member = {
     if (!row || row.matchmakerId !== mm.id) {
       throw createHttpError('member not found', 404, 40400);
     }
+    await vipMembership.ensureIndependentEntitlement(row.userId);
     let user = await getById(C.users, row.userId);
     let normalizedPhone = null;
     if (Object.prototype.hasOwnProperty.call(data, 'phone')) {
@@ -4435,12 +5849,16 @@ const member = {
 
   async remove(matchmakerUserId, memberId) {
     const mm = await getCertifiedMatchmakerByUserIdOrThrow(matchmakerUserId);
+    const principalUser = await memberAssignmentUserOrThrow(matchmakerUserId);
     const row = await getById(C.members, memberId);
     if (!row || row.matchmakerId !== mm.id) {
       throw createHttpError('member not found', 404, 40400);
     }
-    const updated = await updateRow(C.members, row, { status: 0 });
-    return memberView(updated);
+    await vipMembership.preserveLegacyEntitlement(row.userId);
+    const snapshot = await memberAssignments.prepare(row.userId, [{ collection: C.matchmakers, row: mm }, { collection: C.users, row: principalUser }]);
+    const changed = await memberAssignments.mutate(snapshot, { matchmakerId: mm.id, memberDocumentId: row._id,
+      patch: { status: 0 } });
+    return memberView(changed.member);
   },
 
   async recommend(matchmakerUserId, data = {}) {
@@ -4509,20 +5927,60 @@ const member = {
     }
 
     const resourceUser = await getById(C.users, data.resourceUserId);
-    if (!resourceUser) throw createHttpError('resource user not found', 404, 40400);
-    if (own.userId === resourceUser.id) throw createHttpError('cannot recommend to self');
+    if (!resourceUser || Number(resourceUser.status) !== 1 || resourceUser.mergedIntoUserId) {
+      throw createHttpError('resource user not found', 404, 40400);
+    }
+    await publicShowcaseTarget({ targetUserId: resourceUser.id });
+    if (Number(own.userId) === Number(resourceUser.id)) throw createHttpError('cannot recommend to self');
 
-    const [userAId, userBId] = own.userId < resourceUser.id
-      ? [own.userId, resourceUser.id]
-      : [resourceUser.id, own.userId];
-    const matchRecord = await addRow(C.matchRecords, {
-      id: await nextId('matchRecord'),
-      userAId,
-      userBId,
-      matchmakerId: mm.id,
-      matchType: 'recommend',
-      compatibilityScore: null,
-      status: 'pending'
+    const targetIds = _.in([Number(resourceUser.id), String(resourceUser.id)]);
+    const [targetProfiles, targetMembers, principalUser] = await Promise.all([
+      getAll(C.profiles, { userId: targetIds }, Infinity),
+      getAll(C.members, { userId: targetIds, status: 1 }, Infinity),
+      getById(C.users, matchmakerUserId)
+    ]);
+    // Keep publicShowcaseTarget's active-assignment precedence: an assigned
+    // account uses its canonical numeric profile, otherwise any public profile.
+    const targetProfile = targetMembers.length
+      ? targetProfiles.find(profile => profile.userId === Number(resourceUser.id))
+      : targetProfiles.find(profile => isTrue(profile.displayEnabled));
+    if (!targetProfile || !principalUser) throw createHttpError('resource user not found', 404, 40400);
+
+    const [userAId, userBId] = Number(own.userId) < Number(resourceUser.id)
+      ? [Number(own.userId), Number(resourceUser.id)]
+      : [Number(resourceUser.id), Number(own.userId)];
+    const proposedId = await nextId('matchRecord');
+    await ensureCollection(C.matchRecords);
+    const matchRecord = await db.runTransaction(async transaction => {
+      const [currentTarget, currentProfile, currentOwn, currentMatchmaker, currentPrincipal] = await Promise.all([
+        salonTransactionDocument(transaction, C.users, resourceUser._id),
+        salonTransactionDocument(transaction, C.profiles, targetProfile._id),
+        salonTransactionDocument(transaction, C.members, own._id),
+        salonTransactionDocument(transaction, C.matchmakers, mm._id),
+        salonTransactionDocument(transaction, C.users, principalUser._id)
+      ]);
+      if (!currentTarget || Number(currentTarget.id) !== Number(resourceUser.id)
+        || Number(currentTarget.status) !== 1 || currentTarget.mergedIntoUserId
+        || !currentProfile || Number(currentProfile.userId) !== Number(resourceUser.id)
+        || !isTrue(currentProfile.displayEnabled)) {
+        throw createHttpError('resource user not found', 404, 40400);
+      }
+      if (!currentOwn || Number(currentOwn.id) !== Number(own.id) || Number(currentOwn.status) !== 1
+        || Number(currentOwn.userId) !== Number(own.userId) || Number(currentOwn.matchmakerId) !== Number(mm.id)
+        || !isCertifiedActiveMatchmaker(currentMatchmaker) || Number(currentMatchmaker.id) !== Number(mm.id)
+        || Number(currentMatchmaker.userId) !== Number(matchmakerUserId)
+        || !currentPrincipal || Number(currentPrincipal.id) !== Number(matchmakerUserId)
+        || Number(currentPrincipal.status) !== 1 || currentPrincipal.mergedIntoUserId) {
+        throw createHttpError('会员归属或主理人资格已变化，请刷新后重试', 403, 40301);
+      }
+      const documentId = `recommend_${proposedId}`;
+      const existing = await salonTransactionDocument(transaction, C.matchRecords, documentId);
+      if (existing) throw createHttpError('推荐记录编号冲突，请重试', 409, 40940);
+      const timestamp = nowIso();
+      const payload = { id: proposedId, userAId, userBId, matchmakerId: mm.id,
+        matchType: 'recommend', compatibilityScore: null, status: 'pending', createdAt: timestamp, updatedAt: timestamp };
+      await transaction.collection(C.matchRecords).doc(documentId).set({ data: payload });
+      return payload;
     });
     await ensureMemberPairConversation(matchRecord);
     const ownUser = await getById(C.users, own.userId);
@@ -4593,24 +6051,69 @@ async function getSalonRegistrationContext(eventId, userId) {
 
 async function getSalonCreator(userId) {
   const [user, matchmakerRow] = await Promise.all([getUserOrThrow(userId), getOne(C.matchmakers, { userId: Number(userId), status: 1 })]);
-  if (Number(user.status) !== 1 || !matchmakerRow || Number(matchmakerRow.certificationStatus) !== 2) {
+  if (Number(user.status) !== 1 || user.mergedIntoUserId || !matchmakerRow || Number(matchmakerRow.certificationStatus) !== 2) {
     throw createHttpError('主理人或合伙人审核通过后可发起活动', 403, 40301);
   }
-  // A claimed parent/level/currentRole never grants approval. Both certified
-  // principals and their certified partners use the same existing approval gate.
+  // A claimed parent/level/currentRole never grants publishing authority. Both
+  // certified principals and certified partners must pass this eligibility gate.
   const parentId = Number(matchmakerRow.parentId || 0);
   if (matchmakerRow.parentId && (!Number.isSafeInteger(parentId) || parentId <= 0 || parentId === Number(matchmakerRow.id))) {
     throw createHttpError('合伙人所属主理人关系无效，请联系平台核验', 403, 40301);
   }
   const parent = parentId > 0 ? await getById(C.matchmakers, parentId) : null;
   if (parentId > 0 && !isCertifiedActiveMatchmaker(parent)) throw createHttpError('所属主理人未通过审核或已停用，暂不能发起活动', 403, 40301);
-  return { matchmaker: matchmakerRow,
+  return { user, parent, matchmaker: matchmakerRow,
     role: isCertifiedActiveMatchmaker(parent) ? 'partner' : 'matchmaker' };
 }
 
 async function assertSalonOwner(event, userId) {
   if (Number(event.organizerId) !== Number(userId)) throw createHttpError('仅活动发起人可管理此活动', 403, 40300);
   return getSalonCreator(userId);
+}
+
+function salonPublicationSignature(event) {
+  return JSON.stringify([salonCountSignature(event), event.organizerId, event.organizerMatchmakerId,
+    event.organizerRole, event.title, event.description, event.coverImage, event.location, event.price, event.reviewRemark]);
+}
+
+async function saveSalonPublication(creator, data, event = null) {
+  if (typeof db.runTransaction !== 'function') throw createHttpError('活动发布暂不可用，请稍后重试', 503, 50301);
+  return db.runTransaction(async transaction => {
+    const [user, matchmaker, parent] = await Promise.all([
+      salonTransactionDocument(transaction, C.users, creator.user._id),
+      salonTransactionDocument(transaction, C.matchmakers, creator.matchmaker._id),
+      creator.parent ? salonTransactionDocument(transaction, C.matchmakers, creator.parent._id) : null
+    ]);
+    if (!user || Number(user.id) !== Number(creator.user.id) || Number(user.status) !== 1 || user.mergedIntoUserId
+      || !isCertifiedActiveMatchmaker(matchmaker) || Number(matchmaker.userId) !== Number(user.id)
+      || Number(matchmaker.id) !== Number(creator.matchmaker.id)
+      || Number(matchmaker.parentId || 0) !== Number(creator.matchmaker.parentId || 0)
+      || creator.parent && (!isCertifiedActiveMatchmaker(parent) || Number(parent.id) !== Number(creator.parent.id))) {
+      throw createHttpError('主理人或合伙人资格已变化，请重新确认后发布', 403, 40301);
+    }
+    const timestamp = nowIso();
+    let saved, documentId;
+    if (event) {
+      const current = await salonTransactionDocument(transaction, C.salonEvents, event._id);
+      if (!current || salonPublicationSignature(current) !== salonPublicationSignature(event)) {
+        throw createHttpError('活动信息已变化，请刷新后重试', 409, 40942);
+      }
+      saved = { ...current, ...data, updatedAt: timestamp };
+      documentId = event._id;
+    } else {
+      const counter = await salonTransactionDocument(transaction, C.counters, 'salon');
+      const id = Number(counter?.value || 0) + 1;
+      if (!Number.isSafeInteger(id) || id <= 0) throw createHttpError('活动编号暂不可用，请稍后重试', 503, 50301);
+      const result = await transaction.collection(C.counters).doc('salon').set({ data: { key: 'salon', value: id, updatedAt: timestamp } });
+      if (result && (result.errCode || result.code)) throw createHttpError('活动发布失败，请稍后重试', 503, 50301);
+      saved = { ...data, id, createdAt: timestamp, updatedAt: timestamp };
+      documentId = `salon_${crypto.randomUUID()}`;
+    }
+    const { _id, _openid, ...payload } = saved;
+    const result = await transaction.collection(C.salonEvents).doc(documentId)[event ? 'update' : 'set']({ data: payload });
+    if (result && (result.errCode || result.code)) throw createHttpError('活动发布失败，请稍后重试', 503, 50301);
+    return stripInternal(saved);
+  });
 }
 
 async function mutateSalonRegistration(eventId, userId, options = {}) {
@@ -4709,8 +6212,7 @@ const salon = {
     const maxParticipants = Number(data.maxParticipants || 0);
     const price = Number(data.price || 0);
     if (!Number.isSafeInteger(maxParticipants) || maxParticipants < 0 || !Number.isFinite(price) || price < 0) throw createHttpError('活动名额和价格无效', 422, 42240);
-    return stripInternal(await addRow(C.salonEvents, {
-      id: await nextId('salon'),
+    return saveSalonPublication(creator, {
       title: data.title,
       description: data.description || '',
       coverImage: data.coverImage || '',
@@ -4724,14 +6226,15 @@ const salon = {
       organizerId: Number(organizerUserId),
       organizerMatchmakerId: Number(creator.matchmaker.id),
       organizerRole: creator.role,
-      status: 'pending',
+      status: 'upcoming',
       reviewRemark: ''
-    }));
+    });
   },
 
   async listEvents(filters = {}, currentUserId = null) {
     const period = ['upcoming', 'past'].includes(filters.period) ? filters.period : '';
-    const statuses = period === 'past' ? _.in(['upcoming', 'ended', 'cancelled']) : (period ? 'upcoming' : filters.status || 'upcoming');
+    const publicStatus = ['upcoming', 'ended', 'cancelled'].includes(filters.status) ? filters.status : 'upcoming';
+    const statuses = period === 'past' ? _.in(['upcoming', 'ended', 'cancelled']) : (period ? 'upcoming' : publicStatus);
     let rows = await getAll(C.salonEvents, { status: statuses }, Infinity);
     if (period) {
       const now = Date.now();
@@ -4890,7 +6393,7 @@ const salon = {
   async updateEvent(eventId, organizerUserId, data = {}) {
     const event = await getById(C.salonEvents, eventId);
     if (!event) throw createHttpError('event not found', 404, 40400);
-    await assertSalonOwner(event, organizerUserId);
+    const creator = await assertSalonOwner(event, organizerUserId);
     if (['ended', 'cancelled'].includes(event.status) || salonAvailability(event).isExpired) throw createHttpError('已结束或已取消的活动不能修改');
     const patch = {};
     ['title', 'description', 'coverImage', 'location'].forEach(key => {
@@ -4913,11 +6416,16 @@ const salon = {
       if (!Number.isFinite(price) || price < 0) throw createHttpError('活动价格无效', 422, 42240);
       patch.price = price;
     }
-    if (event.status === 'upcoming' && Object.keys(patch).length) {
-      patch.status = 'pending';
+    if (['upcoming', 'pending', 'rejected'].includes(event.status) && Object.keys(patch).length) {
+      const nextTitle = patch.title === undefined ? event.title : patch.title;
+      const nextDate = new Date(patch.eventDate || event.eventDate);
+      if (!String(nextTitle || '').trim() || !Number.isFinite(nextDate.getTime()) || nextDate.getTime() <= Date.now()) {
+        throw createHttpError('请填写活动标题并选择未来的活动时间', 422, 42240);
+      }
+      patch.status = 'upcoming';
       patch.reviewRemark = '';
     }
-    return stripInternal(await updateRow(C.salonEvents, event, patch));
+    return saveSalonPublication(creator, patch, event);
   },
 
   async cancelEvent(eventId, organizerUserId) {
@@ -4970,7 +6478,8 @@ function certificationRecordData(record, patch = {}) {
 }
 
 function certificationSecrets() {
-  return { encryptionKey: process.env.MEMBER_CERTIFICATION_ENCRYPTION_KEY, jwtSecret: process.env.JWT_SECRET };
+  return { encryptionKey: process.env.MEMBER_CERTIFICATION_ENCRYPTION_KEY, jwtSecret: process.env.JWT_SECRET,
+    jwtDerivedKey: process.env.MEMBER_CERTIFICATION_JWT_DERIVED_KEY };
 }
 
 function certificationAdminCredentialFingerprint() {
@@ -5253,6 +6762,23 @@ const certifications = {
   }
 };
 
+function adminListParameters(filters) {
+  if (!filters || typeof filters !== 'object' || Array.isArray(filters)) throw createHttpError('后台筛选参数无效', 422, 42240);
+  const integer = (value, fallback, maximum = Number.MAX_SAFE_INTEGER) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+$/.test(value.trim()))) {
+      throw createHttpError('后台分页参数无效', 422, 42240);
+    }
+    const result = Number(value);
+    if (!Number.isSafeInteger(result) || result <= 0 || result > maximum) throw createHttpError('后台分页参数无效', 422, 42240);
+    return result;
+  };
+  if (filters.keyword !== undefined && filters.keyword !== null
+    && (typeof filters.keyword !== 'string' || filters.keyword.length > 80)) throw createHttpError('搜索词须为80字以内文本', 422, 42240);
+  return { page: integer(filters.page, 1), pageSize: integer(filters.pageSize, 20, 100),
+    keyword: String(filters.keyword || '').trim().toLowerCase() };
+}
+
 const admin = {
   async login(code) {
     const adminCode = process.env.ADMIN_CODE;
@@ -5376,9 +6902,11 @@ const admin = {
   },
 
   async dashboard() {
-    const matchmakers = (await getAll(C.matchmakers)).filter(row => row.status === 1);
-    const members = (await getAll(C.members)).filter(row => row.status === 1);
-    const salons = await getAll(C.salonEvents);
+    const [matchmakers, members, salons] = await Promise.all([
+      getAll(C.matchmakers, { status: 1 }, Infinity, { fields: { certificationStatus: true } }),
+      getAll(C.members, { status: 1 }, Infinity, { fields: { id: true } }),
+      getAll(C.salonEvents, null, Infinity, { fields: { status: true } })
+    ]);
     return {
       pendingMatchmakers: matchmakers.filter(row => Number(row.certificationStatus) === 0).length,
       approvedMatchmakers: matchmakers.filter(row => Number(row.certificationStatus) === 2).length,
@@ -5391,29 +6919,57 @@ const admin = {
   },
 
   async listMatchmakers(filters = {}) {
-    let rows = (await getAll(C.matchmakers)).filter(row => row.status === 1);
+    const pagination = adminListParameters(filters);
+    let rows = await getAll(C.matchmakers, { status: 1 }, Infinity);
     if (filters.status !== undefined && filters.status !== '') {
       rows = rows.filter(row => String(row.certificationStatus) === String(filters.status));
     }
-    const views = await Promise.all(rows.map(async row => {
-      const user = await getById(C.users, row.userId) || {};
-      const members = await getAll(C.members, { matchmakerId: row.id, status: 1 });
-      const salons = await getAll(C.salonEvents, { organizerId: row.userId });
-      return {
+    if (pagination.keyword) {
+      const names = await getFirstRowsByNumericField(C.users, 'id', rows.map(row => row.userId), [], {
+        complete: true, fields: { id: true, nickname: true }
+      });
+      rows = rows.filter(row => [row.id, row.matchmakerNo, row.inviteCode, names.get(Number(row.userId))?.nickname]
+        .some(value => String(value || '').toLowerCase().includes(pagination.keyword)));
+    }
+    const page = paginate(rows.sort((a, b) => Number(b.id) - Number(a.id)), pagination.page, pagination.pageSize);
+    const matchmakerIds = page.list.map(row => Number(row.id));
+    const userIds = page.list.map(row => Number(row.userId));
+    const [users, members, salons] = await Promise.all([
+      getFirstRowsByNumericField(C.users, 'id', userIds, [], { complete: true }),
+      matchmakerIds.length ? getAll(C.members, { matchmakerId: _.in(matchmakerIds.flatMap(id => [id, String(id)])), status: 1 }, Infinity,
+        { fields: { matchmakerId: true } }) : [],
+      userIds.length ? getAll(C.salonEvents, { organizerId: _.in(userIds.flatMap(id => [id, String(id)])) }, Infinity,
+        { fields: { organizerId: true } }) : []
+    ]);
+    const counts = (items, key) => items.reduce((map, item) => {
+      const id = Number(item[key]);
+      map.set(id, (map.get(id) || 0) + 1);
+      return map;
+    }, new Map());
+    const memberCounts = counts(members, 'matchmakerId');
+    const salonCounts = counts(salons, 'organizerId');
+    return { ...page, list: page.list.map(row => ({
         ...stripInternal(row),
-        user: publicUser(user),
-        memberCount: members.length,
-        salonCount: salons.length
-      };
-    }));
-    return paginate(views.sort((a, b) => b.id - a.id), filters.page, filters.pageSize);
+        user: publicUser(users.get(Number(row.userId)) || {}),
+        memberCount: memberCounts.get(Number(row.id)) || 0,
+        salonCount: salonCounts.get(Number(row.userId)) || 0
+      })) };
   },
 
   async listSalons(filters = {}) {
-    let rows = await getAll(C.salonEvents);
+    const pagination = adminListParameters(filters);
+    let rows = await getAll(C.salonEvents, null, Infinity);
     if (filters.status) rows = rows.filter(row => row.status === filters.status);
-    const views = await Promise.all(rows.sort((a, b) => b.id - a.id).map(row => eventView(row)));
-    return paginate(views, filters.page, filters.pageSize);
+    if (pagination.keyword) {
+      const names = await getFirstRowsByNumericField(C.users, 'id', rows.map(row => row.organizerId), [], {
+        complete: true, fields: { id: true, nickname: true }
+      });
+      rows = rows.filter(row => [row.id, row.title, row.location, names.get(Number(row.organizerId))?.nickname]
+        .some(value => String(value || '').toLowerCase().includes(pagination.keyword)));
+    }
+    const page = paginate(rows.sort((a, b) => Number(b.id) - Number(a.id)), pagination.page, pagination.pageSize);
+    const context = await eventViewContext(page.list);
+    return { ...page, list: await Promise.all(page.list.map(row => eventView(row, null, context))) };
   },
 
   async cancelSalon(eventId) {
@@ -5429,11 +6985,22 @@ const admin = {
     if (!SALON_REVIEW_STATUSES.has(reviewStatus)) {
       throw createHttpError('invalid salon review status');
     }
-    return eventView(await updateRow(C.salonEvents, event, {
-      status: reviewStatus,
-      reviewRemark: remark || '',
-      reviewedAt: nowIso()
-    }));
+    const reviewed = await db.runTransaction(async transaction => {
+      const ref = transaction.collection(C.salonEvents).doc(event._id);
+      const current = await salonTransactionDocument(transaction, C.salonEvents, event._id);
+      if (!current || Number(current.id) !== Number(event.id)) throw createHttpError('活动记录已变化，请刷新后重试', 409, 40940);
+      const allowed = reviewStatus === 'upcoming' ? current.status === 'pending'
+        : ['pending', 'upcoming'].includes(current.status);
+      if (!allowed) throw createHttpError('活动状态已变化，已取消或结束的活动不能重新审核开放', 409, 40940);
+      const startsAt = new Date(current.eventDate || '').getTime();
+      if (reviewStatus === 'upcoming' && (!Number.isFinite(startsAt) || startsAt <= Date.now())) {
+        throw createHttpError('活动时间已过或无效，不能审核开放', 409, 40940);
+      }
+      const patch = { status: reviewStatus, reviewRemark: remark || '', reviewedAt: nowIso(), updatedAt: nowIso() };
+      await ref.update({ data: patch });
+      return { ...current, ...patch };
+    });
+    return eventView(reviewed);
   }
 };
 
@@ -5500,7 +7067,7 @@ async function ensureSeed() {
   return seedReady;
 }
 
-exports.main = async (event = {}) => {
+exports.main = async (event = {}, context = {}) => {
   try {
     const method = String(event.method || 'GET').toUpperCase();
     const path = String(event.path || '/');
@@ -5509,8 +7076,27 @@ exports.main = async (event = {}) => {
 
     if (method === 'GET' && path === '/health') return ok({ status: 'ok' });
 
-    await ensureCollectionsForPath(path);
-    await ensureSeed();
+    // These read-only routes bypass collection/seed initialization entirely.
+    if (path === '/member/orders' || path.startsWith('/member/orders/')) {
+      const userId = await memberOrders.authorize(apiToken);
+      if (method !== 'GET') throw memberOrderUnavailable();
+      if (path === '/member/orders') return ok(await memberOrders.list(userId, data));
+      const orderMatch = /^\/member\/orders\/([a-zA-Z0-9_-]+)$/.exec(path);
+      if (!orderMatch) throw memberOrderUnavailable();
+      return ok(await memberOrders.detail(userId, orderMatch[1]));
+    }
+
+    // 云开发消息推送（虚拟支付发货/退款通知）不是 API 请求，直接接管。
+    if (event && event.MsgType === 'event' && typeof event.Event === 'string' && event.Event.startsWith('xpay_')) {
+      const requestId = context && typeof context.request_id === 'string'
+        && /^[a-zA-Z0-9_-]{1,128}$/.test(context.request_id) ? context.request_id : '';
+      return membership.handleVirtualPaymentPush(event, requestId);
+    }
+
+    if (path !== '/user/admin-entry' && path !== '/user/admin/operations') {
+      await ensureCollectionsForPath(path);
+      await ensureSeed();
+    }
     if (method === 'POST' && path === '/auth/wx-login') return ok(await auth.wxLogin(data));
     if (method === 'POST' && path === '/auth/member-claim/preview') {
       return ok(await auth.previewMemberIdentityClaim(data.token));
@@ -5528,9 +7114,16 @@ exports.main = async (event = {}) => {
     if (method === 'POST' && path === '/internal/payment-orders/close') {
       return ok(await membership.closePayment(data));
     }
+    if (method === 'POST' && path === '/internal/payment-orders/refund') {
+      return ok(await membership.refundPayment(data));
+    }
 
     if (path.startsWith('/admin/')) {
       const adminSession = requireAdmin(apiToken);
+      const creditRestoreMatch = path.match(/^\/admin\/matchmaking\/requests\/(request_[a-f0-9]{32})\/restore$/);
+      if (method === 'POST' && creditRestoreMatch) {
+        return ok(await vipMembership.restoreCredit(creditRestoreMatch[1], data, 'admin'));
+      }
       if (path.startsWith('/admin/member-certifications')) requireCertificationAdminAccess(adminSession);
       if (method === 'GET' && path === '/admin/member-certifications') {
         return ok(await admin.listMemberCertifications(data));
@@ -5568,6 +7161,21 @@ exports.main = async (event = {}) => {
     }
 
     const session = await requireUser(apiToken);
+    if (method === 'GET' && path === '/user/admin-entry') {
+      const user = await getById(C.users, session.userId);
+      return ok(miniprogramAdminEntry(user, session, process.env));
+    }
+    if (method === 'POST' && path === '/user/admin/operations') {
+      const user = await getById(C.users, session.userId);
+      const { authorizeNativeAdmin, executeNativeAdmin } = require('./native-admin.bundle');
+      const actor = authorizeNativeAdmin(user, session, process.env);
+      const result = await executeNativeAdmin(data, actor);
+      return { code: 0, message: 'success', data: result.data, requestId: result.requestId };
+    }
+    if (path.startsWith('/member/vip/') || path.startsWith('/member/matchmaking/')) {
+      const result = await vipMembership.handleRoute(session.userId, method, path, data);
+      if (result !== undefined) return ok(result);
+    }
 
     if (method === 'POST' && path === '/auth/wechat-phone') {
       return ok(await auth.bindWechatPhone(session.userId, data.code));
@@ -5605,6 +7213,8 @@ exports.main = async (event = {}) => {
       return ok({ ...publicUser(updatedUser), profile: sanitizeProfileCertification(stripInternal(await readableCertificationProfile(profile))) });
     }
 
+    if (method === 'GET' && path === '/matchmaker/activation') return ok(await paidMatchmakerOverview(session.userId));
+    if (method === 'POST' && path === '/matchmaker/activation/orders') return ok(await membership.createOrder(session.userId, { planCode: MATCHMAKER_LIFETIME_PLAN.planCode }));
     if (method === 'POST' && path === '/matchmaker/apply') return ok(await matchmaker.apply(session.userId, {
       ...data, certificationStatus: 0, level: 1, parentId: null, status: 1
     }));
@@ -5639,6 +7249,12 @@ exports.main = async (event = {}) => {
     if (method === 'GET' && path === '/member/gifts') return ok(await member.gifts());
     if (method === 'GET' && path === '/member/membership-plans') return ok(await membership.overview(session.userId));
     if (method === 'POST' && path === '/member/payment-orders') return ok(await membership.createOrder(session.userId, data));
+    if (method === 'POST' && path === '/member/payment-virtual/checkout') {
+      return ok(await membership.virtualCheckout(session.userId, data));
+    }
+    if (method === 'POST' && path === '/member/payment-virtual/query') {
+      return ok(await membership.virtualQuery(session.userId, data));
+    }
     const paymentOrderMatch = path.match(/^\/member\/payment-orders\/([a-zA-Z0-9_-]+)$/);
     if (paymentOrderMatch && method === 'GET') {
       return ok(await membership.getOrder(session.userId, paymentOrderMatch[1]));
@@ -5693,6 +7309,35 @@ exports.main = async (event = {}) => {
     throw createHttpError('not found', 404, 40400);
   } catch (err) {
     const failedPath = String(event.path || '/');
+    if (failedPath === '/user/admin/operations') {
+      const requestedCode = Number(err?.code);
+      const nativeCode = [40100, 40360, 40361, 42250, 42260, 40940, 40960, 40400, 40460, 50340, 50350, 50351, 50360].includes(requestedCode)
+        ? requestedCode : 50360;
+      const message = nativeCode === 40100 ? '登录状态已失效，请重新登录'
+        : [40360, 40361].includes(nativeCode) ? '当前账号没有管理权限'
+          : [42250, 42260].includes(nativeCode) ? '填写内容或操作参数无效，请检查后重试'
+            : [40940, 40960].includes(nativeCode) ? '记录已变化，请刷新详情后重新确认'
+              : [40400, 40460].includes(nativeCode) ? '记录不存在或操作未开放'
+                : '管理操作暂时无法完成，请稍后重试';
+      const requestId = crypto.randomUUID();
+      console.warn('native_admin_request_failed', { code: nativeCode, requestId });
+      return { code: nativeCode, message, requestId };
+    }
+    if (failedPath === '/user/admin-entry') {
+      const safeError = err?.status === 401 && err?.code === 40100
+        ? createHttpError('登录状态已失效，请重新登录', 401, 40100)
+        : err?.status === 404 && err?.code === 40400
+          ? createHttpError('not found', 404, 40400)
+          : createHttpError('管理入口暂不可用，请稍后重试', 503, 50340);
+      console.error('admin entry request failed', safeError.code);
+      return fail(safeError);
+    }
+    if (failedPath.startsWith('/member/vip/') || failedPath.startsWith('/member/matchmaking/')) {
+      const safeError = Number.isInteger(err?.status) && Number.isInteger(err?.code)
+        ? err : createHttpError('会员功能暂不可用，请稍后重试', 503, 50301);
+      console.error('vip request failed', safeError.code);
+      return fail(safeError);
+    }
     if (failedPath.startsWith('/user/certification') || failedPath.startsWith('/admin/member-certifications')) {
       const safeError = Number.isInteger(err?.status) && Number.isInteger(err?.code)
         ? err : createHttpError('认证操作暂不可用，请稍后重试', 503, 50340);

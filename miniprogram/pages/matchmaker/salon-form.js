@@ -106,7 +106,7 @@ Page({
             await salon_1.salonApi.create(form);
             if (!this.isCurrent(generation, scope))
                 return;
-            wx.showToast({ title: '已提交审核' });
+            wx.showToast({ title: '活动已发布' });
             wx.navigateBack();
         }
         catch (err) {

@@ -1,4 +1,6 @@
 'use strict';
+const { assertPurchaseContract, isDirectPurchaseOrder } = require('./purchase-contract-policy');
+const { MATCHMAKER_LIFETIME_PLAN, assertMatchmakerLifetimeProduct } = require('./matchmaker-activation-policy');
 
 const ACTIVE_MEMBER_TYPES = new Set(['paid', 'vip']);
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -21,6 +23,14 @@ function normalizeMembershipPlan(row = {}, { requireActive = false } = {}) {
   const title = String(row.title || '').trim();
   const amountFen = Number(row.amountFen);
   const durationDays = Number(row.durationDays);
+  const productType = row.productType === undefined ? '' : String(row.productType);
+  if (productType && !['vip', 'matchmaking', 'matchmaker'].includes(productType)) throw validationError('套餐商品类型无效');
+  const matchmaker = productType === 'matchmaker';
+  if (matchmaker || planCode === MATCHMAKER_LIFETIME_PLAN.planCode) assertMatchmakerLifetimeProduct(row);
+  const serviceCount = Number(row.serviceCount);
+  if (productType === 'matchmaking' && (!Number.isSafeInteger(serviceCount) || serviceCount <= 0 || serviceCount > 1000)) {
+    throw validationError('牵线次数无效');
+  }
   const active = row.active === true || row.active === 1 || row.active === '1' || row.active === 'true';
 
   if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(planCode)) throw validationError('套餐编码无效');
@@ -28,7 +38,7 @@ function normalizeMembershipPlan(row = {}, { requireActive = false } = {}) {
   if (!Number.isSafeInteger(amountFen) || amountFen <= 0 || amountFen > 100000000) {
     throw validationError('套餐金额无效');
   }
-  if (!Number.isSafeInteger(durationDays) || durationDays <= 0 || durationDays > 3650) {
+  if (!matchmaker && (!Number.isSafeInteger(durationDays) || durationDays <= 0 || durationDays > 3650)) {
     throw validationError('套餐有效期无效');
   }
   if (requireActive && !active) throw validationError('套餐未启用');
@@ -41,6 +51,8 @@ function normalizeMembershipPlan(row = {}, { requireActive = false } = {}) {
     amountFen,
     priceText: `¥${(amountFen / 100).toFixed(2)}`,
     durationDays,
+    ...(productType ? { productType, ...(matchmaker ? { lifetime: true, serviceCount: 0 }
+      : productType === 'matchmaking' ? { serviceCount } : { membershipTier: 'vip' }) } : {}),
     active,
     sortOrder: Number.isFinite(Number(row.sortOrder)) ? Number(row.sortOrder) : 0
   };
@@ -57,6 +69,7 @@ function paymentIntegrationConfig(env = {}) {
   const available = ready && configured;
   return {
     ...paymentOrderIdentity(),
+    provider: 'jsapi',
     available,
     reason: available ? '' : (ready ? 'integration_incomplete' : 'merchant_not_configured'),
     functionName: configured ? functionName : '',
@@ -65,11 +78,39 @@ function paymentIntegrationConfig(env = {}) {
   };
 }
 
+// VIP 与线上人工牵线的新购只开放小程序虚拟支付；配置缺项时关闭入口，
+// 不回退旧 JSAPI 通道。不同商品的启用开关由调用方分别传入。
+// 此处只读取公开配置形态，绝不向前端返回任何密钥。
+function paymentProviderConfig(env = {}) {
+  const offerId = String(env.VPAY_OFFER_ID || '').trim();
+  const envMode = String(env.VPAY_ENV ?? '').trim();
+  const validEnv = envMode === '0' || envMode === '1';
+  const appKey = String((envMode === '1' ? env.VPAY_SANDBOX_APP_KEY
+    : (envMode === '0' ? env.VPAY_APP_KEY : '')) || '').trim();
+  const appSecret = String(env.WX_APP_SECRET || '').trim();
+  const callbackToken = String(env.PAYMENT_CALLBACK_TOKEN || '').trim();
+  const virtualConfigured = validEnv && /^\d{6,20}$/.test(offerId) && appKey.length >= 16 && appKey.length <= 128
+    && appSecret.length >= 16 && appSecret.length <= 128 && callbackToken.length >= 32;
+  const ready = String(env.PAYMENT_INTEGRATION_READY || '').toLowerCase() === 'true';
+  const available = ready && virtualConfigured;
+  return {
+    ...paymentOrderIdentity(),
+    provider: 'virtual',
+    available,
+    reason: available ? '' : (ready ? 'integration_incomplete' : 'merchant_not_configured'),
+    functionName: '',
+    createPath: '',
+    queryPath: ''
+  };
+}
+
 function createPendingPaymentOrder({
   id,
   outTradeNo,
   userId,
   memberRecordId,
+  memberMatchmakerId,
+  fulfillmentContract,
   payerOpenid,
   plan,
   now = new Date().toISOString()
@@ -77,21 +118,34 @@ function createPendingPaymentOrder({
   const trustedPlan = normalizeMembershipPlan(plan, { requireActive: true });
   const orderNo = String(outTradeNo || '').trim();
   const openid = String(payerOpenid || '').trim();
-  if (!orderNo || !Number(userId) || !Number(memberRecordId) || !openid) {
+  const contract = { fulfillmentContract, productType: trustedPlan.productType };
+  assertPurchaseContract(contract);
+  if (trustedPlan.productType === 'matchmaker' && (!Number.isSafeInteger(Number(id)) || Number(id) <= 0
+    || !Number.isSafeInteger(Number(userId)) || Number(userId) <= 0
+    || !/^[a-zA-Z0-9_-]{1,96}$/.test(orderNo))) throw validationError('支付订单参数无效');
+  if (!orderNo || !Number(userId) || (!Number(memberRecordId) && trustedPlan.productType !== 'vip' && !isDirectPurchaseOrder(contract)) || !openid) {
     throw validationError('支付订单参数无效');
   }
   return {
     id: Number(id),
     outTradeNo: orderNo,
     userId: Number(userId),
+    ...(fulfillmentContract ? { fulfillmentContract } : {}),
     memberRecordId: Number(memberRecordId),
+    ...(Number.isSafeInteger(Number(memberMatchmakerId)) && Number(memberMatchmakerId) > 0
+      ? { memberMatchmakerId: Number(memberMatchmakerId) } : {}),
     payerOpenid: openid,
     ...paymentOrderIdentity(),
     planCode: trustedPlan.planCode,
     planTitle: trustedPlan.title,
     amountFen: trustedPlan.amountFen,
     durationDays: trustedPlan.durationDays,
+    ...(trustedPlan.productType ? { productType: trustedPlan.productType,
+      ...(trustedPlan.productType === 'matchmaker' ? { lifetime: true, serviceCount: 0 }
+        : trustedPlan.productType === 'matchmaking' ? { serviceCount: trustedPlan.serviceCount } : { membershipTier: 'vip' }) } : {}),
     status: 'pending',
+    fulfillmentStatus: '',
+    fulfillmentMessage: '',
     transactionId: '',
     paidAt: null,
     createdAt: now,
@@ -104,15 +158,22 @@ function validTime(value) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function isReusablePaymentOrder(order = {}, plan = {}, now = new Date().toISOString(), windowMs = 10 * 60 * 1000) {
+function isReusablePaymentOrder(order = {}, plan = {}) {
+  if (order.productType === 'matchmaker' || plan.productType === 'matchmaker'
+    || order.planCode === MATCHMAKER_LIFETIME_PLAN.planCode || plan.planCode === MATCHMAKER_LIFETIME_PLAN.planCode) {
+    try {
+      assertMatchmakerLifetimeProduct(order);
+      assertMatchmakerLifetimeProduct(plan);
+      assertPurchaseContract(order);
+    } catch { return false; }
+  }
   if (!['pending', 'confirming'].includes(String(order.status || ''))) return false;
   if (String(order.planCode || '') !== String(plan.planCode || '')) return false;
   if (Number(order.amountFen) !== Number(plan.amountFen)) return false;
   if (Number(order.durationDays) !== Number(plan.durationDays)) return false;
-  const createdAt = validTime(order.createdAt);
-  const referenceTime = validTime(now);
-  const age = referenceTime - createdAt;
-  return createdAt > 0 && referenceTime > 0 && age >= 0 && age <= windowMs;
+  // Only a trusted terminal result releases an unpaid order. An elapsed UI
+  // window cannot prove that an earlier cashier or delayed payment has ended.
+  return true;
 }
 
 function buildMembershipFulfillment({ member = {}, durationDays, now = new Date().toISOString() } = {}) {
@@ -141,6 +202,10 @@ function buildMembershipFulfillment({ member = {}, durationDays, now = new Date(
 }
 
 function paymentDetailsMatch(order = {}, confirmation = {}) {
+  if (order.productType === 'matchmaker' || order.planCode === MATCHMAKER_LIFETIME_PLAN.planCode) {
+    try { assertMatchmakerLifetimeProduct(order); assertPurchaseContract(order); }
+    catch { return false; }
+  }
   const identity = paymentOrderIdentity(order);
   const registered = paymentOrderIdentity();
   return Object.keys(registered).every(field => identity[field] === registered[field]
@@ -158,6 +223,8 @@ function paymentConfirmationMatches(order = {}, confirmation = {}) {
 }
 
 module.exports = {
+  MATCHMAKER_LIFETIME_PLAN,
+  assertMatchmakerLifetimeProduct,
   buildMembershipFulfillment,
   createPendingPaymentOrder,
   isReusablePaymentOrder,
@@ -165,5 +232,6 @@ module.exports = {
   paymentOrderIdentity,
   paymentDetailsMatch,
   paymentConfirmationMatches,
-  paymentIntegrationConfig
+  paymentIntegrationConfig,
+  paymentProviderConfig
 };

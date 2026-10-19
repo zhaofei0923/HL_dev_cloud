@@ -1,0 +1,31 @@
+<view class="page order-page">
+  <view class="order-intro">
+    <text class="order-eyebrow">会员服务</text>
+    <view class="order-heading-row"><text class="order-title">我的订单</text><text wx:if="{{initialized}}" class="order-count">共 {{total}} 笔</text></view>
+    <text class="order-subtitle">查看VIP会员与人工牵线服务的购买记录</text>
+  </view>
+
+  <view wx:if="{{loading && !list.length}}" class="order-empty" aria-role="status">正在读取订单…</view>
+  <view wx:if="{{errorText}}" class="order-notice" aria-role="alert">
+    <text>{{errorText}}</text><button class="order-text-button" bindtap="retry" disabled="{{loading || refreshing}}">重新读取</button>
+  </view>
+  <view wx:if="{{initialized && !list.length && !errorText && !loading}}" class="order-empty">
+    <text class="order-empty-title">暂无订单</text><text class="order-subtitle">购买会员或人工牵线服务后，可在这里查看记录。</text>
+  </view>
+
+  <view class="order-list">
+    <button wx:for="{{list}}" wx:key="outTradeNo" class="order-row" bindtap="openOrder" data-out-trade-no="{{item.outTradeNo}}" aria-label="{{item.planTitle}}，{{item.amountText}}，{{item.statusText}}，查看详情">
+      <view class="order-card-main">
+        <view class="order-card-copy"><text class="order-plan-title">{{item.planTitle}}</text><text class="order-term">{{item.termText}}</text></view>
+        <view class="order-card-summary"><text class="order-amount">{{item.amountText}}</text><text class="order-status {{item.statusTone}}">{{item.statusText}}</text></view>
+      </view>
+      <text class="order-result">{{item.resultText}}</text>
+      <view class="order-card-footer"><text>{{item.createdText}}</text><text class="order-detail-link">查看详情 ›</text></view>
+    </button>
+  </view>
+
+  <view wx:if="{{refreshing}}" class="order-progress" aria-role="status">正在更新订单…</view>
+  <view wx:if="{{moreError}}" class="order-notice" aria-role="alert"><text>{{moreError}}</text></view>
+  <button wx:if="{{hasMore && list.length}}" class="order-more" bindtap="loadMore" loading="{{loadingMore}}" disabled="{{loadingMore || loading || refreshing}}">{{loadingMore ? '正在读取' : (moreError ? '重试加载更多' : '加载更多')}}</button>
+  <text wx:if="{{initialized && list.length && !hasMore}}" class="order-end">已显示全部订单</text>
+</view>

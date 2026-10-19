@@ -8,12 +8,14 @@ const repoRoot = path.join(__dirname, '..');
 const legacyRole = String.fromCodePoint(0x7ea2, 0x5a18);
 const legacySeedSynonym = String.fromCodePoint(0x6708, 0x8001);
 const principal = String.fromCodePoint(0x4e3b, 0x7406, 0x4eba);
+// The user explicitly named the paid service product; role names still use principal.
+const exclusiveServiceLabel = `专属${legacyRole}`;
 
 function read(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
-test('tracked product text uses the principal terminology', () => {
+test('tracked role text uses principal terminology and permits the named exclusive service product', () => {
   const files = execFileSync('git', ['ls-files', '-z'], {
     cwd: repoRoot,
     encoding: 'utf8'
@@ -24,7 +26,7 @@ test('tracked product text uses the principal terminology', () => {
     const absolutePath = path.join(repoRoot, relativePath);
     const buffer = fs.readFileSync(absolutePath);
     if (buffer.includes(0)) return;
-    const source = buffer.toString('utf8');
+    const source = buffer.toString('utf8').replaceAll(exclusiveServiceLabel, '');
     if (source.includes(legacyRole) || source.includes(legacySeedSynonym)) {
       hits.push(relativePath);
     }

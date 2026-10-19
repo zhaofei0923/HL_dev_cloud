@@ -178,7 +178,7 @@
       </view>
       <text class="tag {{statusTagClass}}">{{statusText}}</text>
     </view>
-    <button wx:if="{{statusText === '已拒绝'}}" class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="applyAgain">重新提交申请</button>
+    <button class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="goActivation">查看开通方案</button>
     <button wx:if="{{refreshError || statusText === '待核验'}}" class="btn ghost approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="refreshGate">重新加载</button>
   </view>
   <bottom-nav wx:if="{{canOperate}}" role="matchmaker" active="members"></bottom-nav>

@@ -22,6 +22,7 @@ Page({
     data: {
         loading: false,
         registrationMode: false,
+        returnToOrders: false,
         eventId: '',
         loggedIn: false,
         checking: false,
@@ -37,7 +38,7 @@ Page({
     onLoad(options) {
         const registrationMode = String(options.register || '') === '1';
         const eventId = eventIdFrom(options.eventId);
-        this.setData({ registrationMode, eventId,
+        this.setData({ registrationMode, eventId, returnToOrders: !registrationMode && options.returnTo === 'orders',
             errorText: registrationMode && !eventId ? '活动链接不完整，请重新打开活动邀请。' : '' });
     },
     onShow() {
@@ -49,7 +50,7 @@ Page({
             return Promise.resolve();
         }
         if (scope) {
-            wx.switchTab({ url: '/pages/user/members' });
+            this.continueAfterLogin();
         }
         return Promise.resolve();
     },
@@ -57,6 +58,12 @@ Page({
         this._registrationUnloaded = true;
         this._registrationGeneration += 1;
         this._registrationPending = null;
+    },
+    continueAfterLogin() {
+        if (this.data.returnToOrders)
+            wx.redirectTo({ url: '/pages/user/orders' });
+        else
+            wx.switchTab({ url: '/pages/user/members' });
     },
     synchronizeRegistrationSession() {
         const scope = (0, page_session_1.pageSessionScope)();
@@ -140,7 +147,7 @@ Page({
                 await this.loadRegistration();
                 return;
             }
-            wx.switchTab({ url: '/pages/user/members' });
+            this.continueAfterLogin();
         }
         catch (err) {
             console.warn('login failed', err);

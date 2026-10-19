@@ -1,8 +1,9 @@
-import { memberApi, type HiddenMember } from '../../services/member'
+import { memberApi } from '../../services/member'
 import { apiErrorMessage } from '../../services/api'
 import { normalizeMemberProfile } from '../../utils/member-format'
 import { financialAssetRangeText } from '../../utils/member-certification'
 import { syncUserTabBar } from '../../utils/user-navigation'
+import { EDUCATION_OPTIONS, INCOME_OPTIONS } from '../../utils/profile-options'
 import {
   applyShowcaseInteraction,
   FavoriteQuota,
@@ -131,6 +132,7 @@ function normalizeMember(row: PublicShowcaseMember) {
     introPreview,
     educationVerified,
     assetVerified,
+    vipBadge: row.vipBadge === true,
     financialAssetText: assetVerified ? financialAssetRangeText(row.financialAssetRange) : '',
     isFavorite: !!viewerState.isFavorite,
     // Only separately reviewed credentials can display an approved badge.
@@ -194,14 +196,20 @@ Page({
   _showcaseQuery: null as ShowcaseQuery | null,
   _showcaseRequestGeneration: 0,
   _showcaseUnloaded: false,
+  _showcaseLifecycleGeneration: 0,
   _showcaseLoadKey: '',
   _showcaseLoadPromise: null as Promise<void> | null,
   _showcaseMorePromise: null as Promise<void> | null,
   _showcaseMoreGeneration: 0,
   _advanceAfterMore: false,
   _favoriteGeneration: 0,
+  _showcaseMutationSequence: 0,
   _popularityRefreshNeeded: false,
-  _hiddenGeneration: 0,
+  _vipScope: '',
+  _vipLoadedAt: 0,
+  _vipExpireAt: 0,
+  _vipRequestGeneration: 0,
+  _vipLoadPromise: null as Promise<boolean> | null,
 
   data: {
     category: 'recommend' as ShowcaseCategory,
@@ -213,16 +221,15 @@ Page({
     draftKeyword: '',
     draftCity: '',
     draftGender: '',
+    ageMin: '', ageMax: '', education: '', maritalStatus: '', incomeRange: '',
+    draftAgeMin: '', draftAgeMax: '', draftEducation: '', draftMaritalStatus: '', draftIncomeRange: '',
+    educationOptions: ['不限学历', ...EDUCATION_OPTIONS],
+    maritalOptions: ['不限婚况', '未婚', '离异', '丧偶'],
+    incomeOptions: ['不限收入', ...INCOME_OPTIONS],
+    isVip: false,
+    membershipKnown: false,
     filterChips: [] as Array<{ key: string; label: string }>,
     filterOpen: false,
-    hiddenPanelOpen: false,
-    hiddenMembers: [] as HiddenMember[],
-    hiddenLoading: false,
-    hiddenError: '',
-    hiddenPage: 0,
-    hiddenTotal: 0,
-    restoringUserId: 0,
-    undoHidden: null as { targetUserId: number; displayName: string } | null,
     list: [] as MemberView[],
     currentIndex: 0,
     currentMember: null as MemberView | null,
@@ -249,26 +256,40 @@ Page({
 
   onShow() {
     this._showcaseUnloaded = false
-    if (!this.sessionScope()) {
+    const scope = this.sessionScope()
+    if (!scope) {
       readShowcaseCache('', this.showcaseQuery())
       wx.redirectTo({ url: '/pages/index/index' })
       return
     }
     syncUserTabBar(this, 'members')
-    return this.load(false)
+    const vip = this.loadVip()
+    return Promise.all([vip, this.loadShowcaseWithCurrentAccess()]).then(() => undefined)
   },
 
-  onUnload() {
+  onHide() {
+    if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId) {
+      this.invalidateActionCache(this._showcaseScope)
+    }
+    // A confirmed action may already be cached while its visual effect is pending.
+    if (this.data.actionAnimating) this._showcaseLoadedAt = 0
     this._showcaseUnloaded = true
+    this._showcaseLifecycleGeneration += 1
     this._popularityRefreshNeeded = false
     this._favoriteGeneration += 1
-    this._hiddenGeneration += 1
+    this._vipRequestGeneration += 1
+    this._vipLoadPromise = null
     if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId) wx.hideLoading()
-    this.setData({ favoriteLoading: false })
+    this.setData({ favoriteLoading: false, hideLoading: false, sendingGiftId: '',
+      actionEffect: '', actionAnimating: false, loading: false, loadingMore: false })
     this.invalidateShowcaseLoad()
     this._showcaseMorePromise = null
     this._showcaseMoreGeneration += 1
     clearActionTimers()
+  },
+
+  onUnload() {
+    this.onHide()
   },
 
   sessionScope() {
@@ -280,6 +301,100 @@ Page({
     )
   },
 
+  isShowcasePageCurrent(scope: string, lifecycle: number) {
+    return !this._showcaseUnloaded && lifecycle === this._showcaseLifecycleGeneration && scope === this.sessionScope()
+  },
+
+  loadShowcaseWithCurrentAccess(refresh = false, isOwner: () => boolean = () => true): Promise<void> {
+    const scope = this.sessionScope()
+    const lifecycle = this._showcaseLifecycleGeneration
+    const isCurrent = () => !!scope && this.isShowcasePageCurrent(scope, lifecycle) && isOwner()
+    if (!isCurrent()) return Promise.resolve()
+    // Public recommendations do not depend on the separate VIP filter check.
+    if (this.data.category === 'recommend' && !this.hasAdvancedFilters()) return this.load(false, refresh)
+    const reading = this.loadVip()
+    const vipGeneration = this._vipRequestGeneration
+    return reading.then(() => {
+      if (isCurrent() && vipGeneration === this._vipRequestGeneration) return this.load(false, refresh)
+      return undefined
+    })
+  },
+
+  invalidateActionCache(scope: string) {
+    if (!scope || scope !== this.sessionScope()) return
+    SHOWCASE_CATEGORIES.forEach(category => invalidateShowcaseCategory(scope, category.id))
+    if (scope === this._showcaseScope) this._showcaseLoadedAt = 0
+  },
+
+  recoverActionRead(scope: string, mutationSequence: number) {
+    if (!scope || scope !== this.sessionScope()) return
+    this.invalidateActionCache(scope)
+    if (!this._showcaseUnloaded && mutationSequence === this._showcaseMutationSequence
+      && !this.data.favoriteLoading && !this.data.hideLoading && !this.data.sendingGiftId && !this.data.actionAnimating) {
+      void this.loadShowcaseWithCurrentAccess(true, () => mutationSequence === this._showcaseMutationSequence)
+    }
+  },
+
+  loadVip(force = false): Promise<boolean> {
+    const scope = this.sessionScope()
+    if (!scope || this._showcaseUnloaded) return Promise.resolve(false)
+    if (scope !== this._vipScope) {
+      this._vipRequestGeneration += 1
+      this._vipLoadPromise = null
+      this._vipLoadedAt = 0
+      this._vipExpireAt = 0
+      this.setData({ isVip: false, membershipKnown: false })
+    }
+    this._vipScope = scope
+    if (!force && this._vipLoadPromise) return this._vipLoadPromise
+    if (!force && this._vipLoadedAt > 0 && Date.now() - this._vipLoadedAt < SHOWCASE_CACHE_TTL_MS
+      && (!this.data.isVip || !this._vipExpireAt || Date.now() < this._vipExpireAt)) return Promise.resolve(this.data.isVip)
+    const generation = ++this._vipRequestGeneration
+    const isCurrent = () => !this._showcaseUnloaded && generation === this._vipRequestGeneration && scope === this.sessionScope()
+    const promise = Promise.resolve().then(async () => {
+      try {
+        const overview = await memberApi.vipOverview()
+        if (!isCurrent()) return false
+        const isVip = overview.isPremiumMember === true
+        this._vipExpireAt = overview.lifetime || overview.vipMembership?.lifetime ? 0
+          : new Date(overview.vipMembership?.expireAt || overview.expireAt || '').getTime() || 0
+        this._vipLoadedAt = Date.now()
+        this.setData({ isVip, membershipKnown: true })
+        if (!isVip && (this.data.category !== 'recommend' || this.hasAdvancedFilters())) this.resetVipFilters()
+        return isVip
+      } catch (err) {
+        if (isCurrent()) {
+          this._vipLoadedAt = 0
+          this._vipExpireAt = 0
+          this.setData({ isVip: false, membershipKnown: false })
+          if (this.data.category !== 'recommend' || this.hasAdvancedFilters()) this.resetVipFilters()
+          console.warn('load VIP access failed', err)
+        }
+        return false
+      } finally {
+        if (generation === this._vipRequestGeneration) this._vipLoadPromise = null
+      }
+    })
+    this._vipLoadPromise = promise
+    return promise
+  },
+
+  goMembership() {
+    wx.navigateTo({ url: '/pages/user/membership' })
+  },
+
+  resetVipFilters() {
+    this.invalidateShowcaseLoad()
+    this.setData({ category: 'recommend', categoryDescription: '', ageMin: '', ageMax: '', education: '', maritalStatus: '', incomeRange: '',
+      draftAgeMin: '', draftAgeMax: '', draftEducation: '', draftMaritalStatus: '', draftIncomeRange: '', list: [], ...selectionState([], 0) })
+    this.updateFilterChips()
+    void this.load(true)
+  },
+
+  hasAdvancedFilters() {
+    return !!(this.data.ageMin || this.data.ageMax || this.data.education || this.data.maritalStatus || this.data.incomeRange)
+  },
+
   showcaseQuery(): ShowcaseQuery {
     return {
       page: 1,
@@ -287,7 +402,11 @@ Page({
       keyword: this.data.keyword,
       city: this.data.city,
       gender: this.data.gender,
-      category: this.data.category
+      category: this.data.category,
+      ...(this.data.ageMin ? { ageMin: this.data.ageMin } : {}), ...(this.data.ageMax ? { ageMax: this.data.ageMax } : {}),
+      ...(this.data.education ? { education: this.data.education } : {}),
+      ...(this.data.maritalStatus ? { maritalStatus: this.data.maritalStatus } : {}),
+      ...(this.data.incomeRange ? { incomeRange: this.data.incomeRange } : {})
     }
   },
 
@@ -336,7 +455,6 @@ Page({
       clearActionTimers()
       this.setData({ list: [], ...selectionState([], 0), total: 0, showcasePage: 1, hasMore: false,
         favoriteQuota: null, giftPanelOpen: false, favoriteLoading: false, actionEffect: '', actionAnimating: false,
-        hiddenPanelOpen: false, hiddenMembers: [], undoHidden: null, restoringUserId: 0, hiddenLoading: false,
         hideLoading: false, sendingGiftId: '' })
     }
     this.setData({ loading: force !== false || !hasSnapshot, loadingMore: false, paginationError: '' })
@@ -401,7 +519,7 @@ Page({
           emptyNote: '暂时无法加载会员，请稍后重试。'
         })
       } finally {
-        if (this._showcaseRequestGeneration === generation && !this._showcaseUnloaded) {
+        if (isCurrent()) {
           this.setData({ loading: false })
           this._showcaseLoadPromise = null
           this._showcaseLoadKey = ''
@@ -507,9 +625,22 @@ Page({
     this.setData({ draftKeyword: e.detail.value })
   },
 
-  switchCategory(e: WechatMiniprogram.TouchEvent) {
+  async switchCategory(e: WechatMiniprogram.TouchEvent) {
+    const scope = this.sessionScope()
+    const lifecycle = this._showcaseLifecycleGeneration
+    if (!scope || !this.isShowcasePageCurrent(scope, lifecycle)) return
     const category = SHOWCASE_CATEGORIES.find(item => item.id === e.currentTarget.dataset.category)
     if (!category || category.id === this.data.category) return Promise.resolve()
+    if (category.id !== 'recommend') {
+      const reading = this.loadVip()
+      const vipGeneration = this._vipRequestGeneration
+      const allowed = await reading
+      if (!this.isShowcasePageCurrent(scope, lifecycle) || vipGeneration !== this._vipRequestGeneration) return
+      if (!allowed) {
+        this.goMembership()
+        return
+      }
+    }
     if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId || this.data.actionAnimating) return Promise.resolve()
     this.rememberSelection()
     this.invalidateShowcaseLoad()
@@ -538,17 +669,56 @@ Page({
   toggleFilter() {
     if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId || this.data.actionAnimating) return
     this.setData({ filterOpen: !this.data.filterOpen,
-      draftKeyword: this.data.keyword, draftCity: this.data.city, draftGender: this.data.gender })
+      draftKeyword: this.data.keyword, draftCity: this.data.city, draftGender: this.data.gender,
+      draftAgeMin: this.data.ageMin, draftAgeMax: this.data.ageMax, draftEducation: this.data.education,
+      draftMaritalStatus: this.data.maritalStatus, draftIncomeRange: this.data.incomeRange })
+    void this.loadVip()
+  },
+
+  onAdvancedInput(e: WechatMiniprogram.Input) {
+    const field = String(e.currentTarget.dataset.field || '')
+    if (!this.data.isVip || !['draftAgeMin', 'draftAgeMax'].includes(field)) return
+    this.setData({ [field]: e.detail.value.replace(/\D/g, '').slice(0, 2) })
+  },
+
+  onAdvancedPicker(e: WechatMiniprogram.PickerChange) {
+    if (!this.data.isVip) return this.goMembership()
+    const field = String(e.currentTarget.dataset.field || '')
+    const options = field === 'draftEducation' ? this.data.educationOptions
+      : field === 'draftMaritalStatus' ? this.data.maritalOptions
+      : field === 'draftIncomeRange' ? this.data.incomeOptions : []
+    const index = Number(e.detail.value)
+    if (!options.length || !Number.isInteger(index) || index < 0 || index >= options.length) return
+    this.setData({ [field]: index === 0 ? '' : options[index] })
   },
 
   hasFilters() {
-    return !!(this.data.keyword || this.data.city || this.data.gender)
+    return !!(this.data.keyword || this.data.city || this.data.gender || this.hasAdvancedFilters())
   },
 
-  search() {
+  async search() {
+    const scope = this.sessionScope()
+    const lifecycle = this._showcaseLifecycleGeneration
+    if (!scope || !this.isShowcasePageCurrent(scope, lifecycle)) return
+    const advanced = !!(this.data.draftAgeMin || this.data.draftAgeMax || this.data.draftEducation || this.data.draftMaritalStatus || this.data.draftIncomeRange)
+    if (advanced) {
+      const reading = this.loadVip(true)
+      const vipGeneration = this._vipRequestGeneration
+      const allowed = await reading
+      if (!this.isShowcasePageCurrent(scope, lifecycle) || vipGeneration !== this._vipRequestGeneration) return
+      if (!allowed) return this.goMembership()
+    }
+    const min = Number(this.data.draftAgeMin), max = Number(this.data.draftAgeMax)
+    if ((this.data.draftAgeMin && min < 18) || (this.data.draftAgeMax && max < 18) || (min && max && min > max)) {
+      wx.showToast({ title: '请填写18岁以上的有效年龄范围', icon: 'none' })
+      return
+    }
     this.invalidateShowcaseLoad()
     this.setData({ keyword: this.data.draftKeyword.trim(), city: this.data.draftCity.trim(),
-      gender: this.data.draftGender, filterOpen: false })
+      gender: this.data.draftGender, filterOpen: false,
+      ageMin: this.data.isVip ? this.data.draftAgeMin : '', ageMax: this.data.isVip ? this.data.draftAgeMax : '',
+      education: this.data.isVip ? this.data.draftEducation : '', maritalStatus: this.data.isVip ? this.data.draftMaritalStatus : '',
+      incomeRange: this.data.isVip ? this.data.draftIncomeRange : '' })
     this.updateFilterChips()
     return this.load(true)
   },
@@ -557,13 +727,17 @@ Page({
     this.setData({ filterChips: [
       { key: 'keyword', label: this.data.keyword },
       { key: 'city', label: this.data.city ? `城市：${this.data.city}` : '' },
-      { key: 'gender', label: this.data.gender === '1' ? '男士' : this.data.gender === '2' ? '女士' : '' }
+      { key: 'gender', label: this.data.gender === '1' ? '男士' : this.data.gender === '2' ? '女士' : '' },
+      { key: 'ageMin', label: this.data.ageMin ? `最低${this.data.ageMin}岁` : '' },
+      { key: 'ageMax', label: this.data.ageMax ? `最高${this.data.ageMax}岁` : '' },
+      { key: 'education', label: this.data.education }, { key: 'maritalStatus', label: this.data.maritalStatus },
+      { key: 'incomeRange', label: this.data.incomeRange ? `年收入${this.data.incomeRange}` : '' }
     ].filter(item => item.label) })
   },
 
   removeFilter(e: WechatMiniprogram.TouchEvent) {
     const key = String(e.currentTarget.dataset.key || '')
-    if (!['keyword', 'city', 'gender'].includes(key) || this.isCardBusy(false)) return
+    if (!['keyword', 'city', 'gender', 'ageMin', 'ageMax', 'education', 'maritalStatus', 'incomeRange'].includes(key) || this.isCardBusy(false)) return
     this.invalidateShowcaseLoad()
     this.setData({ [key]: '' })
     this.updateFilterChips()
@@ -571,7 +745,7 @@ Page({
   },
 
   clearKeyword() {
-    this.setData({ keyword: '', city: '', gender: '', filterOpen: false })
+    this.setData({ keyword: '', city: '', gender: '', ageMin: '', ageMax: '', education: '', maritalStatus: '', incomeRange: '', filterOpen: false })
     this.updateFilterChips()
     return this.load(true)
   },
@@ -590,7 +764,7 @@ Page({
     }
     return this.data.loading || this.data.favoriteLoading || this.data.hideLoading
       || !!this.data.sendingGiftId || this.data.actionAnimating || this.data.giftPanelOpen
-      || this.data.filterOpen || this.data.hiddenPanelOpen || !!this.data.restoringUserId
+      || this.data.filterOpen
   },
 
   nextMember() {
@@ -688,8 +862,14 @@ Page({
 
   runActionEffect(type: ActionEffect, finish: () => void) {
     clearActionTimers()
+    const scope = this.sessionScope()
+    const generation = this._showcaseRequestGeneration
+    const actionGeneration = this._favoriteGeneration
+    const isCurrent = () => !this._showcaseUnloaded && scope === this.sessionScope()
+      && generation === this._showcaseRequestGeneration && actionGeneration === this._favoriteGeneration
     this.setData({ actionEffect: type, actionAnimating: true })
     actionAdvanceTimer = setTimeout(() => {
+      if (!isCurrent()) return
       if (actionEffectTimer !== null) {
         clearTimeout(actionEffectTimer)
         actionEffectTimer = null
@@ -701,9 +881,29 @@ Page({
       actionAdvanceTimer = null
     }, 460)
     actionEffectTimer = setTimeout(() => {
+      if (!isCurrent()) return
       this.setData({ actionEffect: '' })
       actionEffectTimer = null
     }, 640)
+  },
+
+  updateFavoriteCard(targetUserId: number, active: boolean, index: number, extraState: Record<string, unknown> = {}) {
+    const patch: Record<string, unknown> = { ...extraState }
+    this.data.list.forEach((item, rowIndex) => {
+      if (Number(item.userId) === targetUserId && item.isFavorite !== active) {
+        patch[`list[${rowIndex}].isFavorite`] = active
+      }
+    })
+    const selected = selectionState(this.data.list, index)
+    if (selected.currentIndex !== this.data.currentIndex) patch.currentIndex = selected.currentIndex
+    if (selected.positionText !== this.data.positionText) patch.positionText = selected.positionText
+    const member = selected.currentMember
+    if (member?.id !== this.data.currentMember?.id || member?.userId !== this.data.currentMember?.userId) {
+      patch.currentMember = member && Number(member.userId) === targetUserId ? { ...member, isFavorite: active } : member
+    } else if (member && Number(member.userId) === targetUserId && this.data.currentMember?.isFavorite !== active) {
+      patch['currentMember.isFavorite'] = active
+    }
+    if (Object.keys(patch).length) this.setData(patch)
   },
 
   setCurrentFavoriteAndStay(
@@ -721,10 +921,7 @@ Page({
       this.setData({ giftPanelOpen: false })
     }
     this.runActionEffect(effect, () => {
-      const currentList = this.data.list.map(item => Number(item.userId) === targetUserId ? { ...item, isFavorite: active } : item)
-      this.setData({
-        list: currentList,
-        ...selectionState(currentList, currentIndex),
+      this.updateFavoriteCard(targetUserId, active, currentIndex, {
         ...extraState,
         giftPanelOpen: false
       })
@@ -745,19 +942,19 @@ Page({
     if (!scope) return
     const active = !member.isFavorite
     const generation = ++this._favoriteGeneration
+    const mutationSequence = ++this._showcaseMutationSequence
     const isCurrent = () => !this._showcaseUnloaded && generation === this._favoriteGeneration && this.sessionScope() === scope
     this.setData({ favoriteLoading: true })
     wx.showLoading({ title: active ? '正在送出爱心' : '正在撤回爱心', mask: true })
     try {
       const result = record(await memberApi.interact({ ...target, actionType: 'favorite', active }, false))
-      if (!isCurrent()) return
+      if (!isCurrent()) { this.recoverActionRead(scope, mutationSequence); return }
       wx.hideLoading()
       const favoriteQuota = normalizeFavoriteQuota(result && result.favoriteQuota)
       const viewerState = record(result.viewerState)
       const savedActive = typeof viewerState.isFavorite === 'boolean' ? viewerState.isFavorite : active
       this.cacheInteraction(target.targetUserId, 'favorite', favoriteQuota, savedActive)
-      const list = this.data.list.map(item => Number(item.userId) === target.targetUserId ? { ...item, isFavorite: savedActive } : item)
-      this.setData({ list, ...selectionState(list, this.data.currentIndex), ...(favoriteQuota ? { favoriteQuota } : {}) })
+      this.updateFavoriteCard(target.targetUserId, savedActive, this.data.currentIndex, favoriteQuota ? { favoriteQuota } : {})
       this.rememberSelection()
       if (savedActive !== active) {
         wx.showToast({ title: active ? '爱心未送出，请重试' : '爱心未撤回，请重试', icon: 'none' })
@@ -771,7 +968,7 @@ Page({
         icon: 'none'
       })
     } catch (err) {
-      if (!isCurrent()) return
+      if (!isCurrent()) { this.recoverActionRead(scope, mutationSequence); return }
       wx.hideLoading()
       console.warn('toggle favorite failed', err)
       wx.showToast({ title: apiErrorMessage(err) || (active ? '爱心未送出，请重试' : '爱心撤回失败，请重试'), icon: 'none', duration: 3000 })
@@ -794,12 +991,14 @@ Page({
 
     const currentIndex = this.data.currentIndex
     const scope = this.sessionScope()
-    const isCurrent = () => !this._showcaseUnloaded && this.sessionScope() === scope
+    const generation = ++this._favoriteGeneration
+    const mutationSequence = ++this._showcaseMutationSequence
+    const isCurrent = () => !this._showcaseUnloaded && generation === this._favoriteGeneration && this.sessionScope() === scope
     this.setData({ hideLoading: true })
     wx.showLoading({ title: '正在处理', mask: true })
     try {
       await memberApi.interact({ ...target, actionType: 'hide', active: true }, false)
-      if (!isCurrent()) return
+      if (!isCurrent()) { this.recoverActionRead(scope, mutationSequence); return }
       wx.hideLoading()
       this.cacheInteraction(target.targetUserId, 'hide')
       const list = this.data.list.filter(item => Number(item.userId) !== target.targetUserId)
@@ -816,79 +1015,18 @@ Page({
           total,
           hasMore,
           countText: countText(total),
-          giftPanelOpen: false,
-          undoHidden: { targetUserId: target.targetUserId, displayName: member!.displayName }
+          giftPanelOpen: false
         })
         if (waitingForMore) this._advanceAfterMore = true
         this.prefetchMore()
       })
     } catch (err) {
-      if (!isCurrent()) return
+      if (!isCurrent()) { this.recoverActionRead(scope, mutationSequence); return }
       wx.hideLoading()
       console.warn('hide member failed', err)
       wx.showToast({ title: apiErrorMessage(err) || '操作未完成，请重试', icon: 'none', duration: 3000 })
     } finally {
       if (isCurrent()) this.setData({ hideLoading: false })
-    }
-  },
-
-  async openHiddenPanel() {
-    this.setData({ filterOpen: false, hiddenPanelOpen: true, hiddenMembers: [], hiddenPage: 0, hiddenTotal: 0 })
-    await this.loadHidden(true)
-  },
-
-  closeHiddenPanel() {
-    this._hiddenGeneration += 1
-    this.setData({ hiddenPanelOpen: false, hiddenLoading: false })
-  },
-
-  async loadHidden(reset = false) {
-    if (this.data.hiddenLoading) return
-    const scope = this.sessionScope()
-    const generation = ++this._hiddenGeneration
-    const isCurrent = () => !this._showcaseUnloaded && scope === this.sessionScope() && generation === this._hiddenGeneration
-    const page = reset ? 1 : this.data.hiddenPage + 1
-    this.setData({ hiddenLoading: true, hiddenError: '' })
-    try {
-      const result = await memberApi.hidden(page)
-      if (!isCurrent()) return
-      this.setData({ hiddenMembers: reset ? result.list : [...this.data.hiddenMembers, ...result.list],
-        hiddenPage: result.page, hiddenTotal: result.total })
-    } catch (err) {
-      if (isCurrent()) this.setData({ hiddenError: '暂时无法加载，请重试。' })
-    } finally {
-      if (isCurrent()) this.setData({ hiddenLoading: false })
-    }
-  },
-
-  loadMoreHidden() { return this.loadHidden(this.data.hiddenPage === 0) },
-
-  undoHide() {
-    if (this.data.undoHidden) return this.restoreHiddenUser(this.data.undoHidden.targetUserId)
-  },
-
-  restoreHidden(e: WechatMiniprogram.TouchEvent) {
-    return this.restoreHiddenUser(Number(e.currentTarget.dataset.userId))
-  },
-
-  async restoreHiddenUser(targetUserId: number) {
-    if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0 || this.data.restoringUserId || this.data.actionAnimating) return
-    const scope = this.sessionScope()
-    const isCurrent = () => !this._showcaseUnloaded && scope === this.sessionScope()
-    this.setData({ restoringUserId: targetUserId })
-    try {
-      const result = record(await memberApi.interact({ targetUserId, actionType: 'hide', active: false }, false))
-      if (!isCurrent()) return
-      if (record(result.viewerState).isHidden !== false) throw new Error('服务尚未确认恢复')
-      this.cacheInteraction(targetUserId, 'hide', null, false)
-      this.setData({ undoHidden: this.data.undoHidden?.targetUserId === targetUserId ? null : this.data.undoHidden })
-      if (this.data.hiddenPanelOpen) await this.loadHidden(true)
-      await this.load(false)
-      if (isCurrent()) wx.showToast({ title: '已恢复推荐，仍按分类条件展示', icon: 'none' })
-    } catch (err) {
-      if (isCurrent()) wx.showToast({ title: '恢复未完成，请重试', icon: 'none' })
-    } finally {
-      if (isCurrent()) this.setData({ restoringUserId: 0 })
     }
   },
 
@@ -931,12 +1069,14 @@ Page({
 
     const currentIndex = this.data.currentIndex
     const scope = this.sessionScope()
-    const isCurrent = () => !this._showcaseUnloaded && this.sessionScope() === scope
+    const generation = ++this._favoriteGeneration
+    const mutationSequence = ++this._showcaseMutationSequence
+    const isCurrent = () => !this._showcaseUnloaded && generation === this._favoriteGeneration && this.sessionScope() === scope
     this.setData({ sendingGiftId: giftId })
     wx.showLoading({ title: '正在赠送礼物', mask: true })
     try {
       const result = record(await memberApi.sendGift({ ...target, giftId }, false))
-      if (!isCurrent()) return
+      if (!isCurrent()) { this.recoverActionRead(scope, mutationSequence); return }
       wx.hideLoading()
       const favoriteResult = record(result.favorite)
       const favoriteQuota = normalizeFavoriteQuota(favoriteResult.favoriteQuota)
@@ -953,7 +1093,7 @@ Page({
         icon: favoriteResult && favoriteResult.mutualFavorite && !favoriteResult.canChat ? 'none' : 'success'
       })
     } catch (err) {
-      if (!isCurrent()) return
+      if (!isCurrent()) { this.recoverActionRead(scope, mutationSequence); return }
       wx.hideLoading()
       console.warn('send gift failed', err)
       wx.showToast({ title: apiErrorMessage(err) || '礼物未送出，请重试', icon: 'none', duration: 3000 })

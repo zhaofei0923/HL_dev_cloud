@@ -10,7 +10,7 @@ const PUBLIC_FIELDS = [
     'isVerified', 'memberType', 'identityStatus', 'identityStatusText',
     'profileCompletion', 'displayStatus', 'lastRecommendStatus',
     'identityVerified', 'educationVerified', 'verifiedEducation', 'vehicleVerified', 'propertyVerified',
-    'assetVerified', 'financialAssetRange'
+    'assetVerified', 'financialAssetRange', 'vipBadge', 'membershipTier'
 ];
 const snapshots = new Map();
 const pendingReads = new Map();
@@ -44,7 +44,8 @@ function showcaseSessionScope(token, user, env) {
 }
 exports.showcaseSessionScope = showcaseSessionScope;
 function showcaseQueryKey(query) {
-    return JSON.stringify([query.page, query.pageSize, query.keyword, query.city, query.gender, query.category || 'recommend']);
+    return JSON.stringify([query.page, query.pageSize, query.keyword, query.city, query.gender, query.category || 'recommend',
+        query.ageMin || '', query.ageMax || '', query.education || '', query.maritalStatus || '', query.incomeRange || '']);
 }
 exports.showcaseQueryKey = showcaseQueryKey;
 function synchronizeScope(scope) {

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const ts = require('typescript');
 
 const apiSource = fs.readFileSync(
   path.join(__dirname, '..', 'cloudfunctions', 'hlApi', 'index.js'),
@@ -50,13 +51,36 @@ test('internal checkout and confirmation require the server callback token', () 
   assert.match(apiSource, /orderRef\.update\(\{ data: orderPatch \}\)/);
 });
 
-test('mini program sends only the server order number to the payment function', () => {
+test('mini program payment requests send order identity and login code without client prices', () => {
   const source = frontendSource();
-  const callStart = source.indexOf('callHTTPFunction({');
-  const requestStart = source.indexOf('wx.requestPayment', callStart);
-  assert.ok(callStart >= 0 && requestStart > callStart);
-  const checkoutCall = source.slice(callStart, requestStart);
-  assert.match(checkoutCall, /outTradeNo/);
-  assert.doesNotMatch(checkoutCall, /amountFen|price|fee/);
+  function callIn(text, name, firstArgument) {
+    const parsed = ts.createSourceFile('payment.ts', text, ts.ScriptTarget.Latest, true);
+    let found;
+    function visit(node) {
+      if (ts.isCallExpression(node) && node.expression.getText(parsed) === name
+        && (firstArgument === undefined || (ts.isStringLiteral(node.arguments[0])
+          && node.arguments[0].text === firstArgument))) found = node;
+      ts.forEachChild(node, visit);
+    }
+    visit(parsed);
+    assert.ok(found, `Expected payment request ${name}`);
+    return found;
+  }
+  function dataFields(options) {
+    assert.ok(ts.isObjectLiteralExpression(options));
+    const data = options.properties.find(property => property.name && property.name.getText() === 'data');
+    assert.ok(data && ts.isPropertyAssignment(data) && ts.isObjectLiteralExpression(data.initializer));
+    return data.initializer.properties.map(property => {
+      assert.ok(ts.isShorthandPropertyAssignment(property), 'Payment data must use the trusted identity arguments');
+      return property.name.text;
+    }).sort();
+  }
+  const legacy = callIn(source, 'cloud.callHTTPFunction');
+  assert.deepEqual(dataFields(legacy.arguments[0]), ['outTradeNo']);
+  const service = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'services', 'member.ts'), 'utf8');
+  const virtual = callIn(service, 'request', '/member/payment-virtual/checkout');
+  assert.deepEqual(dataFields(virtual.arguments[1]), ['loginCode', 'outTradeNo']);
+  const query = callIn(service, 'request', '/member/payment-virtual/query');
+  assert.deepEqual(dataFields(query.arguments[1]), ['outTradeNo']);
   assert.match(source, /pollPaymentOrder/);
 });

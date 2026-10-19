@@ -94,7 +94,11 @@
             <button class="certification-remove" data-id="{{item.id}}" data-local-id="{{item.localId}}" disabled="{{pending || submitting || uploading}}" bindtap="removeMaterial" aria-label="移除材料{{index + 1}}">移除</button>
           </view>
         </view>
-        <button wx:if="{{requiresMaterials}}" class="btn secondary certification-upload" loading="{{uploading}}" disabled="{{pending || submitting || uploading || uploadedMaterials.length >= 3}}" bindtap="chooseMaterials">{{uploading ? '正在上传材料' : '添加图片或 PDF'}}</button>
+        <block wx:if="{{requiresMaterials}}">
+          <button class="btn secondary certification-upload" data-source="image" loading="{{uploading}}" disabled="{{pending || submitting || choosingMaterials || uploading || uploadedMaterials.length >= 3}}" bindtap="chooseMaterials">{{uploading ? '正在上传材料' : '上传图片'}}</button>
+          <button class="btn secondary certification-upload" data-source="pdf" disabled="{{pending || submitting || choosingMaterials || uploading || uploadedMaterials.length >= 3}}" bindtap="chooseMaterials">上传 PDF</button>
+          <text class="certification-input-note">PDF 请先发送到微信聊天，再从聊天文件中选择。</text>
+        </block>
         <text wx:if="{{uploadError}}" class="certification-form-error">{{uploadError}}</text>
       </view>
       <checkbox-group bindchange="onConsentChange">

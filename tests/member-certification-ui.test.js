@@ -30,6 +30,7 @@ function certificationRuntime(kind = 'education', overrides = {}) {
   const staged = new Map();
   const materialOverrides = overrides.memberApi || {};
   const instance = runtime('pages/user/certification.js', {
+    source: true,
     ...overrides,
     memberApi: {
       certifications: async () => overview(),
@@ -607,14 +608,15 @@ test('lost upload response is reconciled to the original staged handle before th
 
 test('failed staging recovery blocks extra uploads and consent until recovery succeeds', async () => {
   let reads = 0, choices = 0;
-  const { page } = certificationRuntime('assets', {
-    wx: { showActionSheet: () => { choices += 1; } },
+  const { page, calls } = certificationRuntime('assets', {
+    wx: { chooseMedia: () => { choices += 1; } },
     memberApi: { stagingCertificationMaterials: async () => { if (++reads === 1) throw new Error('offline'); return { materials: [] }; } }
   });
   await page.onShow();
   assert.match(page.data.loadError, /暂存材料读取失败/);
   page.chooseMaterials(); page.onConsentChange(consent(true));
   assert.equal(choices, 0); assert.equal(page.data.consentConfirmed, false);
+  assert.equal(calls.toasts.at(-1), '请先重新读取认证状态');
   await page.retryLoad();
   page.chooseMaterials(); assert.equal(choices, 1);
 });
@@ -690,18 +692,120 @@ test('a late upload after leaving remains recoverable and cannot update a dispos
 
 test('native file selection from an old account cannot start uploads for the new account', async () => {
   let selection;
-  let imageChoices = 0;
+  let uploads = 0;
   const { page, session } = certificationRuntime('identity', { wx: {
-    showActionSheet: options => { selection = options; },
-    chooseMedia: () => { imageChoices += 1; }
-  } });
+    chooseMedia: options => { selection = options; }
+  }, memberApi: { uploadCertificationMaterial: async () => { uploads += 1; return {}; } } });
   await page.onShow();
   page.chooseMaterials();
   session.token = 'new-material-account';
   session.user = { id: 2 };
   await page.onShow();
-  selection.success({ tapIndex: 0 });
-  assert.equal(imageChoices, 0);
+  selection.success({ tempFiles: [{ tempFilePath: 'wxfile://old-owner.jpg', size: 100 }] });
+  await flush();
+  assert.equal(uploads, 0);
+  assert.equal(page.data.choosingMaterials, false);
+  assert.equal(page.data.uploadedMaterials.length, 0);
+});
+
+test('direct image and PDF selectors retain selected evidence when native return shows the page before or after success', async () => {
+  for (const source of ['image', 'pdf']) for (const showFirst of [true, false]) {
+    let selection, reads = 0;
+    const uploads = [];
+    const isPdf = source === 'pdf';
+    const { page, calls } = certificationRuntime('identity', { wx: {
+      showActionSheet: () => assert.fail('native selectors must start directly from the upload button'),
+      chooseMedia: options => { assert.equal(isPdf, false); selection = options; },
+      chooseMessageFile: options => { assert.equal(isPdf, true); selection = options; },
+      getFileSystemManager: () => ({ readFile: options => options.success({ data: isPdf ? 'JVBERi0xLjc-private-pdf' : '/9j/private-image' }) })
+    }, memberApi: {
+      certifications: async () => { reads += 1; return overview(); },
+      uploadCertificationMaterial: async data => {
+        uploads.push(plain(data));
+        return { material: { id: 'native-selected-private-material', kind: data.kind, mimeType: data.mimeType, size: 100 } };
+      }
+    } });
+    await page.onShow();
+    page.chooseMaterials({ currentTarget: { dataset: { source } } });
+    assert.equal(page.data.choosingMaterials, true);
+    if (showFirst) {
+      await page.onShow();
+      assert.equal(reads, 1, 'native return must not start a competing certification refresh');
+      assert.equal(page.data.loading, false);
+    }
+    selection.success({ tempFiles: [isPdf ? { path: 'wxfile://selected.pdf', size: 100 }
+      : { tempFilePath: 'wxfile://selected.jpg', size: 100 }] });
+    if (!showFirst) await page.onShow();
+    await flush();
+    assert.equal(uploads.length, 1, `selected ${source} must be uploaded after native return`);
+    assert.equal(uploads[0].mimeType, isPdf ? 'application/pdf' : 'image/jpeg');
+    assert.equal(page.data.uploadedMaterials[0].status, 'uploaded');
+    assert.equal(page.data.choosingMaterials, false);
+    assert.equal(page.data.verified, false, 'selected evidence still requires certification review');
+    assert.equal(calls.storage.length, 0, 'private evidence is not persisted in client storage');
+    await page.onShow();
+    assert.equal(reads, 2, 'a later ordinary resume still refreshes certification status');
+  }
+});
+
+test('native selector cancellation unlocks upload and permission errors are visible without repeated picker calls', async () => {
+  let selection, choices = 0;
+  const { page, calls } = certificationRuntime('identity', { wx: {
+    chooseMedia: options => { choices += 1; selection = options; }
+  } });
+  await page.onShow();
+  page.chooseMaterials();
+  page.chooseMaterials();
+  assert.equal(choices, 1, 'repeated taps cannot launch competing native selectors');
+  selection.fail({ errMsg: 'chooseMedia:fail cancel' });
+  assert.equal(page.data.choosingMaterials, false);
+  assert.equal(page.data.uploadError, '');
+  assert.equal(calls.toasts.length, 0, 'cancelling selection is not an upload failure');
+  page.chooseMaterials();
+  selection.fail({ errMsg: 'chooseMedia:fail auth deny' });
+  assert.equal(choices, 2);
+  assert.equal(page.data.choosingMaterials, false);
+  assert.match(page.data.uploadError, /允许微信访问相册或相机/);
+  assert.equal(calls.toasts.at(-1), page.data.uploadError);
+  page.chooseMaterials();
+  selection.fail({ errMsg: 'chooseMedia:fail privacy permission is not authorized' });
+  assert.equal(page.data.choosingMaterials, false);
+  assert.match(page.data.uploadError, /同意小程序隐私保护指引/);
+  assert.equal(page.data.uploadedMaterials.length, 0, 'privacy authorization failure cannot read or upload evidence');
+});
+
+test('older WeChat image API remains supported and synchronous PDF selector failures unlock with instructions', async () => {
+  let images = 0;
+  const { page } = certificationRuntime('identity', { wx: {
+    chooseImage: options => { images += 1; options.fail({ errMsg: 'chooseImage:fail cancel' }); },
+    chooseMessageFile: () => { throw new Error('native API unavailable'); }
+  } });
+  await page.onShow();
+  page.chooseMaterials();
+  assert.equal(images, 1);
+  assert.equal(page.data.choosingMaterials, false);
+  page.chooseMaterials({ currentTarget: { dataset: { source: 'pdf' } } });
+  assert.equal(page.data.choosingMaterials, false);
+  assert.match(page.data.uploadError, /微信聊天文件/);
+});
+
+test('late native results cannot unlock a newer account selection or revive evidence after unload', async () => {
+  const selections = [];
+  const { page, session } = certificationRuntime('identity', { wx: {
+    chooseMedia: options => selections.push(options)
+  } });
+  await page.onShow();
+  page.chooseMaterials();
+  session.token = 'new-certification-picker-session'; session.user = { id: 2 };
+  await page.onShow();
+  page.chooseMaterials();
+  const selected = { tempFiles: [{ tempFilePath: 'wxfile://private-evidence.jpg', size: 100 }] };
+  selections[0].success(selected);
+  assert.equal(page.data.choosingMaterials, true, 'stale selection cannot clear the new account selection guard');
+  page.onUnload();
+  selections[1].success(selected);
+  await flush();
+  assert.equal(page.data.choosingMaterials, false);
   assert.equal(page.data.uploadedMaterials.length, 0);
 });
 

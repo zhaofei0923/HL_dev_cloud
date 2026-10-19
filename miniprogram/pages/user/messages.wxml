@@ -20,7 +20,7 @@
 
     <block wx:if="{{list.length}}">
       <view wx:for="{{list}}" wx:key="id" class="conversation-card" data-id="{{item.id}}" bindtap="openChat">
-        <image wx:if="{{item.peerAvatar}}" class="conversation-avatar" src="{{item.peerAvatar}}" mode="aspectFill" data-id="{{item.id}}" binderror="onConversationAvatarError"></image>
+        <image wx:if="{{item.peerAvatar}}" class="conversation-avatar" src="{{item.peerAvatar}}" mode="aspectFill" lazy-load="{{true}}" data-id="{{item.id}}" binderror="onConversationAvatarError"></image>
         <view wx:else class="conversation-avatar conversation-avatar-fallback">{{item.avatarInitial}}</view>
         <view class="conversation-copy">
           <view class="row conversation-title-row">
@@ -114,7 +114,7 @@
           data-id="{{item.id}}"
           bindtap="openRelationshipMember"
         >
-          <image wx:if="{{item.coverUrl}}" class="relationship-cover" src="{{item.coverUrl}}" mode="aspectFill"></image>
+          <image wx:if="{{item.coverUrl}}" class="relationship-cover" src="{{item.coverUrl}}" mode="aspectFill" lazy-load="{{true}}"></image>
           <view wx:else class="relationship-cover relationship-cover-placeholder"></view>
           <view class="relationship-cover-shade"></view>
           <text wx:if="{{item.locked}}" class="relationship-lock">{{item.checking ? '待更新' : '会员可见'}}</text>

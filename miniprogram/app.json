@@ -8,13 +8,18 @@
     "pages/user/salon-detail",
     "pages/user/salon-participant",
     "pages/user/profile",
+    "pages/admin/portal",
     "pages/user/certification",
     "pages/user/membership",
+    "pages/user/orders",
+    "pages/user/order-detail",
+    "pages/user/vip-privileges",
     "pages/user/messages",
     "pages/user/chat",
     "pages/common/image-cropper",
     "pages/user/matchmaker-invite",
     "pages/matchmaker/dashboard",
+    "pages/matchmaker/activation",
     "pages/matchmaker/workspace",
     "pages/matchmaker/members",
     "pages/matchmaker/member-detail",
@@ -25,6 +30,9 @@
     "pages/matchmaker/salon",
     "pages/matchmaker/mine",
     "pages/matchmaker/salon-form"
+  ],
+  "subPackages": [
+    { "root": "admin-console", "pages": ["workspace/index", "detail/index"] }
   ],
   "window": {
     "navigationBarTextStyle": "black",

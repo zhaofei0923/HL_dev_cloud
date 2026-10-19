@@ -1,6 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { runtime, deferred, flush } = require('./helpers/miniprogram-runtime');
+const fs = require('node:fs');
+const path = require('node:path');
+const { runtime: baseRuntime, deferred, flush } = require('./helpers/miniprogram-runtime');
+
+// These cases exercise paid showcase layout, caching and interaction behavior.
+const runtime = (page, options = {}) => baseRuntime(page, { source: true, ...options, memberApi: {
+  vipOverview: async () => ({ isPremiumMember: true, membershipTier: 'vip', entitlements: {} }), ...options.memberApi
+} });
 
 const rows = [1, 2, 3].map(id => ({ id, userId: id + 10, realName: `会员${id}`, city: '上海' }));
 const category = value => ({ currentTarget: { dataset: { category: value } } });
@@ -48,55 +55,98 @@ test('applied filter chips are shared across categories and removal applies exac
   assert.equal(page.data.filterChips.length, 1);
 });
 
-test('hide undo refreshes every category without losing the current selection or resetting filters', async () => {
+test('hiding removes a member from all four categories and refreshes preserve the exclusion and applied filters', async () => {
   let hidden = false;
   const reads = [], actions = [];
   const { page, advance } = runtime('pages/user/members.js', { memberApi: {
-    showcase: async query => { reads.push(query.category); const list = rows.filter(row => !hidden || row.userId !== 11); return { list, total: list.length }; },
+    showcase: async query => { reads.push(structuredClone(query)); const list = rows.filter(row => !hidden || row.userId !== 11); return { list, total: list.length }; },
     interact: async data => { actions.push(data); hidden = data.active; return { viewerState: { isHidden: hidden } }; }
   } });
   await page.load(false);
+  page.toggleFilter();
+  page.onKeyword({ detail: { value: '会员' } });
+  page.onCity({ detail: { value: '上海' } });
+  await page.search();
+  await page.switchCategory(category('popularity'));
   await page.switchCategory(category('education'));
   page.nextMember();
+  await page.switchCategory(category('assets'));
+  page.nextMember();
+  page.nextMember();
   await page.switchCategory(category('recommend'));
+  const readsBeforeHide = reads.length;
   await page.hideCurrent();
   advance(460);
   assert.equal(page.data.currentMember.id, 2);
-  assert.equal(page.data.undoHidden.targetUserId, 11);
-  await page.undoHide();
-  assert.equal(actions.at(-1).active, false);
-  assert.equal(page.data.list.length, 3);
-  assert.equal(page.data.currentMember.id, 2);
-  assert.equal(page.data.undoHidden, null);
-  await page.switchCategory(category('education'));
-  assert.equal(page.data.list.length, 3);
-  assert.equal(page.data.currentMember.id, 2);
-  assert.equal(reads.filter(value => value === 'education').length, 2);
+  for (const [value, selectedId] of [['popularity', 2], ['education', 2], ['assets', 3], ['recommend', 2]]) {
+    await page.switchCategory(category(value));
+    assert.deepEqual(Array.from(page.data.list, row => row.userId), [12, 13]);
+    assert.equal(page.data.total, 2);
+    assert.equal(page.data.currentMember.id, selectedId, `${value} retains its browsing position`);
+  }
+  assert.equal(reads.length, readsBeforeHide, 'all warm category caches remove the hidden user without another request');
+  for (const value of ['recommend', 'popularity', 'education', 'assets']) {
+    await page.switchCategory(category(value));
+    await page.load(true);
+    assert.deepEqual(Array.from(page.data.list, row => row.userId), [12, 13]);
+    assert.equal(page.data.total, 2);
+    assert.equal(reads.at(-1).category, value);
+    assert.equal(reads.at(-1).keyword, '会员');
+    assert.equal(reads.at(-1).city, '上海');
+  }
+  assert.equal(actions.length, 1, 'browsing and reloading never restore the hidden user');
+  assert.equal(actions[0].actionType, 'hide');
+  assert.equal(actions[0].active, true);
+  assert.equal(actions[0].targetUserId, 11);
 });
 
-test('failed restoration keeps its undo action available and an old account result cannot alter a new account', async () => {
+test('a late hide response from an old account cannot remove a member or change the new account cache', async () => {
   const pending = deferred();
-  const { page, session, calls } = runtime('pages/user/members.js', { memberApi: {
+  const { page, session, calls, advance } = runtime('pages/user/members.js', { memberApi: {
     interact: () => pending.promise,
     showcase: async () => ({ list: rows, total: 3 })
   } });
   await page.load(false);
-  page.setData({ undoHidden: { targetUserId: 11, displayName: '会员1' } });
-  const restoring = page.undoHide();
+  const hiding = page.hideCurrent();
   await flush();
   session.token = 'new-account';
   session.user.id = 5;
   await page.load(false);
-  pending.resolve({ viewerState: { isHidden: false } });
-  await restoring;
-  assert.equal(page.data.undoHidden, null);
+  pending.resolve({ viewerState: { isHidden: true } });
+  await hiding;
+  advance(1000);
+  await page.load(false);
+  assert.deepEqual(Array.from(page.data.list, row => row.userId), [11, 12, 13]);
+  assert.equal(page.data.currentMember.id, 1);
+  assert.equal(page.data.total, 3);
+  assert.equal(page.data.hideLoading, false);
+  assert.equal(page.data.actionAnimating, false);
   assert.equal(calls.toasts.length, 0);
+});
 
-  const other = runtime('pages/user/members.js', { memberApi: { interact: async () => { throw new Error('offline'); } } });
-  other.page.setData({ undoHidden: { targetUserId: 11, displayName: '会员1' } });
-  await other.page.undoHide();
-  assert.equal(other.page.data.undoHidden.targetUserId, 11);
-  assert.equal(other.page.data.restoringUserId, 0);
+test('a failed hide preserves the selected member in every loaded category and permits a later retry', async () => {
+  let attempts = 0;
+  const { page, calls, advance } = runtime('pages/user/members.js', { memberApi: {
+    showcase: async () => ({ list: rows, total: 3 }),
+    interact: async () => { if (++attempts === 1) throw new Error('offline'); return { viewerState: { isHidden: true } }; }
+  } });
+  await page.load(false);
+  for (const value of ['popularity', 'education', 'assets', 'recommend']) await page.switchCategory(category(value));
+  await page.hideCurrent();
+  advance(1000);
+  for (const value of ['popularity', 'education', 'assets', 'recommend']) {
+    await page.switchCategory(category(value));
+    assert.deepEqual(Array.from(page.data.list, row => row.userId), [11, 12, 13]);
+    assert.equal(page.data.currentMember.id, 1);
+    assert.equal(page.data.total, 3);
+  }
+  assert.equal(page.data.hideLoading, false);
+  assert.equal(page.data.actionAnimating, false);
+  assert.ok(calls.toasts.includes('offline'));
+  await page.hideCurrent();
+  advance(460);
+  assert.equal(attempts, 2);
+  assert.deepEqual(Array.from(page.data.list, row => row.userId), [12, 13]);
 });
 
 test('detail failures distinguish unavailable profiles from retryable network errors', async () => {
@@ -120,16 +170,23 @@ test('detail failures distinguish unavailable profiles from retryable network er
   }
 });
 
-test('an older server that keeps hide active cannot report restoration success or clear undo', async () => {
-  const { page, calls } = runtime('pages/user/members.js', { memberApi: {
-    interact: async () => ({ active: true, viewerState: { isHidden: true } })
+test('the recommendation page offers no undo banner or hidden-member recovery controls after hiding', async () => {
+  const { page, advance } = runtime('pages/user/members.js', { memberApi: {
+    showcase: async () => ({ list: rows, total: 3 }),
+    interact: async () => ({ viewerState: { isHidden: true } })
   } });
-  page.setData({ undoHidden: { targetUserId: 11, displayName: '会员1' } });
-  await page.undoHide();
-  assert.equal(page.data.undoHidden.targetUserId, 11);
-  assert.equal(page.data.restoringUserId, 0);
-  assert.ok(calls.toasts.includes('恢复未完成，请重试'));
-  assert.ok(!calls.toasts.some(value => value.startsWith('已恢复')));
+  await page.load(false);
+  await page.hideCurrent();
+  advance(460);
+  for (const field of ['undoHidden', 'restoringUserId', 'hiddenPanelOpen', 'hiddenMembers']) {
+    assert.equal(Object.hasOwn(page.data, field), false, `${field} is no longer a user-facing recovery state`);
+  }
+  for (const method of ['undoHide', 'restoreHidden', 'restoreHiddenUser', 'openHiddenPanel', 'loadHidden']) {
+    assert.equal(typeof page[method], 'undefined', `${method} cannot request a recovery`);
+  }
+  const template = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'pages', 'user', 'members.wxml'), 'utf8');
+  assert.doesNotMatch(template, /(?:undoHidden|undoHide|restoreHidden|openHiddenPanel|hiddenPanelOpen|恢复推荐|撤销)/);
+  assert.match(template, /bindtap="hideCurrent"/, 'the card keeps its permanent hide action');
 });
 
 test('detail from an older service keeps unknown permissions and offers a read-only refresh', async () => {

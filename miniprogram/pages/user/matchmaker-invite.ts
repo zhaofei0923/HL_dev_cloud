@@ -56,7 +56,11 @@ function parseOptions(options: Record<string, any>) {
 
 Page({
   _inviteUnloaded: false,
+  _inviteVisible: true,
   _inviteGeneration: 0,
+  _ordinaryScope: '',
+  _inviteNeedsReload: false,
+  _inviteTimer: null as ReturnType<typeof setTimeout> | null,
   _activityScope: '',
   _activityPending: null as Promise<void> | null,
 
@@ -74,7 +78,7 @@ Page({
     activityReady: false,
     invalidEvent: false,
     autoMessage: '',
-    actionText: '提交添加申请',
+    actionText: '确认加入',
     loading: false,
     submitting: false,
     errorText: '',
@@ -88,7 +92,7 @@ Page({
       activityInvite: !!parsed.eventId || parsed.invalidEvent,
       sourceText: sourceText(parsed.source),
       autoMode: isAutoInviteSource(parsed.source),
-      actionText: isAutoInviteSource(parsed.source) ? '正在处理邀请' : '提交添加申请',
+      actionText: isAutoInviteSource(parsed.source) ? '正在处理邀请' : '确认加入',
       sharePath: parsed.code ? invitePath(parsed.code, parsed.source, {
         eventId: parsed.eventId,
         autoRegister: parsed.autoRegister
@@ -102,14 +106,31 @@ Page({
   },
 
   onUnload() {
+    this.onHide()
     this._inviteUnloaded = true
-    this._inviteGeneration += 1
     this._activityPending = null
   },
 
+  onHide() {
+    this._inviteVisible = false
+    this._inviteGeneration += 1
+    if (this._inviteTimer !== null) clearTimeout(this._inviteTimer)
+    this._inviteTimer = null
+    this._inviteNeedsReload = true
+    this._activityPending = null
+    this.setData({ loading: false, submitting: false })
+  },
+
   onShow() {
-    if (this.data.eventId && this._activityScope && this._activityScope !== pageSessionScope()) {
+    this._inviteVisible = true
+    const reload = this._inviteNeedsReload
+    this._inviteNeedsReload = false
+    if (this.data.eventId && (reload || (this._activityScope && this._activityScope !== pageSessionScope()))) {
       return this.loadActivityInvite()
+    }
+    if (!this.data.eventId && (reload || (this._ordinaryScope && this._ordinaryScope !== pageSessionScope()))) {
+      this.setData({ invite: null, canSubmit: false, autoDone: false, autoMessage: '', errorText: '' })
+      return this.loadInvite()
     }
     return Promise.resolve()
   },
@@ -130,7 +151,7 @@ Page({
     }
     const generation = ++this._inviteGeneration
     this._activityScope = scope
-    const isCurrent = () => !this._inviteUnloaded && generation === this._inviteGeneration
+    const isCurrent = () => this._inviteVisible && !this._inviteUnloaded && generation === this._inviteGeneration
       && pageSessionScope() === scope
     this.setData({ loading: true, errorText: '', activityReady: false,
       actionText: '查看活动并确认报名', autoMessage: '' })
@@ -171,7 +192,21 @@ Page({
     await loginByWechat('user')
   },
 
+  isOrdinaryCurrent(scope: string, generation: number) {
+    return this._inviteVisible && !this._inviteUnloaded && generation === this._inviteGeneration
+      && !!scope && scope === pageSessionScope()
+  },
+
+  scheduleProfileReturn(scope: string, generation: number, delay: number) {
+    if (this._inviteTimer !== null) clearTimeout(this._inviteTimer)
+    this._inviteTimer = setTimeout(() => {
+      this._inviteTimer = null
+      if (this.isOrdinaryCurrent(scope, generation)) wx.switchTab({ url: '/pages/user/profile' })
+    }, delay)
+  },
+
   async loadInvite() {
+    if (this._inviteUnloaded || !this._inviteVisible) return
     if (this.data.invalidEvent) return
     if (this.data.eventId) {
       await this.loadActivityInvite()
@@ -183,36 +218,48 @@ Page({
       return
     }
     this.setData({ loading: true, errorText: '' })
+    const generation = ++this._inviteGeneration
+    const startingScope = pageSessionScope()
     try {
       await this.ensureLogin()
+      if (!this._inviteVisible || this._inviteUnloaded || generation !== this._inviteGeneration
+        || (startingScope && startingScope !== pageSessionScope())) return
+      const scope = pageSessionScope()
+      this._ordinaryScope = scope
       const invite = await memberApi.resolveMatchmakerInvite({
         code,
         source: this.data.source,
         eventId: this.data.eventId
       })
-      const pending = invite && invite.existingRequest && invite.existingRequest.status === 'pending'
+      if (!this.isOrdinaryCurrent(scope, generation)) return
       const autoMode = isAutoInviteSource(this.data.source)
       this.setData({
         invite,
         autoMode,
-        canSubmit: !autoMode && !(invite && invite.alreadyAssigned) && !pending,
-        actionText: autoMode ? '正在处理邀请' : '提交添加申请'
+        canSubmit: !autoMode && !(invite && invite.alreadyAssigned),
+        actionText: autoMode ? '正在处理邀请' : '确认加入'
       })
       if (autoMode) await this.acceptShareInvite()
     } catch (err: any) {
+      if (!this._inviteVisible || this._inviteUnloaded || generation !== this._inviteGeneration
+        || (startingScope && startingScope !== pageSessionScope())) return
       console.warn('resolve matchmaker invite failed', err)
       this.setData({ errorText: err && err.message ? err.message : '邀请信息暂不可用', canSubmit: false })
     } finally {
-      this.setData({ loading: false })
+      if (this._inviteVisible && !this._inviteUnloaded && generation === this._inviteGeneration
+        && (!startingScope || startingScope === pageSessionScope())) this.setData({ loading: false })
     }
   },
 
   async acceptShareInvite() {
+    if (this._inviteUnloaded || !this._inviteVisible) return
     if (this.data.eventId) {
       await this.loadActivityInvite()
       return
     }
     if (this.data.submitting || !this.data.code) return
+    const scope = pageSessionScope(), generation = this._inviteGeneration
+    if (!scope || scope !== this._ordinaryScope) return
     this.setData({
       submitting: true,
       errorText: '',
@@ -221,11 +268,13 @@ Page({
     })
     try {
       await this.ensureLogin()
+      if (!this.isOrdinaryCurrent(scope, generation)) return
       const result: any = await memberApi.acceptMatchmakerInvite({
         code: this.data.code,
         source: this.data.source,
         eventId: this.data.eventId
       })
+      if (!this.isOrdinaryCurrent(scope, generation)) return
       const invite = result && result.invite
         ? { ...result.invite, alreadyAssigned: true, existingRequest: result.request || null }
         : this.data.invite
@@ -237,10 +286,9 @@ Page({
         autoMessage: '已成为该主理人名下免费会员。'
       })
       wx.showToast({ title: result && result.alreadyAssigned ? '已是名下会员' : '注册成功', icon: 'success' })
-      setTimeout(() => {
-        wx.switchTab({ url: '/pages/user/profile' })
-      }, 700)
+      this.scheduleProfileReturn(scope, generation, 700)
     } catch (err) {
+      if (!this.isOrdinaryCurrent(scope, generation)) return
       console.warn('accept matchmaker invite failed', err)
       this.setData({
         errorText: errorMessage(err),
@@ -248,27 +296,40 @@ Page({
         actionText: '重新处理邀请'
       })
     } finally {
-      this.setData({ submitting: false })
+      if (this.isOrdinaryCurrent(scope, generation)) this.setData({ submitting: false })
     }
   },
 
   async submitRequest() {
-    if (this.data.submitting || !this.data.code) return
-    this.setData({ submitting: true })
+    if (this.data.submitting || !this.data.canSubmit || !this.data.code) return
+    const scope = pageSessionScope(), generation = this._inviteGeneration
+    if (!scope || scope !== this._ordinaryScope || !this.isOrdinaryCurrent(scope, generation)) return
+    this.setData({ submitting: true, errorText: '' })
     try {
       await this.ensureLogin()
+      if (!this.isOrdinaryCurrent(scope, generation)) return
       const result: any = await memberApi.requestMatchmaker({
         code: this.data.code,
         source: this.data.source
       })
-      wx.showToast({ title: result && result.status === 'approved' ? '已是名下会员' : '申请已提交', icon: 'success' })
-      setTimeout(() => {
-        wx.switchTab({ url: '/pages/user/profile' })
-      }, 500)
+      if (!this.isOrdinaryCurrent(scope, generation)) return
+      if (!result || result.status !== 'approved') {
+        this.setData({ errorText: '加入状态尚未确认，请返回后重新打开邀请。' })
+        return
+      }
+      const invite = result.invite
+        ? { ...result.invite, alreadyAssigned: true, existingRequest: result.request || null }
+        : { ...this.data.invite, alreadyAssigned: true, existingRequest: result.request || null }
+      this.setData({ invite, canSubmit: false, autoDone: true, actionText: '已加入',
+        autoMessage: '已成为该主理人名下免费会员。' })
+      wx.showToast({ title: result.alreadyAssigned ? '已是名下会员' : '加入成功', icon: 'success' })
+      this.scheduleProfileReturn(scope, generation, 500)
     } catch (err) {
+      if (!this.isOrdinaryCurrent(scope, generation)) return
       console.warn('submit matchmaker invite failed', err)
+      this.setData({ errorText: errorMessage(err) })
     } finally {
-      this.setData({ submitting: false })
+      if (this.isOrdinaryCurrent(scope, generation)) this.setData({ submitting: false })
     }
   },
 

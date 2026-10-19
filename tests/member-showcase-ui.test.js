@@ -123,7 +123,14 @@ function runtime(rows = [member('a'), member('b'), member('c')], overrides = {})
   const page = {
     ...definition,
     data: structuredClone(definition.data),
-    setData(state) { Object.assign(this.data, state); }
+    setData(state) {
+      for (const [dataPath, value] of Object.entries(state)) {
+        const parts = dataPath.replace(/\[(\d+)\]/g, '.$1').split('.');
+        let target = this.data;
+        for (const part of parts.slice(0, -1)) target = target[part];
+        target[parts.at(-1)] = value;
+      }
+    }
   };
   function advance(milliseconds) {
     const end = now + milliseconds;

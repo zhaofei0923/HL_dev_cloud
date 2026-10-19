@@ -15,7 +15,8 @@ function deferred() {
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function runtime(relativePath, overrides = {}) {
-  const filePath = path.join(miniprogramRoot, relativePath);
+  const sourceMode = overrides.source === true;
+  const filePath = path.join(miniprogramRoot, sourceMode ? relativePath.replace(/\.js$/, '.ts') : relativePath);
   const modules = new Map();
   const calls = { requests: [], navigation: [], storage: [], toasts: [], updates: [], tabUpdates: [], events: [], titles: [], scrolls: [], stopRefresh: 0 };
   const session = { token: 'navigation-test-session', user: { id: 1, nickname: '测试用户', gender: 2 }, env: 'test-environment' };
@@ -62,6 +63,15 @@ function runtime(relativePath, overrides = {}) {
       confirmManualMemberClaim: async () => ({})
     },
     member: { memberApi: {
+      vipOverview: async () => ({ isPremiumMember: false, membershipTier: 'free', entitlements: {} }),
+      recordVisit: async () => ({ recorded: true }),
+      membershipOverview: async () => ({ isPremiumMember: false, matchmakingPackages: [], matchmakingReadiness: null }),
+      matchmakingReadiness: async () => ({ ready: false, profileComplete: false, matchmakerConfirmed: false, matchmakerId: null, reason: 'profile_incomplete' }),
+      confirmMatchmakingReadiness: async () => ({ ready: true, profileComplete: true, matchmakerConfirmed: true, matchmakerId: 1, reason: '' }),
+      matchmakingRequests: async () => ({ list: [] }),
+      wechatExchanges: async () => ({ list: [] }),
+      onlineSubscriptions: async () => ({ list: [] }),
+      updatePresence: async () => ({ online: true }),
       referralCard: async () => ({ canShare: false }),
       relationships: async () => ({ list: [], counts: { incoming: 0, mutual: 0 }, total: 0, isPremiumMember: false }),
       interact: async () => ({}),
@@ -88,6 +98,11 @@ function runtime(relativePath, overrides = {}) {
       listConversations: async () => ({ list: [], total: 0 }),
       getOrCreateConversation: async () => ({ id: 901 }),
       ...overrides.chatApi
+    } },
+    messages: { messageApi: {
+      list: async () => ({ list: [], total: 0, page: 1, pageSize: 50, unreadCount: 0 }),
+      markRead: async id => ({ id, isRead: true }),
+      ...overrides.messageApi
     } }
   };
   const wx = {
@@ -109,13 +124,14 @@ function runtime(relativePath, overrides = {}) {
   Object.assign(wx, overrides.wx || {});
   const tabBar = { setData: data => calls.tabUpdates.push(data) };
   const context = vm.createContext({
+    App: options => { definition = options; },
     Page: options => {
       definition = options;
       pageDefinitions.set(evaluatingModule, options);
     },
     Component: options => { componentDefinition = options; },
     wx,
-    getApp: () => ({ globalData: session }),
+    getApp: () => overrides.getApp ? overrides.getApp(session) : ({ globalData: session }),
     getCurrentPages: () => [{ route: currentPagePath.replace(/\.js$/, '') }],
     Date: RuntimeDate,
     console: { warn() {}, error() {}, log() {} },
@@ -124,7 +140,13 @@ function runtime(relativePath, overrides = {}) {
       timers.set(id, { callback, at: now + delay });
       return id;
     },
-    clearTimeout: id => timers.delete(id)
+    clearTimeout: id => timers.delete(id),
+    setInterval(callback, delay) {
+      const id = ++timerId;
+      timers.set(id, { callback, at: now + delay, repeat: delay });
+      return id;
+    },
+    clearInterval: id => timers.delete(id)
   });
   function load(modulePath) {
     if (modules.has(modulePath)) return modules.get(modulePath).exports;
@@ -147,10 +169,21 @@ function runtime(relativePath, overrides = {}) {
         stopChatVoiceRecording: async () => ({ tempFilePath: 'test-voice.mp3', durationSeconds: 2, format: 'mp3', fileSize: 20 }),
         uploadChatVoice: async () => 'cloud://test/chat-voice.mp3'
       };
+      // New source modules need not have generated JavaScript yet. Keep source
+      // tests independent of a build and avoid accidentally loading stale JS.
+      if (sourceMode && name.startsWith('.')) {
+        const candidate = path.resolve(path.dirname(modulePath), name.endsWith('.ts') ? name
+          : name.replace(/\.js$/, '') + '.ts');
+        if (candidate.startsWith(miniprogramRoot + path.sep) && fs.existsSync(candidate)) return load(candidate);
+      }
       const resolved = localRequire.resolve(name);
-      return resolved.startsWith(miniprogramRoot) ? load(resolved) : localRequire(name);
+      const sourcePath = resolved.replace(/\.js$/, '.ts');
+      return resolved.startsWith(miniprogramRoot) ? load(sourceMode && fs.existsSync(sourcePath) ? sourcePath : resolved) : localRequire(name);
     };
-    const wrapper = vm.runInContext(`(function (exports, require, module) {\n${fs.readFileSync(modulePath, 'utf8')}\n})`, context, { filename: modulePath });
+    const source = fs.readFileSync(modulePath, 'utf8');
+    const code = sourceMode && modulePath.endsWith('.ts')
+      ? require('typescript').transpileModule(source, { compilerOptions: { module: 1, target: 7 } }).outputText : source;
+    const wrapper = vm.runInContext(`(function (exports, require, module) {\n${code}\n})`, context, { filename: modulePath });
     const previousModule = evaluatingModule;
     evaluatingModule = modulePath;
     try { wrapper(module.exports, require, module); }
@@ -187,7 +220,7 @@ function runtime(relativePath, overrides = {}) {
   const page = instantiatePage(definition);
   function recreatePage(pagePath = relativePath) {
     currentPagePath = pagePath;
-    const modulePath = path.join(miniprogramRoot, pagePath);
+    const modulePath = path.join(miniprogramRoot, sourceMode ? pagePath.replace(/\.js$/, '.ts') : pagePath);
     load(modulePath);
     return instantiatePage(pageDefinitions.get(modulePath));
   }
@@ -213,6 +246,7 @@ function runtime(relativePath, overrides = {}) {
       if (!next) break;
       const [id, timer] = next;
       timers.delete(id);
+      if (timer.repeat) timers.set(id, { ...timer, at: timer.at + timer.repeat });
       now = timer.at;
       timer.callback();
     }

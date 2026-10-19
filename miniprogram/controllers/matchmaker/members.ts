@@ -2,6 +2,7 @@ import { defineMatchmakerController } from '../../utils/matchmaker-workspace'
 import { memberApi } from '../../services/member'
 import { normalizeMemberProfile } from '../../utils/member-format'
 import { matchmakerApi } from '../../services/matchmaker'
+import { matchmakerAccessView } from '../../utils/matchmaker-access-view'
 import {
   invalidateMatchmakerPageSnapshots,
   MATCHMAKER_PAGE_TTL_MS,
@@ -101,30 +102,7 @@ function normalizeRequest(row: any) {
 }
 
 function certificationView(matchmaker: any) {
-  const status = Number((matchmaker && matchmaker.certificationStatus) || 0)
-  const remark = (matchmaker && matchmaker.certificationRemark) || ''
-  if (status === 2) {
-    return {
-      canOperate: true,
-      statusText: '已认证',
-      statusTagClass: 'gold',
-      statusNote: '主理人权限已开通，可录入会员并进入资源池协作。'
-    }
-  }
-  if (status === 1) {
-    return {
-      canOperate: false,
-      statusText: '已拒绝',
-      statusTagClass: 'rose',
-      statusNote: remark || '本次申请暂未通过，请完善资料后重新提交。'
-    }
-  }
-  return {
-    canOperate: false,
-    statusText: '待审批',
-    statusTagClass: '',
-    statusNote: '主理人申请通过后，才可使用会员经营和资源池功能。'
-  }
+  return matchmakerAccessView(matchmaker, '主理人权限已开通，可录入会员并进入资源池协作。')
 }
 
 export const membersController = defineMatchmakerController({
@@ -179,9 +157,9 @@ export const membersController = defineMatchmakerController({
     refreshError: '',
     removingId: '',
     canOperate: false,
-    statusText: '待审批',
+    statusText: '待开通',
     statusTagClass: '',
-    statusNote: '主理人申请通过后，才可使用会员经营和资源池功能。'
+    statusNote: '主理人一次性开通费 ¥6980，长期有效。付款确认后自动开通。'
   },
 
   onLoad() {
@@ -230,8 +208,8 @@ export const membersController = defineMatchmakerController({
       filtersOpen: false, approvalsOpen: false, recommendOpen: false,
       activeMemberActionId: '', removingId: '', requestProcessingId: '', recommendLoading: false,
       initialized: false, loading: false, refreshError: '', canOperate: false,
-      statusText: '待审批', statusTagClass: '',
-      statusNote: '主理人申请通过后，才可使用会员经营和资源池功能。'
+      statusText: '待开通', statusTagClass: '',
+      statusNote: '主理人一次性开通费 ¥6980，长期有效。付款确认后自动开通。'
     })
     return scope
   },
@@ -626,6 +604,12 @@ export const membersController = defineMatchmakerController({
     if (!this.ensurePageSession() || !this.data.canOperate) return
     this._forceNextShow = true
     wx.navigateTo({ url: '/pages/matchmaker/resources' })
+  },
+
+  goActivation() {
+    if (!this.ensurePageSession() || this.data.loading) return
+    this._forceNextShow = true
+    wx.navigateTo({ url: '/pages/matchmaker/activation' })
   },
 
   async applyAgain() {

@@ -102,7 +102,7 @@ Page({
     methodOptions: EDUCATION_CERTIFICATION_METHODS, methodPickerOpen: false,
     method: '' as '' | EducationCertificationMethod, methodText: '请选择认证方式',
     verificationCode: '', certificateNumber: '', requiresMaterials: false,
-    uploadedMaterials: [] as LocalMaterial[], uploading: false, previewing: false, uploadError: '', receivedMaterialCount: 0,
+    uploadedMaterials: [] as LocalMaterial[], choosingMaterials: false, uploading: false, previewing: false, uploadError: '', receivedMaterialCount: 0,
     declaredAssetRangeOptions: DECLARED_FINANCIAL_ASSET_RANGE_OPTIONS,
     declaredFinancialAssetRange: '' as DeclaredAssetRange, declaredAssetRangeText: '请选择金融资产区间'
   },
@@ -121,6 +121,9 @@ Page({
   onShow() {
     this.clearMaterialPreviews()
     if (!this.synchronizeSession() || this.data.unsupportedKind || !this.data.kind) return Promise.resolve()
+    // Native selectors can show this page again before delivering their result.
+    // Refreshing here would set loading and silently discard the selected files.
+    if (this.data.choosingMaterials) return Promise.resolve()
     return this.loadCertification(true)
   },
   synchronizeSession() {
@@ -140,7 +143,7 @@ Page({
         educationSource: '', educationSourceText: '请选择学历来源', educationLevel: '', institutionName: '', consentConfirmed: false,
         method: '', methodText: '请选择认证方式', methodPickerOpen: false, verificationCode: '', certificateNumber: '',
         requiresMaterials: !!this.data.kind && methodRequiresMaterials(this.data.kind, ''),
-        uploadedMaterials: [], uploading: false, previewing: false, uploadError: '', receivedMaterialCount: 0,
+        uploadedMaterials: [], choosingMaterials: false, uploading: false, previewing: false, uploadError: '', receivedMaterialCount: 0,
         declaredFinancialAssetRange: '', declaredAssetRangeText: '请选择金融资产区间'
       })
       this.updateLeaveGuard()
@@ -266,7 +269,7 @@ Page({
     this._generation += 1
     this._uploadGeneration += 1
     this._loadPromise = null
-    this.setData({ verificationCode: '', certificateNumber: '', uploadedMaterials: [] })
+    this.setData({ verificationCode: '', certificateNumber: '', uploadedMaterials: [], choosingMaterials: false })
   },
   hasUnsubmittedChanges() { return this._draftEdited || this.data.uploadedMaterials.length > 0 },
   updateLeaveGuard() {
@@ -280,7 +283,7 @@ Page({
     }
   },
   markDraftEdited() { this._draftEdited = true; this.updateLeaveGuard() },
-  editingBlocked() { return this.data.pending || this.data.submitting || this.data.uploading || this.data.loading || !!this.data.loadError || !this._loaded },
+  editingBlocked() { return this.data.pending || this.data.submitting || this.data.choosingMaterials || this.data.uploading || this.data.loading || !!this.data.loadError || !this._loaded },
   openMethodPicker() {
     if (!this.editingBlocked()) this.setData({ methodPickerOpen: true })
   },
@@ -334,27 +337,56 @@ Page({
     this.markDraftEdited()
     this.setData({ consentConfirmed: e.detail.value.includes('confirmed'), submissionError: '' })
   },
-  chooseMaterials() {
-    if (this.editingBlocked() || !this.data.requiresMaterials) return
+  chooseMaterials(e?: WechatMiniprogram.TouchEvent) {
+    if (!this.synchronizeSession() || this._disposed) return
+    if (this.editingBlocked() || !this.data.requiresMaterials) {
+      if (this.data.loadError) wx.showToast({ title: '请先重新读取认证状态', icon: 'none' })
+      else if (this.data.loading || !this._loaded) wx.showToast({ title: '正在读取认证状态，请稍候', icon: 'none' })
+      return
+    }
     const remaining = CERTIFICATION_MATERIAL_LIMIT - this.data.uploadedMaterials.length
     if (remaining <= 0) { wx.showToast({ title: '每次申请最多3份材料', icon: 'none' }); return }
+    const isPdf = e && e.currentTarget.dataset.source === 'pdf'
     const scope = this._scope
     const generation = this._uploadGeneration
     const isCurrent = () => !this._disposed && pageSessionScope() === scope && generation === this._uploadGeneration
-    wx.showActionSheet({ itemList: ['选择图片', '选择 PDF 文件'], success: selection => {
+    const selected = (files: ChosenMaterial[]) => {
       if (!isCurrent()) return
-      if (selection.tapIndex === 0) {
+      this.setData({ choosingMaterials: false })
+      void this.uploadMaterials(files)
+    }
+    const failed = (error: { errMsg?: string }) => {
+      if (!isCurrent()) return
+      this.setData({ choosingMaterials: false })
+      if (/cancel/i.test(error.errMsg || '')) return
+      const message = /privacy|隐私/i.test(error.errMsg || '') ? '请先同意小程序隐私保护指引后重试'
+        : isPdf ? '无法打开微信聊天文件，请重试或更新微信'
+        : /auth|permission|access denied/i.test(error.errMsg || '')
+          ? '请允许微信访问相册或相机后重试' : '无法打开图片选择，请重试或更新微信'
+      this.setData({ uploadError: message })
+      wx.showToast({ title: message, icon: 'none' })
+    }
+    this.setData({ choosingMaterials: true, uploadError: '' })
+    try {
+      if (isPdf) {
+        wx.chooseMessageFile({ count: remaining, type: 'file', extension: ['pdf'],
+          success: result => selected(result.tempFiles.map(file => ({ path: file.path, size: file.size, isPdf: true }))),
+          fail: failed
+        })
+      } else if (typeof wx.chooseMedia === 'function') {
         wx.chooseMedia({ count: remaining, mediaType: ['image'], sizeType: ['original'], sourceType: ['album', 'camera'],
-          success: result => { if (isCurrent()) void this.uploadMaterials(result.tempFiles.map(file => ({ path: file.tempFilePath, size: file.size, isPdf: false }))) },
-          fail: error => { if (isCurrent() && !/cancel/i.test(error.errMsg)) this.setData({ uploadError: '选择图片失败，请重试' }) }
+          success: result => selected(result.tempFiles.map(file => ({ path: file.tempFilePath, size: file.size, isPdf: false }))),
+          fail: failed
         })
       } else {
-        wx.chooseMessageFile({ count: remaining, type: 'file', extension: ['pdf'],
-          success: result => { if (isCurrent()) void this.uploadMaterials(result.tempFiles.map(file => ({ path: file.path, size: file.size, isPdf: true }))) },
-          fail: error => { if (isCurrent() && !/cancel/i.test(error.errMsg)) this.setData({ uploadError: '选择 PDF 失败，请重试' }) }
+        wx.chooseImage({ count: remaining, sizeType: ['original'], sourceType: ['album', 'camera'],
+          success: result => selected(result.tempFiles.map(file => ({ path: file.path, size: file.size, isPdf: false }))),
+          fail: failed
         })
       }
-    } })
+    } catch {
+      failed({})
+    }
   },
   async uploadMaterials(files: ChosenMaterial[]) {
     const scope = this.synchronizeSession()

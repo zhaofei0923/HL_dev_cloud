@@ -1,4 +1,4 @@
-<view class="page recommend-page safe-bottom with-bottom-nav">
+<view class="page recommend-page safe-bottom with-bottom-nav {{membershipKnown && !isVip ? 'with-vip-guide' : ''}}">
   <view class="recommend-topbar">
     <view class="recommend-heading">
       <view class="recommend-categories" role="tablist" aria-label="会员分类">
@@ -7,6 +7,7 @@
           role="tab" aria-selected="{{category === item.id}}"
           data-category="{{item.id}}" bindtap="switchCategory">
           <text>{{item.label}}</text>
+          <text wx:if="{{item.id !== 'recommend' && !isVip}}" class="category-vip-lock">VIP</text>
           <view wx:if="{{category === item.id}}" class="category-underline"></view>
         </view>
       </view>
@@ -24,6 +25,15 @@
         </view>
       </button>
     </view>
+  </view>
+
+  <view wx:if="{{membershipKnown && !isVip}}" class="special-zone-vip-guide" bindtap="goMembership"
+    aria-role="button" aria-label="开通VIP即可查看颜值、学历和资产专区">
+    <view class="special-zone-vip-copy">
+      <text class="special-zone-vip-title">颜值 / 学历 / 资产专区</text>
+      <text class="special-zone-vip-note">开通 VIP 即可查看</text>
+    </view>
+    <text class="special-zone-vip-action">开通 VIP ›</text>
   </view>
 
   <view wx:if="{{filterChips.length}}" class="applied-filters">
@@ -57,11 +67,19 @@
       <view class="quick-filter {{draftGender === '1' ? 'active' : ''}}" data-gender="1" bindtap="setGender">男士</view>
       <view class="quick-filter {{draftGender === '2' ? 'active' : ''}}" data-gender="2" bindtap="setGender">女士</view>
     </view>
+    <view class="advanced-filter-heading"><text>高级筛选</text><text class="advanced-filter-note">VIP专属</text></view>
+    <view wx:if="{{!isVip}}" class="advanced-filter-lock" bindtap="goMembership">开通VIP，按年龄、学历、婚况和收入筛选 ›</view>
+    <view wx:else class="advanced-filter-grid">
+      <input class="field-input advanced-age" type="number" maxlength="2" placeholder="最低年龄" value="{{draftAgeMin}}" data-field="draftAgeMin" bindinput="onAdvancedInput" />
+      <input class="field-input advanced-age" type="number" maxlength="2" placeholder="最高年龄" value="{{draftAgeMax}}" data-field="draftAgeMax" bindinput="onAdvancedInput" />
+      <picker range="{{educationOptions}}" data-field="draftEducation" bindchange="onAdvancedPicker"><view class="advanced-picker">{{draftEducation || '不限学历'}} ›</view></picker>
+      <picker range="{{maritalOptions}}" data-field="draftMaritalStatus" bindchange="onAdvancedPicker"><view class="advanced-picker">{{draftMaritalStatus || '不限婚况'}} ›</view></picker>
+      <picker class="advanced-income" range="{{incomeOptions}}" data-field="draftIncomeRange" bindchange="onAdvancedPicker"><view class="advanced-picker">年收入：{{draftIncomeRange || '不限'}} ›</view></picker>
+    </view>
     <view class="button-row filter-buttons">
       <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="search">应用筛选</button>
       <button class="btn secondary" disabled="{{loading}}" bindtap="clearKeyword">重置</button>
     </view>
-    <button class="hidden-entry" bindtap="openHiddenPanel">管理不再推荐的会员</button>
   </view>
 
   <view class="recommend-stage">
@@ -107,6 +125,7 @@
         <view class="member-overlay">
           <view class="name-line">
             <text class="recommend-name">{{currentMember.displayName}}</text>
+            <text wx:if="{{currentMember.vipBadge}}" class="member-vip-badge">VIP</text>
           </view>
           <text class="recommend-meta">{{currentMember.primaryMeta}}</text>
           <text class="recommend-work">{{currentMember.ageText}}{{currentMember.profileLine ? ' · ' + currentMember.profileLine : ''}}</text>
@@ -134,7 +153,7 @@
           <view class="action-icon action-heart {{currentMember.isFavorite ? 'active' : ''}}"><view class="heart-shape"></view></view>
         </button>
         <button class="quick-action" hover-class="action-icon-hover"
-          aria-label="不再推荐，可撤销" disabled="{{loading || hideLoading || favoriteLoading || sendingGiftId !== '' || actionAnimating || giftPanelOpen || filterOpen}}"
+          aria-label="不再查看该会员" disabled="{{loading || hideLoading || favoriteLoading || sendingGiftId !== '' || actionAnimating || giftPanelOpen || filterOpen}}"
           bindtap="hideCurrent">
           <view class="action-icon action-hide"><view class="x-shape"><view class="x-line x-left"></view><view class="x-line x-right"></view></view></view>
         </button>
@@ -156,30 +175,6 @@
       </view>
       <button class="btn secondary profile-entry" bindtap="goProfile">完善我的资料</button>
     </view>
-  </view>
-
-  <view wx:if="{{undoHidden}}" class="undo-banner" aria-live="polite">
-    <text>已不再推荐{{undoHidden.displayName}}</text>
-    <button loading="{{restoringUserId === undoHidden.targetUserId}}" disabled="{{restoringUserId || actionAnimating}}" bindtap="undoHide">撤销</button>
-  </view>
-
-  <view wx:if="{{hiddenPanelOpen}}" class="gift-mask" catchtap="closeHiddenPanel" catchtouchmove="noop"></view>
-  <view wx:if="{{hiddenPanelOpen}}" class="gift-panel hidden-panel" catchtap="noop">
-    <view class="gift-panel-head">
-      <view><text class="gift-panel-title">不再推荐的会员</text><text class="gift-panel-subtitle">恢复后，仍需符合当前分类与筛选条件</text></view>
-      <button class="hidden-close" bindtap="closeHiddenPanel">关闭</button>
-    </view>
-    <scroll-view class="gift-panel-scroll" scroll-y>
-      <view wx:for="{{hiddenMembers}}" wx:key="targetUserId" class="hidden-member-row">
-        <text>{{item.displayName}}</text>
-        <button data-user-id="{{item.targetUserId}}" bindtap="restoreHidden"
-          loading="{{restoringUserId === item.targetUserId}}" disabled="{{restoringUserId || hiddenLoading}}">恢复推荐</button>
-      </view>
-      <view wx:if="{{hiddenError}}" class="gift-loading">{{hiddenError}}</view>
-      <view wx:elif="{{!hiddenMembers.length}}" class="gift-loading">{{hiddenLoading ? '正在加载' : '还没有不再推荐的会员'}}</view>
-      <button wx:if="{{hiddenError || hiddenMembers.length < hiddenTotal}}" class="hidden-entry"
-        loading="{{hiddenLoading}}" disabled="{{hiddenLoading || restoringUserId}}" bindtap="loadMoreHidden">{{hiddenError ? '重试' : '加载更多'}}</button>
-    </scroll-view>
   </view>
 
   <view wx:if="{{giftPanelOpen}}" class="gift-mask" catchtap="closeGiftPanel" catchtouchmove="noop"></view>

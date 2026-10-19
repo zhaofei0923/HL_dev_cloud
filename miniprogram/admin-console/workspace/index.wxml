@@ -1,0 +1,15 @@
+<view class="admin-page">
+  <text class="eyebrow">运营管理</text><text class="title">{{title}}</text>
+  <view wx:if="{{resource === 'services'}}" class="admin-card muted">已购人工服务集中接入；优先处理待分配和待联系记录。联系与服务准备由负责主理人确认。</view>
+  <view class="admin-card filters"><view class="search-row"><input value="{{keyword}}" maxlength="80" placeholder="搜索姓名、编号或关键词" bindinput="onKeyword" bindconfirm="search" confirm-type="search" disabled="{{loading}}"/><button class="primary small" bindtap="search" disabled="{{loading}}">搜索</button></view>
+    <picker range="{{filters}}" range-key="label" value="{{filterIndex}}" data-field="filterIndex" bindchange="setFilter" disabled="{{loading}}"><view class="picker">{{filters[filterIndex].label}}<text>⌄</text></view></picker>
+    <picker wx:if="{{resource === 'certifications'}}" range="{{kinds}}" range-key="label" value="{{kindIndex}}" data-field="kindIndex" bindchange="setFilter" disabled="{{loading}}"><view class="picker">{{kinds[kindIndex].label}}<text>⌄</text></view></picker>
+    <block wx:if="{{resource === 'orders'}}"><picker range="{{fulfillmentOptions}}" range-key="label" value="{{fulfillmentIndex}}" data-field="fulfillmentIndex" bindchange="setFilter" disabled="{{loading}}"><view class="picker">{{fulfillmentOptions[fulfillmentIndex].label}}<text>⌄</text></view></picker><picker range="{{productOptions}}" range-key="label" value="{{productIndex}}" data-field="productIndex" bindchange="setFilter" disabled="{{loading}}"><view class="picker">{{productOptions[productIndex].label}}<text>⌄</text></view></picker><input class="member-filter" value="{{userIdFilter}}" type="number" maxlength="16" placeholder="会员编号（可选）" bindinput="onUserId" disabled="{{loading}}"/></block>
+  </view>
+  <view wx:if="{{error}}" class="admin-card error" aria-live="polite"><text>{{error}}</text><button class="secondary" bindtap="search" disabled="{{loading}}">重新读取</button></view>
+  <view wx:if="{{loading}}" class="admin-card empty">正在读取{{title}}…</view>
+  <view wx:if="{{ready && !rows.length}}" class="admin-card empty">当前筛选条件下暂无记录</view>
+  <view wx:for="{{rows}}" wx:key="rowKey" class="admin-card record"><view class="record-heading"><text class="record-title">{{item.title}}</text><text class="status">{{item.status}}</text></view><text class="muted record-subtitle">{{item.subtitle}}</text><view wx:for="{{item.lines}}" wx:for-item="line" wx:key="label" class="field"><text class="label">{{line.label}}</text><text class="value">{{line.value}}</text></view><button class="secondary" data-index="{{index}}" bindtap="openDetail" disabled="{{!item.canOpen}}">{{item.canOpen ? '查看详情' : '资料不完整，暂不能查看'}}</button></view>
+  <view wx:if="{{ready}}" class="pagination"><button bindtap="previous" disabled="{{page <= 1 || loading}}">上一页</button><text>第{{page}}页 · 共{{total}}条</text><button bindtap="next" disabled="{{!hasNext || loading}}">下一页</button></view>
+  <button class="text-button" bindtap="goOverview">返回管理总览</button>
+</view>

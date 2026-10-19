@@ -155,7 +155,11 @@ test('hidden list and restoration only affect the authenticated owner, including
   assert.equal(restored.viewerState.isFavorite, true, 'restoring never changes a heart');
   assert.equal((await r.hooks.member.hidden(1)).total, 0);
   assert.equal((await r.hooks.member.hidden(3)).total, 1, 'another account remains hidden');
-  assert.ok(r.writes.every(write => write.name === 'hl_member_interactions' && write.id === 'hide-current'));
+  assert.ok(r.writes.filter(write => write.name === 'hl_member_interactions').every(write => write.id === 'hide-current'));
+  assert.ok(r.writes.every(write => (write.name === 'hl_member_interactions' && write.id === 'hide-current')
+    || (write.name === 'hl_member_privacy' && write.id === 'visibility_pair_1_2')));
+  assert.equal(r.fixtures.hl_member_privacy.find(row => row._id === 'visibility_pair_1_2').hiddenBy.length, 0,
+    'restoring clears only the authenticated owner visibility lock');
   const writes = r.writes.length;
   const missing = await r.hooks.member.interact(1, { targetUserId: 999, actionType: 'hide', active: false });
   assert.equal(missing.interaction, null);
@@ -181,6 +185,7 @@ test('detail action state uses the same mutual, membership, formal pair and serv
 
 test('withdrawal is allowed at an exhausted quota, keeps quota spent, and sends no notification', async () => {
   const f = fixture();
+  f.hl_members.filter(row => Number(row.userId) === 1).forEach(row => { row.memberType = 'free'; });
   f.hl_member_interactions.push(...Array.from({ length: 7 }, (_, index) => favorite(100 + index, 1, 20 + index)));
   const r = runtime(f);
   const response = await withdraw(r);
@@ -203,6 +208,7 @@ test('withdrawal is allowed at an exhausted quota, keeps quota spent, and sends 
 
 test('same-day resend after withdrawal reuses the spent target even at the quota limit', async () => {
   const f = fixture();
+  f.hl_members.filter(row => Number(row.userId) === 1).forEach(row => { row.memberType = 'free'; });
   f.hl_member_interactions = [favorite(1, 1, 2), ...Array.from({ length: 7 }, (_, index) => favorite(100 + index, 1, 20 + index))];
   const r = runtime(f);
   await withdraw(r);
@@ -252,7 +258,8 @@ test('a private or disabled target can be withdrawn without reading any target p
   f.hl_profiles.find(row => row.userId === 2).displayEnabled = false;
   const r = runtime(f);
   assert.equal((await withdraw(r)).viewerState.isFavorite, false);
-  assert.ok(r.reads.every(read => read.name === 'hl_member_interactions'));
+  assert.ok(r.reads.every(read => ['hl_member_interactions', 'hl_users', 'hl_members', 'hl_vip_entitlements'].includes(read.name)));
+  assert.ok(r.reads.every(read => read.name !== 'hl_profiles'), 'withdrawal must never read the withdrawn target profile');
   const noHeart = await r.hooks.member.interact(1, { actionType: 'favorite', targetUserId: 999, active: false });
   assert.equal(noHeart.viewerState.isFavorite, false);
   assert.equal(noHeart.interaction, null);

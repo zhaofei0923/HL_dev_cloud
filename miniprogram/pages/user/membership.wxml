@@ -1,21 +1,22 @@
 <view class="page membership-page">
-  <view class="membership-hero {{overview.isPremiumMember ? 'active' : ''}}">
+  <view class="membership-tabs" role="tablist" aria-label="我的特权">
+    <button class="membership-tab {{activeProductType === 'vip' ? 'selected' : ''}}" role="tab" aria-selected="{{activeProductType === 'vip'}}" data-type="vip" bindtap="switchProduct">VIP会员</button>
+    <button class="membership-tab {{activeProductType === 'matchmaking' ? 'selected' : ''}}" role="tab" aria-selected="{{activeProductType === 'matchmaking'}}" data-type="matchmaking" bindtap="switchProduct">人工牵线</button>
+  </view>
+
+  <view class="membership-hero {{activeProductType === 'vip' && overview.isPremiumMember ? 'active' : ''}}">
     <view class="membership-hero-copy">
-      <text class="eyebrow">会员中心</text>
+      <text class="eyebrow">我的特权 · {{activeProductType === 'vip' ? 'VIP' : '专属红娘服务'}}</text>
       <text class="membership-title">{{statusTitle}}</text>
       <text class="membership-expiry">{{expiryText}}</text>
     </view>
-    <text class="membership-state">{{overview.isPremiumMember ? '已开通' : '未开通'}}</text>
-    <view class="benefit-strip">
-      <view class="benefit-item incoming">
-        <text class="benefit-name">喜欢我的</text>
-        <text class="benefit-note">查看身份并回应</text>
-      </view>
-      <view class="benefit-item mutual">
-        <text class="benefit-name">互相喜欢</text>
-        <text class="benefit-note">解锁资料与聊天</text>
-      </view>
-    </view>
+    <text class="membership-state">{{orderRequiresReview ? '待核查' : (activeProductType === 'vip' ? (overview.isPremiumMember ? '已开通' : '未开通') : (hasMatchmakingService ? '服务中' : '未购买'))}}</text>
+  </view>
+
+  <view wx:if="{{activeProductType === 'matchmaking' && hasMatchmakingService}}" class="membership-guide existing-service">
+    <text class="section-title">已购牵线权益剩余 {{matchmakingRemainingCount}} 次</text>
+    <text class="section-note">最早{{matchmakingEarliestExpiry}}。新购套餐独立有效30天，原套餐到期时间不会延长。</text>
+    <button class="btn gold service-request" data-type="matchmaking" bindtap="openPrivileges">使用我的牵线服务</button>
   </view>
 
   <view wx:if="{{errorText}}" class="notice error-notice">
@@ -41,18 +42,18 @@
 
   <view wx:if="{{loading || plans.length}}" class="membership-section plan-section">
     <view class="section-copy">
-      <text class="section-title">会员套餐</text>
-      <text class="section-note">选择适合你的会员期限。</text>
+      <text class="section-title">{{activePayment.testMode ? '沙箱支付测试' : (activeProductType === 'vip' ? 'VIP会员套餐' : '人工牵线套餐')}}</text>
+      <text class="section-note">{{activePayment.testMode ? paymentTestNotice : (activeProductType === 'vip' ? '选择适合你的期限，一档VIP享有11项专属权益，可直接购买。' : '可直接购买2次或6次套餐。付款确认后次数立即到账，服务期30天；完善资料后由平台安排主理人对接。')}}</text>
     </view>
 
-    <view wx:if="{{loading && !plans.length}}" class="empty-state">正在加载会员套餐</view>
+    <view wx:if="{{loading && !plans.length}}" class="empty-state">{{activePayment.testMode ? '正在加载支付测试' : '正在加载套餐'}}</view>
     <radio-group wx:else class="plan-list" bindchange="onPlanChange">
       <label
         wx:for="{{plans}}"
         wx:key="planCode"
         class="plan-row {{selectedPlanCode === item.planCode ? 'selected' : ''}}"
       >
-        <radio class="plan-radio" value="{{item.planCode}}" checked="{{selectedPlanCode === item.planCode}}" disabled="{{paymentStarting || confirming || orderCanResume}}" color="#a45d43" aria-label="{{item.title}}，{{item.priceText}}，{{item.durationText}}"></radio>
+        <radio class="plan-radio" value="{{item.planCode}}" checked="{{selectedPlanCode === item.planCode}}" disabled="{{paymentStarting || confirming || orderCanResume || orderRequiresReview || (lastOrderId && (orderStatus === 'pending' || orderStatus === 'confirming'))}}" color="#a45d43" aria-label="{{item.title}}，{{item.priceText}}，{{item.durationText}}"></radio>
         <view class="plan-copy">
           <view class="plan-title-row">
             <text class="plan-title">{{item.title}}</text>
@@ -63,35 +64,74 @@
         <view class="plan-price">
           <text class="price-value">{{item.priceText}}</text>
           <text class="price-duration">{{item.durationText}}</text>
+          <text wx:if="{{item.dailyPriceText}}" class="price-daily">{{item.dailyPriceText}}</text>
         </view>
       </label>
     </radio-group>
   </view>
 
+  <view wx:if="{{activeProductType === 'vip'}}" class="benefits-section">
+    <view class="benefits-heading"><text class="section-title">VIP专属权益</text><button class="text-command" data-type="vip" bindtap="openPrivileges">管理权益</button></view>
+    <view class="benefits-table">
+      <view class="benefits-table-head"><text>专属权益</text><text>普通用户</text><text>VIP会员</text></view>
+      <view wx:for="{{benefits}}" wx:key="key" class="benefits-table-row">
+        <view class="benefits-copy"><text class="benefits-title">{{item.title}}</text><text class="benefits-note">{{item.note}}</text></view>
+        <text class="benefits-free">{{item.key === 'unlimitedSwipe' ? '基础浏览' : '—'}}</text>
+        <text class="benefits-vip">可用</text>
+      </view>
+    </view>
+    <text class="benefits-footnote">互相喜欢或正式牵线后可聊天；交换微信需双方同意。认证资料和联系方式按你的设置展示。</text>
+  </view>
+
+  <view wx:if="{{activeProductType === 'matchmaking'}}" class="matchmaking-section">
+    <view class="membership-guide readiness-guide">
+      <text class="section-title">{{matchmakingProgressTitle}}</text>
+      <text class="section-note">{{matchmakingReadinessText}}</text>
+      <button wx:if="{{matchmakingProgress.purchased && !matchmakingProgress.profileComplete && hasMatchmakingService}}" class="text-command" bindtap="completeMatchmakingProfile">完善我的资料</button>
+      <button wx:if="{{canContactMatchmaker}}" class="text-command" bindtap="contactMatchmaker">联系主理人咨询（可选）</button>
+    </view>
+    <view wx:if="{{matchmakingPackages.length}}" class="service-packages">
+      <text class="section-title">我的牵线服务</text>
+      <view wx:for="{{matchmakingPackages}}" wx:key="id" class="service-package">
+        <view class="service-package-header"><text class="plan-title">{{item.planTitle}}</text><text class="service-package-status {{item.status}}">{{item.statusText}}</text></view>
+        <view class="service-package-counts"><text>总次数 {{item.totalCount}}</text><text>已使用 {{item.usedCount}}</text><text>剩余 {{item.remainingCount}}</text></view>
+        <text class="section-note">{{item.expiryText}}</text>
+      </view>
+      <button class="btn ghost service-request" data-type="matchmaking" bindtap="openPrivileges">查看牵线记录</button>
+    </view>
+    <text class="benefits-footnote">人工牵线与VIP权益分别开通，每次购买独立成包。服务期从付款确认起计30天，完善资料与主理人对接不暂停计期。实际推荐需资料完善及主理人服务准备就绪；每次牵线由主理人确认安排、双方本人同意后建立联系并扣1次，取消或拒绝不扣次。</text>
+  </view>
+
   <view wx:if="{{!loading && !onlineCheckout && !errorText}}" class="membership-guide">
-    <text class="section-title">由主理人协助开通</text>
-    <text class="section-note">联系主理人了解适合你的服务方案、费用和有效期，确认后开通会员权益。</text>
+    <text class="section-title">{{orderRequiresReview ? '已付款，待人工处理' : '微信支付暂不可用'}}</text>
+    <text class="section-note">{{orderRequiresReview ? '付款已确认，权益尚待核查。请通过服务支持核查处理，勿重复付款。' : '当前支付能力暂未开放或套餐暂不可用，请稍后刷新。已有订单可继续查询结果。'}}</text>
+  </view>
+
+  <view wx:if="{{paymentRestricted}}" class="membership-guide" aria-role="status">
+    <text class="section-title">微信支付能力受限</text>
+    <text class="section-note">当前小程序暂无法发起微信付款，请联系主理人处理。仍可查询已有订单，请勿重复尝试付款。</text>
   </view>
 
   <view wx:if="{{lastOrderId}}" class="order-feedback" aria-role="status">
     <text class="section-title">{{orderTitle}}</text>
     <text class="section-note">{{orderPlanText}}</text>
     <text class="section-note">{{orderNote}}</text>
-    <button class="text-command" bindtap="refreshOrderStatus" loading="{{orderChecking}}" disabled="{{orderChecking || paymentStarting || confirming}}">查询订单状态</button>
+    <button class="text-command" bindtap="refreshOrderStatus" loading="{{orderChecking}}" disabled="{{orderChecking || paymentStarting || confirming}}">{{activationOrderPending ? '查看主理人开通订单' : '查询订单状态'}}</button>
   </view>
 
-  <view class="membership-actions {{onlineCheckout ? '' : 'contact-only'}}">
+  <view class="membership-actions {{canContactMatchmaker ? '' : 'single-action'}}">
     <button
       wx:if="{{onlineCheckout}}"
-      class="btn pay-command"
+      class="btn {{activeProductType === 'matchmaking' && hasMatchmakingService ? 'ghost' : 'pay-command'}}"
       bindtap="startPayment"
       loading="{{paymentStarting || confirming}}"
-      disabled="{{loading || paymentStarting || confirming || !plans.length}}"
-    >{{orderCanResume ? '继续支付原订单' : paymentActionText}}</button>
-    <button class="btn {{onlineCheckout ? 'ghost' : ''}}" bindtap="contactMatchmaker">{{overview.isPremiumMember ? '联系主理人咨询' : '联系主理人开通'}}</button>
+      disabled="{{loading || errorText || paymentStarting || confirming || paymentRestricted || orderRequiresReview || !plans.length}}"
+    >{{paymentRestricted ? '暂无法付款' : (orderCanResume ? '继续支付原订单' : paymentActionText)}}</button>
+    <button wx:if="{{canContactMatchmaker}}" class="btn ghost" bindtap="contactMatchmaker">联系主理人咨询</button>
   </view>
 
   <view wx:if="{{onlineCheckout}}" class="payment-trust">
-    <text>付款完成后，会员权益将在确认成功后自动生效。</text>
+    <text>{{activePayment.testMode ? paymentTestNotice : '付款完成后，以服务端确认的权益与服务记录为准。'}}</text>
   </view>
+  <view class="service-agreement"><text>按所选套餐一次性付款，到期可手动续费，不自动扣款。购买前请确认价格、有效期与服务内容。</text></view>
 </view>

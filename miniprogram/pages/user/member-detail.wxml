@@ -12,6 +12,7 @@
       <view class="detail-identity">
         <view class="detail-name-line">
           <text class="detail-name">{{member.displayName}}</text>
+          <text wx:if="{{member.vipBadge}}" class="detail-vip-badge">VIP</text>
           <text class="detail-meta">{{member.metaText}}</text>
         </view>
         <text class="detail-work">{{member.workText}}</text>
@@ -84,6 +85,15 @@
     <view class="privacy-note">
       <text class="privacy-note-title">隐私说明</text>
       <text class="privacy-note-copy">婚况、房产与车辆概况属于公开匹配资料；联系方式、验资材料、主理人备注和内部服务记录不会公开。</text>
+    </view>
+    <view wx:if="{{member.userId}}" class="card detail-section detail-privileges">
+      <text class="section-title">进一步了解TA</text>
+      <text class="item-desc">微信交换需双方同意；上线提醒由你主动开启。</text>
+      <view class="detail-privilege-buttons">
+        <button class="detail-privilege-button" data-section="exchanges" disabled="{{loading}}" bindtap="goPrivilege">交换微信 · VIP</button>
+        <button class="detail-privilege-button" data-section="online" disabled="{{loading}}" bindtap="goPrivilege">上线提醒 · VIP</button>
+        <button class="detail-privilege-button" data-section="matchmaking" disabled="{{loading}}" bindtap="goPrivilege">申请人工牵线</button>
+      </view>
     </view>
 
     <view class="detail-action-dock">

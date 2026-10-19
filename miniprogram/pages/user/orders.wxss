@@ -1,0 +1,27 @@
+.order-page { padding-top: 28rpx; color: #2f2924; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; }
+.order-intro { margin: 0 4rpx 30rpx; }
+.order-eyebrow { display: block; color: #8b7060; font-size: 22rpx; font-weight: 700; line-height: 1.5; }
+.order-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; }
+.order-title { display: block; margin-top: 5rpx; font-size: 42rpx; font-weight: 800; line-height: 1.3; }
+.order-count { flex-shrink: 0; color: #817268; font-size: 23rpx; }
+.order-subtitle { display: block; margin-top: 12rpx; color: #817268; font-size: 24rpx; line-height: 1.65; }
+.order-page .order-row { display: block; box-sizing: border-box; width: 100%; margin: 0 0 18rpx; padding: 26rpx 24rpx 0; border: 1rpx solid #e7ded4; border-radius: 14rpx; background: #fffdf9; color: #2f2924; text-align: left; white-space: normal; line-height: 1.5; }
+.order-row::after, .order-text-button::after, .order-more::after, .order-primary::after, .order-secondary::after { border: 0; }
+.order-card-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 20rpx; }
+.order-card-copy { min-width: 0; flex: 1; }
+.order-plan-title { display: block; font-size: 30rpx; font-weight: 700; line-height: 1.5; overflow-wrap: break-word; }
+.order-term { display: block; margin-top: 8rpx; color: #817268; font-size: 23rpx; line-height: 1.6; }
+.order-card-summary { flex-shrink: 0; text-align: right; }
+.order-amount { display: block; font-size: 31rpx; font-weight: 750; line-height: 1.5; }
+.order-status { display: inline-block; margin-top: 7rpx; color: #817268; font-size: 23rpx; font-weight: 700; line-height: 1.5; }
+.order-status.attention { color: #a35d45; }
+.order-status.success { color: #3d6656; }
+.order-result { display: block; margin-top: 21rpx; color: #75685e; font-size: 23rpx; line-height: 1.65; }
+.order-card-footer { display: flex; justify-content: space-between; align-items: center; gap: 12rpx; margin-top: 20rpx; padding: 17rpx 0 19rpx; border-top: 1rpx solid #eee7de; color: #95877b; font-size: 21rpx; line-height: 1.5; }
+.order-detail-link { flex-shrink: 0; color: #a35d45; }
+.order-empty { margin-top: 32rpx; padding: 52rpx 28rpx; border: 1rpx solid #e7ded4; border-radius: 14rpx; background: #fffdf9; color: #817268; font-size: 26rpx; line-height: 1.7; }
+.order-empty-title { display: block; color: #2f2924; font-size: 31rpx; font-weight: 700; }
+.order-notice { display: flex; justify-content: space-between; align-items: center; gap: 20rpx; margin-bottom: 20rpx; padding: 20rpx 22rpx; border: 1rpx solid #e6cfc1; border-radius: 12rpx; background: #fff8f1; color: #925039; font-size: 24rpx; line-height: 1.7; }
+.order-text-button { flex-shrink: 0; width: auto; margin: 0; padding: 10rpx 0; background: transparent; color: #a35d45; font-size: 24rpx; font-weight: 700; line-height: 1.6; }
+.order-progress, .order-end { display: block; padding: 22rpx 0; color: #95877b; font-size: 23rpx; text-align: center; line-height: 1.5; }
+.order-more { margin: 20rpx 0; padding: 22rpx; border: 1rpx solid #d9c9bb; border-radius: 12rpx; background: #fffdf9; color: #86634f; font-size: 26rpx; line-height: 1.5; }

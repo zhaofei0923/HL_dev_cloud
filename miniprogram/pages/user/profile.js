@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const api_1 = require("../../services/api");
+const admin_entry_1 = require("../../services/admin-entry");
 const member_1 = require("../../services/member");
 const matchmaker_1 = require("../../services/matchmaker");
 const local_image_1 = require("../../utils/local-image");
@@ -227,7 +228,11 @@ function selectorTextFor(form) {
 function matchmakerEntryView(matchmaker) {
     const status = matchmaker ? Number(matchmaker.certificationStatus || 0) : -1;
     const remark = matchmaker && matchmaker.certificationRemark ? String(matchmaker.certificationRemark) : '';
-    if (status === 2) {
+    if (matchmaker && matchmaker.status !== undefined && Number(matchmaker.status) !== 1) {
+        return { matchmakerApproved: false, matchmakerEntryTitle: '主理人账号已停用',
+            matchmakerEntryNote: '请联系平台确认主理人账号状态。', matchmakerEntryButton: '查看开通状态' };
+    }
+    if (status === 2 && (matchmaker.status === undefined || Number(matchmaker.status) === 1)) {
         return {
             matchmakerApproved: true,
             matchmakerEntryTitle: '主理人端入口',
@@ -238,24 +243,24 @@ function matchmakerEntryView(matchmaker) {
     if (status === 1) {
         return {
             matchmakerApproved: false,
-            matchmakerEntryTitle: '主理人申请未通过',
-            matchmakerEntryNote: remark || '本次申请暂未通过，可完善资料后重新提交申请。',
-            matchmakerEntryButton: '重新申请 / 查看状态'
+            matchmakerEntryTitle: '主理人资格待确认',
+            matchmakerEntryNote: remark || '本次申请暂未通过，请进入开通页确认资格或联系平台。',
+            matchmakerEntryButton: '查看开通状态'
         };
     }
     if (status === 0) {
         return {
             matchmakerApproved: false,
-            matchmakerEntryTitle: '主理人申请待审批',
-            matchmakerEntryNote: '申请已提交，后台审批通过后将开放会员经营、资源池和沙龙管理。',
-            matchmakerEntryButton: '查看申请状态'
+            matchmakerEntryTitle: '开通主理人',
+            matchmakerEntryNote: '一次性开通费 ¥6980，长期有效。付款确认后自动开通，无需管理员审批。',
+            matchmakerEntryButton: '查看开通方案'
         };
     }
     return {
         matchmakerApproved: false,
-        matchmakerEntryTitle: '申请成为主理人',
-        matchmakerEntryNote: '提交申请后需等待后台审批；通过后才会开放会员经营、资源池和沙龙管理。',
-        matchmakerEntryButton: '申请 / 查看状态'
+        matchmakerEntryTitle: '开通主理人',
+        matchmakerEntryNote: '一次性开通费 ¥6980，长期有效。付款确认后自动开通会员经营、资源池和沙龙管理。',
+        matchmakerEntryButton: '查看开通方案'
     };
 }
 Page({
@@ -277,11 +282,18 @@ Page({
     _certificationGeneration: 0,
     _certificationLoadPromise: null,
     _certificationRefreshOnShow: false,
+    _vipBadgeGeneration: 0,
+    _vipBadgeExpiryTimer: null,
+    _adminEntryGeneration: 0,
     data: {
         user: null,
         loading: false,
         profileReady: false,
         profileError: '',
+        isVipBadge: false,
+        adminEntryVisible: false,
+        adminEntryReady: false,
+        adminEntryOpening: false,
         saving: false,
         uploadingPhotos: false,
         completionText: '0%',
@@ -296,9 +308,9 @@ Page({
         incomeOptions: profile_options_1.INCOME_OPTIONS,
         occupationOptions: profile_options_1.OCCUPATION_OPTIONS,
         matchmakerApproved: false,
-        matchmakerEntryTitle: '申请成为主理人',
-        matchmakerEntryNote: '提交申请后需等待后台审批；通过后才会开放会员经营、资源池和沙龙管理。',
-        matchmakerEntryButton: '申请 / 查看状态',
+        matchmakerEntryTitle: '开通主理人',
+        matchmakerEntryNote: '一次性开通费 ¥6980，长期有效。付款确认后自动开通。',
+        matchmakerEntryButton: '查看开通方案',
         matchmakerCode: '',
         matchmakerRequesting: false,
         referralCard: { canShare: false },
@@ -324,6 +336,8 @@ Page({
         if (!this.synchronizeSession())
             return;
         this._profileVisible = true;
+        void this.loadVipBadge();
+        void this.loadAdminEntry();
         this.syncLeaveGuard();
         wx.setNavigationBarTitle({ title: this.data.editingProfile ? '编辑资料' : '我的资料' });
         (0, user_navigation_1.syncUserTabBar)(this, 'mine');
@@ -333,9 +347,105 @@ Page({
         this._certificationRefreshOnShow = false;
         return Promise.all([this.loadProfile(force), this.loadCertifications(refreshCertifications)]).then(() => undefined);
     },
+    clearVipBadgeTimer() {
+        if (this._vipBadgeExpiryTimer !== null)
+            clearTimeout(this._vipBadgeExpiryTimer);
+        this._vipBadgeExpiryTimer = null;
+    },
+    async loadAdminEntry() {
+        const scope = (0, page_session_1.pageSessionScope)();
+        const generation = ++this._adminEntryGeneration;
+        this.setData({ adminEntryVisible: false, adminEntryReady: false });
+        if (!scope || !this._profileVisible || scope !== this._profileScope)
+            return null;
+        const isCurrent = () => this._profileVisible && generation === this._adminEntryGeneration && scope === (0, page_session_1.pageSessionScope)();
+        try {
+            const entry = await (0, admin_entry_1.readAdminEntry)();
+            if (!isCurrent())
+                return null;
+            this.setData({ adminEntryVisible: entry.allowed, adminEntryReady: entry.ready });
+            return entry;
+        }
+        catch {
+            if (isCurrent())
+                this.setData({ adminEntryVisible: false, adminEntryReady: false });
+            return null;
+        }
+    },
+    async goAdminBackend() {
+        if (this.data.adminEntryOpening || !this._profileVisible)
+            return;
+        const scope = (0, page_session_1.pageSessionScope)();
+        if (!scope || scope !== this._profileScope)
+            return;
+        this.setData({ adminEntryOpening: true });
+        try {
+            const entry = await this.loadAdminEntry();
+            if (!this._profileVisible || scope !== (0, page_session_1.pageSessionScope)())
+                return;
+            if (!entry || !entry.allowed) {
+                wx.showToast({ title: '管理权限暂不可用，请重试', icon: 'none' });
+                return;
+            }
+            wx.navigateTo({ url: '/pages/admin/portal',
+                fail: () => {
+                    if (this._profileVisible && scope === (0, page_session_1.pageSessionScope)())
+                        wx.showToast({ title: '管理后台暂时无法打开', icon: 'none' });
+                } });
+        }
+        finally {
+            if (scope === (0, page_session_1.pageSessionScope)())
+                this.setData({ adminEntryOpening: false });
+        }
+    },
+    scheduleVipBadgeExpiry(expireAt, scope, generation) {
+        this.clearVipBadgeTimer();
+        const remaining = expireAt - Date.now();
+        if (remaining <= 0) {
+            this.setData({ isVipBadge: false });
+            return;
+        }
+        this._vipBadgeExpiryTimer = setTimeout(() => {
+            this._vipBadgeExpiryTimer = null;
+            if (generation !== this._vipBadgeGeneration || scope !== (0, page_session_1.pageSessionScope)() || !this._profileVisible)
+                return;
+            if (Date.now() >= expireAt)
+                this.setData({ isVipBadge: false });
+            else
+                this.scheduleVipBadgeExpiry(expireAt, scope, generation);
+        }, Math.min(remaining, 2147483647));
+    },
+    async loadVipBadge() {
+        const scope = (0, page_session_1.pageSessionScope)();
+        if (!scope || scope !== this._profileScope || !this._profileVisible)
+            return;
+        const generation = ++this._vipBadgeGeneration;
+        this.clearVipBadgeTimer();
+        this.setData({ isVipBadge: false });
+        const isCurrent = () => generation === this._vipBadgeGeneration && scope === (0, page_session_1.pageSessionScope)() && this._profileVisible;
+        try {
+            const overview = await member_1.memberApi.vipOverview();
+            if (!isCurrent())
+                return;
+            const lifetime = overview.lifetime === true || overview.vipMembership?.lifetime === true;
+            const expires = new Date(overview.vipMembership?.expireAt || overview.expireAt || '').getTime();
+            const active = overview.isPremiumMember === true && (lifetime || Number.isFinite(expires) && expires > Date.now());
+            this.setData({ isVipBadge: active });
+            if (active && !lifetime)
+                this.scheduleVipBadgeExpiry(expires, scope, generation);
+        }
+        catch (error) {
+            if (isCurrent())
+                this.setData({ isVipBadge: false });
+            console.warn('load profile VIP badge failed', error);
+        }
+    },
     synchronizeSession() {
         const scope = (0, page_session_1.pageSessionScope)();
         if (scope !== this._profileScope) {
+            this._adminEntryGeneration += 1;
+            this._vipBadgeGeneration += 1;
+            this.clearVipBadgeTimer();
             this._profileScope = scope;
             this._profileGeneration += 1;
             this._profileLoadPromise = null;
@@ -361,7 +471,8 @@ Page({
                 ...matchmakerEntryView(null),
                 completionText: completion.text,
                 completionNote: completion.note,
-                loading: false, profileReady: false, profileError: '', saving: false, uploadingPhotos: false, referralLoading: false,
+                loading: false, profileReady: false, profileError: '', isVipBadge: false, saving: false, uploadingPhotos: false, referralLoading: false,
+                adminEntryVisible: false, adminEntryReady: false, adminEntryOpening: false,
                 referralCard: { canShare: false }, matchmakerCode: '',
                 editingProfile: false, previewOpen: false,
                 formDirty: false, saveState: 'idle', saveStatus: '资料已同步',
@@ -443,13 +554,18 @@ Page({
         return promise;
     },
     onPullDownRefresh() {
+        void this.loadAdminEntry();
         return Promise.all([this.loadProfile(true), this.loadCertifications(true)]).then(() => undefined).finally(() => wx.stopPullDownRefresh());
     },
     retryProfile() {
         return this.loadProfile(true);
     },
     onUnload() {
+        this._adminEntryGeneration += 1;
+        this.setData({ adminEntryVisible: false, adminEntryReady: false, adminEntryOpening: false });
         this._profileVisible = false;
+        this._vipBadgeGeneration += 1;
+        this.clearVipBadgeTimer();
         this.clearLeaveGuard();
         this._profileGeneration += 1;
         this._profileLoadPromise = null;
@@ -458,7 +574,11 @@ Page({
         this._certificationLoadPromise = null;
     },
     onHide() {
+        this._adminEntryGeneration += 1;
+        this.setData({ adminEntryVisible: false, adminEntryReady: false, adminEntryOpening: false });
         this._profileVisible = false;
+        this._vipBadgeGeneration += 1;
+        this.clearVipBadgeTimer();
         // Tab pages keep their form in memory; the next shown page owns its guard.
         this.clearLeaveGuard();
     },
@@ -717,7 +837,7 @@ Page({
     showInviteLinkTip() {
         wx.showModal({
             title: '微信链接添加',
-            content: '打开主理人或会员发来的微信分享卡片后，系统会自动注册为对应主理人名下免费会员；扫码和手动邀请码仍需提交申请。',
+            content: '打开主理人或会员发来的微信分享卡片后，系统会自动注册为对应主理人名下免费会员；扫码或输入邀请码后，确认加入即可生效。',
             showCancel: false,
             confirmText: '知道了'
         });
@@ -927,11 +1047,17 @@ Page({
             return;
         }
         this._refreshOnShow = true;
-        wx.redirectTo({ url: '/pages/matchmaker/workspace' });
+        if (this.data.matchmakerApproved)
+            wx.redirectTo({ url: '/pages/matchmaker/workspace' });
+        else
+            wx.navigateTo({ url: '/pages/matchmaker/activation' });
     },
     goMembership() {
         this._refreshOnShow = true;
         wx.navigateTo({ url: '/pages/user/membership' });
+    },
+    goOrders() {
+        wx.navigateTo({ url: '/pages/user/orders' });
     },
     logout() {
         if (this.data.saving || this._choosingPhotos)

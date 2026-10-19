@@ -40,11 +40,6 @@ exports.memberApi = {
     showcaseDetail(id) {
         return (0, api_1.request)(`/member/showcase/${encodeURIComponent(String(id))}`, { showError: false });
     },
-    hidden(page = 1) {
-        return (0, api_1.request)('/member/hidden', {
-            data: { page, pageSize: 20 }, showError: false
-        });
-    },
     likedMe(data) {
         return (0, api_1.request)('/member/liked-me', { data });
     },
@@ -54,6 +49,76 @@ exports.memberApi = {
     membershipOverview() {
         return (0, api_1.request)('/member/membership-plans');
     },
+    orders(page = 1, pageSize = 20) {
+        return (0, api_1.request)('/member/orders', {
+            data: { page, pageSize }, showError: false, unauthorizedRedirect: '/pages/index/index?returnTo=orders'
+        });
+    },
+    orderDetail(outTradeNo) {
+        return (0, api_1.request)(`/member/orders/${encodeURIComponent(outTradeNo)}`, {
+            showError: false, unauthorizedRedirect: '/pages/index/index?returnTo=orders'
+        });
+    },
+    vipOverview() {
+        return (0, api_1.request)('/member/vip/overview', { showError: false });
+    },
+    privacy() {
+        return (0, api_1.request)('/member/vip/privacy', { showError: false });
+    },
+    updatePrivacy(data) {
+        return (0, api_1.request)('/member/vip/privacy', { method: 'POST', data });
+    },
+    visitors(data = {}) {
+        return (0, api_1.request)('/member/vip/visitors', { data, showError: false });
+    },
+    recordVisit(targetUserId) {
+        return (0, api_1.request)('/member/vip/visits', { method: 'POST', data: { targetUserId }, showError: false });
+    },
+    wechatExchanges() {
+        return (0, api_1.request)('/member/vip/wechat-exchanges', { showError: false });
+    },
+    requestWechatExchange(data) {
+        return (0, api_1.request)('/member/vip/wechat-exchanges', { method: 'POST', data });
+    },
+    respondWechatExchange(id, data) {
+        return (0, api_1.request)(`/member/vip/wechat-exchanges/${encodeURIComponent(id)}/respond`, { method: 'POST', data });
+    },
+    wechatExchange(id) {
+        return (0, api_1.request)(`/member/vip/wechat-exchanges/${encodeURIComponent(id)}`, { showError: false });
+    },
+    onlineSubscriptions() {
+        return (0, api_1.request)('/member/vip/online-subscriptions', { showError: false });
+    },
+    subscribeOnline(data) {
+        return (0, api_1.request)('/member/vip/online-subscriptions', { method: 'POST', data });
+    },
+    updatePresence() {
+        return (0, api_1.request)('/member/vip/presence', { method: 'POST', data: {}, showError: false });
+    },
+    matchmakingPackages() {
+        return (0, api_1.request)('/member/matchmaking/packages', { showError: false });
+    },
+    matchmakingReadiness(memberUserId) {
+        return (0, api_1.request)('/member/matchmaking/readiness', { data: memberUserId ? { memberUserId } : {}, showError: false });
+    },
+    confirmMatchmakingReadiness(memberUserId, confirmed) {
+        return (0, api_1.request)('/member/matchmaking/readiness', { method: 'POST', data: { memberUserId, confirmed } });
+    },
+    matchmakingRequests() {
+        return (0, api_1.request)('/member/matchmaking/requests', { showError: false });
+    },
+    requestMatchmaking(data) {
+        return (0, api_1.request)('/member/matchmaking/requests', { method: 'POST', data });
+    },
+    respondMatchmaking(id, data) {
+        return (0, api_1.request)(`/member/matchmaking/requests/${encodeURIComponent(id)}/respond`, { method: 'POST', data });
+    },
+    approveMatchmaking(id) {
+        return (0, api_1.request)(`/member/matchmaking/requests/${encodeURIComponent(id)}/approve`, { method: 'POST', data: {} });
+    },
+    cancelMatchmaking(id) {
+        return (0, api_1.request)(`/member/matchmaking/requests/${encodeURIComponent(id)}/cancel`, { method: 'POST', data: {} });
+    },
     createMembershipOrder(planCode) {
         return (0, api_1.request)('/member/payment-orders', {
             method: 'POST',
@@ -62,6 +127,19 @@ exports.memberApi = {
     },
     membershipOrder(outTradeNo) {
         return (0, api_1.request)(`/member/payment-orders/${outTradeNo}`, {
+            showError: false
+        });
+    },
+    virtualPaymentCheckout(outTradeNo, loginCode) {
+        return (0, api_1.request)('/member/payment-virtual/checkout', {
+            method: 'POST',
+            data: { outTradeNo, loginCode }
+        });
+    },
+    virtualPaymentQuery(outTradeNo) {
+        return (0, api_1.request)('/member/payment-virtual/query', {
+            method: 'POST',
+            data: { outTradeNo },
             showError: false
         });
     },

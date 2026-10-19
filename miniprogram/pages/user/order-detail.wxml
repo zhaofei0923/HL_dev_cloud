@@ -1,0 +1,26 @@
+<view class="page order-page">
+  <view wx:if="{{invalidLink}}" class="order-empty">
+    <text class="order-empty-title">订单链接无效</text><text class="order-subtitle">请从我的订单重新打开。</text><button class="order-text-button" bindtap="openOrders">查看我的订单</button>
+  </view>
+  <block wx:else>
+    <view wx:if="{{loading && !order}}" class="order-empty" aria-role="status">正在读取订单详情…</view>
+    <view wx:if="{{errorText}}" class="order-notice" aria-role="alert"><text>{{errorText}}</text><button class="order-text-button" bindtap="refresh" disabled="{{loading || refreshing}}">重新读取</button></view>
+
+    <block wx:if="{{order}}">
+      <view class="order-detail-hero">
+        <view class="order-heading-row"><text class="order-eyebrow">订单详情</text><text class="order-status {{order.statusTone}}">{{order.statusText}}</text></view>
+        <text class="order-detail-amount">{{order.amountText}}</text>
+        <text class="order-plan-title">{{order.planTitle}}</text><text class="order-term">{{order.termText}}</text>
+      </view>
+      <view class="order-result-panel"><text class="order-section-title">权益与处理结果</text><text class="order-result-copy">{{order.resultText}}</text></view>
+      <view class="order-facts">
+        <view class="order-fact order-number-fact"><text class="order-fact-label">订单号</text><view class="order-number-copy"><text class="order-number" user-select="true">{{order.outTradeNo}}</text><button class="order-text-button" bindtap="copyOrderNumber">复制订单号</button></view></view>
+        <view class="order-fact"><text class="order-fact-label">创建时间</text><text class="order-fact-value">{{order.createdText}}</text></view>
+        <view class="order-fact"><text class="order-fact-label">支付时间</text><text class="order-fact-value">{{order.paidText}}</text></view>
+        <view wx:if="{{order.status === 'refunded'}}" class="order-fact"><text class="order-fact-label">退款时间</text><text class="order-fact-value">{{order.refundedText}}</text></view>
+        <view class="order-fact"><text class="order-fact-label">支付方式</text><text class="order-fact-value">{{order.paymentText}}</text></view>
+      </view>
+      <view class="order-detail-actions"><button class="order-primary" bindtap="openPrivileges">查看我的权益</button><button class="order-secondary" bindtap="refresh" loading="{{refreshing}}" disabled="{{loading || refreshing}}">刷新订单状态</button></view>
+    </block>
+  </block>
+</view>

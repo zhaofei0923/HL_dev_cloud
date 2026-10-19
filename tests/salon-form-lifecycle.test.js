@@ -59,7 +59,7 @@ function runtime(create) {
   return { page, session, calls, now };
 }
 
-function fill(page, title = '待审核活动') {
+function fill(page, title = '新发布活动') {
   page.onInput({ currentTarget: { dataset: { field: 'title' } }, detail: { value: title } });
   page.onInput({ currentTarget: { dataset: { field: 'location' } }, detail: { value: '会客厅' } });
 }
@@ -80,7 +80,7 @@ test('current form creates once, preserves future local time and navigates on cu
   assert.equal(page.data.saving, true);
   pending.resolve({ id: 7 });
   await first;
-  assert.deepEqual(calls.toasts, ['已提交审核']);
+  assert.deepEqual(calls.toasts, ['活动已发布']);
   assert.equal(calls.backs, 1);
   assert.equal(page.data.saving, false);
 });

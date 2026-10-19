@@ -17,6 +17,7 @@ Page({
     _detailUnloaded: false,
     _detailLoadedAt: 0,
     _detailRefreshOnShow: false,
+    _detailVisible: true,
     data: {
         id: '',
         member: null,
@@ -31,16 +32,19 @@ Page({
     },
     onLoad(options) {
         this._detailUnloaded = false;
+        this._detailVisible = true;
         this.setData({ id: String(options.id || '') });
         this.load();
     },
     onShow() {
+        this._detailVisible = true;
         const refresh = this._detailRefreshOnShow || (this._detailLoadedAt > 0 && Date.now() - this._detailLoadedAt >= showcase_cache_1.SHOWCASE_CACHE_TTL_MS);
         this._detailRefreshOnShow = false;
         if (this._detailScope !== (0, page_session_1.pageSessionScope)() || refresh)
             return this.load();
     },
     onHide() {
+        this._detailVisible = false;
         this._detailRefreshOnShow = true;
     },
     onUnload() {
@@ -54,7 +58,7 @@ Page({
         this._detailScope = scope;
         this._detailLoadedAt = 0;
         const generation = ++this._detailGeneration;
-        const isCurrent = () => !this._detailUnloaded && generation === this._detailGeneration && (0, page_session_1.pageSessionScope)() === scope;
+        const isCurrent = () => this._detailVisible && !this._detailUnloaded && generation === this._detailGeneration && (0, page_session_1.pageSessionScope)() === scope;
         this.setData({ member: null, certificationRows: [], loading: !!scope, chatAccess: 'unknown',
             loadError: '', unavailable: false, isFavorite: false });
         if (!scope)
@@ -74,6 +78,10 @@ Page({
                 isFavorite: state.isFavorite === true,
                 chatAccess: ['allowed', 'membership_required', 'unavailable'].includes(String(state.chatAccess)) ? String(state.chatAccess) : 'unknown' });
             this._detailLoadedAt = Date.now();
+            const targetUserId = Number(row.userId);
+            if (Number.isSafeInteger(targetUserId) && targetUserId > 0 && isCurrent()) {
+                void member_1.memberApi.recordVisit(targetUserId).catch(err => console.warn('record member visit failed', err));
+            }
         }
         catch (err) {
             if (!isCurrent())
@@ -94,6 +102,14 @@ Page({
     },
     goProfile() {
         wx.switchTab({ url: '/pages/user/profile' });
+    },
+    goPrivilege(e) {
+        const section = String(e.currentTarget.dataset.section || '');
+        const targetUserId = Number(this.data.member?.userId);
+        if (!['exchanges', 'online', 'matchmaking'].includes(section) || !Number.isSafeInteger(targetUserId) || targetUserId <= 0 || this.data.loading)
+            return;
+        const targetName = encodeURIComponent(String(this.data.member?.displayName || ''));
+        wx.navigateTo({ url: `/pages/user/vip-privileges?section=${section}&targetUserId=${targetUserId}&targetName=${targetName}` });
     },
     primaryAction() {
         if (this.data.loading || this.data.favoriteLoading || this.data.chatStarting)

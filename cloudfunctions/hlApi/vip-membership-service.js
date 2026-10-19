@@ -2,6 +2,8 @@
 
 const { createHash, randomUUID } = require('node:crypto');
 const { isPremiumMembership } = require('./relationship-policy');
+const { DIRECT_PURCHASE_CONTRACT, isDirectPurchaseOrder, assertPurchaseContract } = require('./purchase-contract-policy');
+const { MATCHMAKER_LIFETIME_PLAN, assertMatchmakerLifetimeProduct } = require('./matchmaker-activation-policy');
 
 const DAY_MS = 86400000;
 const VIP_COLLECTIONS = Object.freeze({
@@ -21,12 +23,14 @@ const DEFAULT_MEMBERSHIP_PLANS = Object.freeze([
   { planCode: 'vip_month', title: 'VIP月卡', productType: 'vip', membershipTier: 'vip', amountFen: 19800, durationDays: 30, serviceCount: 0, sortOrder: 60 },
   { planCode: 'vip_quarter', title: 'VIP季卡', productType: 'vip', membershipTier: 'vip', amountFen: 39800, durationDays: 90, serviceCount: 0, sortOrder: 50 },
   { planCode: 'vip_year', title: 'VIP年卡', productType: 'vip', membershipTier: 'vip', amountFen: 69800, durationDays: 365, serviceCount: 0, sortOrder: 40 },
-  { planCode: 'matchmaking_single', title: '人工牵线单次', productType: 'matchmaking', amountFen: 298000, durationDays: 30, serviceCount: 1, sortOrder: 30 },
-  { planCode: 'matchmaking_month_3', title: '人工牵线1个月', productType: 'matchmaking', amountFen: 698000, durationDays: 30, serviceCount: 3, sortOrder: 20 }
+  { planCode: 'matchmaking_double', title: '人工牵线2次', productType: 'matchmaking', amountFen: 298000, durationDays: 30, serviceCount: 2, sortOrder: 30 },
+  { planCode: 'matchmaking_month_6', title: '人工牵线1个月', productType: 'matchmaking', amountFen: 698000, durationDays: 30, serviceCount: 6, sortOrder: 20 }
 ].map(plan => Object.freeze({ ...plan, active: false, description: '', badge: '' })));
 // Retired product IDs remain valid on immutable historical orders/packages,
 // but must never become purchasable again through persisted catalog rows.
-const RETIRED_MATCHMAKING_PLAN_CODES = Object.freeze(['matchmaking_month', 'matchmaking_quarter', 'matchmaking_halfyear']);
+const RETIRED_MATCHMAKING_PLAN_CODES = Object.freeze([
+  'matchmaking_month', 'matchmaking_quarter', 'matchmaking_halfyear', 'matchmaking_single', 'matchmaking_month_3'
+]);
 const CAPABILITIES = Object.freeze(['chat', 'exchangeWechat', 'unlimitedSwipe', 'advancedFilter', 'onlineReminder',
   'exclusiveSupport', 'memberBadge', 'likedMe', 'visitors', 'invisibleVisit', 'specialZones']);
 
@@ -256,6 +260,11 @@ function createVipMembershipService(dependencies = {}) {
     const id = userId(order.userId);
     const orderNo = String(order.outTradeNo || '').trim();
     if (!/^[a-zA-Z0-9_-]{1,96}$/.test(orderNo)) throw fail('订单编号无效', 409, 40907);
+    if (order.productType === 'matchmaker' || order.planCode === MATCHMAKER_LIFETIME_PLAN.planCode) {
+      try { assertMatchmakerLifetimeProduct(order); assertPurchaseContract(order); }
+      catch { throw fail('主理人开通订单规则无效', 409, 40907); }
+      return { id, orderNo, durationDays: 0, serviceCount: 0 };
+    }
     if (!['vip', 'matchmaking'].includes(order.productType)) throw fail('订单服务分类无效', 409, 40907);
     const durationDays = Number(order.durationDays);
     if (!Number.isSafeInteger(durationDays) || durationDays <= 0 || durationDays > 3650) throw fail('订单期限无效', 409, 40907);
@@ -265,9 +274,25 @@ function createVipMembershipService(dependencies = {}) {
     }
     return { id, orderNo, durationDays, serviceCount };
   }
+  async function recordServiceIntake(transaction, id, orderNo, timestamp, firstConfirmedAt = timestamp) {
+    const key = `intake_user_${id}`;
+    const previous = await document(C.matchmakingReadiness, key, transaction);
+    if (previous && (previous.kind !== 'service_intake' || Number(previous.userId) !== id
+      || !Array.isArray(previous.orderNos))) throw fail('牵线服务受理记录异常，请联系工作人员', 409, 40906);
+    const orderNos = previous ? previous.orderNos : [];
+    if (orderNos.includes(orderNo) && previous.createdAt && previous.requestedAt) return;
+    await save(transaction, C.matchmakingReadiness, key, { ...previous, kind: 'service_intake', userId: id,
+      orderNos: orderNos.includes(orderNo) ? orderNos : [...orderNos, orderNo],
+      createdAt: previous && previous.createdAt || firstConfirmedAt,
+      requestedAt: previous && previous.requestedAt || firstConfirmedAt, updatedAt: timestamp });
+  }
   async function fulfillOrder(transaction, order, timestamp = iso(clock())) {
     const { id, orderNo, durationDays, serviceCount } = trustedOrder(order);
     await activeUser(id, transaction);
+    if (order.productType === 'matchmaker') {
+      if (typeof dependencies.fulfillMatchmaker !== 'function') throw fail('主理人开通服务暂不可用', 503, 50301);
+      return dependencies.fulfillMatchmaker(transaction, order, timestamp);
+    }
     if (order.productType === 'vip') {
       const key = `vip_user_${id}`;
       const existing = await document(C.vipEntitlements, key, transaction);
@@ -286,12 +311,16 @@ function createVipMembershipService(dependencies = {}) {
     const previous = await document(C.matchmakingPackages, key, transaction);
     if (previous) {
       if (Number(previous.userId) !== id || previous.orderNo !== orderNo) throw fail('牵线权益归属异常', 409, 40906);
+      if (isDirectPurchaseOrder(previous)) {
+        await recordServiceIntake(transaction, id, orderNo, timestamp, previous.createdAt || previous.startAt || timestamp);
+      }
       return { package: publicPackage(previous, new Date(timestamp).getTime()), idempotent: true };
     }
     const indexKey = `matchmaking_user_${id}`;
     const index = await document(C.matchmakingPackages, indexKey, transaction) || { userId: id, packageIds: [] };
     if (index.packageIds.length >= 1000) throw fail('牵线套餐过多，请联系工作人员', 409, 40906);
     const row = { id: key, userId: id, orderNo, planCode: String(order.planCode || ''), planTitle: String(order.planTitle || ''),
+      ...(isDirectPurchaseOrder(order) ? { productType: 'matchmaking', fulfillmentContract: DIRECT_PURCHASE_CONTRACT } : {}),
       startAt: timestamp, expireAt: iso(new Date(timestamp).getTime() + durationDays * DAY_MS), totalCount: serviceCount,
       originalTotalCount: serviceCount, usedCount: 0, status: 'active', createdAt: timestamp, updatedAt: timestamp };
     // A later human-service dossier can carry the historical `paid` label.
@@ -299,10 +328,15 @@ function createVipMembershipService(dependencies = {}) {
     await freezeLegacyEntitlement(id, transaction, timestamp);
     await save(transaction, C.matchmakingPackages, key, row);
     await save(transaction, C.matchmakingPackages, indexKey, { ...index, packageIds: [...index.packageIds, key], updatedAt: timestamp });
+    if (isDirectPurchaseOrder(row)) await recordServiceIntake(transaction, id, orderNo, timestamp);
     return { package: publicPackage(row, new Date(timestamp).getTime()), idempotent: false };
   }
   async function refundOrder(transaction, order, timestamp = iso(clock())) {
     const { id, orderNo } = trustedOrder(order);
+    if (order.productType === 'matchmaker') {
+      if (typeof dependencies.refundMatchmaker !== 'function') throw fail('主理人退款处理暂不可用', 503, 50301);
+      return dependencies.refundMatchmaker(transaction, order, timestamp);
+    }
     if (order.productType === 'vip') {
       const key = `vip_user_${id}`;
       const record = await document(C.vipEntitlements, key, transaction);
@@ -429,8 +463,9 @@ function createVipMembershipService(dependencies = {}) {
       profileComplete = completion === true || Number(completion) === 100 || completion && Number(completion.percent) === 100;
     } else profileComplete = defaultProfileComplete(user, profile);
     let activeAssignment = !!member && !!mm && Number(mm.status) === 1 && Number(mm.certificationStatus) === 2;
+    let matchmakerUser = null;
     if (activeAssignment) {
-      try { await activeUser(mm.userId, transaction); }
+      try { matchmakerUser = await activeUser(mm.userId, transaction); }
       catch (error) { if (error.status === 403) activeAssignment = false; else throw error; }
     }
     const record = await document(C.matchmakingReadiness, `readiness_user_${id}`, transaction);
@@ -438,12 +473,38 @@ function createVipMembershipService(dependencies = {}) {
       && Number(record.memberRecordId) === Number(member.id) && Number(record.matchmakerId) === Number(member.matchmakerId)
       && String(record.profileVersion || '') === String(profile && profile.updatedAt || '');
     const ready = profileComplete && activeAssignment && matchmakerConfirmed;
-    return { user, profile, member, mm, view: { ready: !!ready, profileComplete: !!profileComplete,
+    return { user, profile, member, mm, matchmakerUser, view: { ready: !!ready, profileComplete: !!profileComplete,
       matchmakerConfirmed: !!matchmakerConfirmed, activeAssignment, matchmakerId: member ? Number(member.matchmakerId) : null,
       reason: !profileComplete ? 'profile_incomplete' : !activeAssignment ? 'matchmaker_required'
         : !matchmakerConfirmed ? 'matchmaker_confirmation_required' : '' } };
   }
   async function getMatchmakingReadiness(id) { return (await readinessContext(userId(id))).view; }
+  function matchmakingProgressView(packageList, context, intake) {
+    const { profileComplete, activeAssignment: assigned, matchmakerConfirmed } = context.view;
+    const activePackages = packageList.filter(row => row.status === 'active');
+    const purchased = packageList.length > 0;
+    const remainingCount = activePackages.reduce((sum, row) => sum + row.remainingCount, 0);
+    const earliestExpireAt = activePackages.map(row => row.expireAt).filter(value => Number.isFinite(instant(value)))
+      .sort((a, b) => instant(a) - instant(b))[0] || null;
+    const firstPackageAt = packageList.map(row => row.startAt).filter(value => Number.isFinite(instant(value)))
+      .sort((a, b) => instant(a) - instant(b))[0] || null;
+    const requestedAt = intake && Number.isFinite(instant(intake.requestedAt)) ? intake.requestedAt : firstPackageAt;
+    const status = !purchased ? 'not_purchased' : activePackages.length
+      ? !profileComplete ? 'needs_profile' : !assigned ? 'awaiting_assignment' : !matchmakerConfirmed ? 'awaiting_contact' : 'ready'
+      : packageList.some(row => row.status === 'exhausted') ? 'exhausted'
+        : packageList.some(row => row.status === 'expired') ? 'expired' : 'refunded';
+    return { status, purchased, profileComplete, assigned, matchmakerConfirmed,
+      matchmakerId: assigned ? Number(context.mm.id) : null,
+      matchmakerUserId: assigned ? Number(context.mm.userId) : null,
+      matchmakerName: assigned ? String(context.matchmakerUser.nickname || context.mm.name || context.mm.realName || '主理人') : '',
+      requestedAt, remainingCount, earliestExpireAt };
+  }
+  async function getMatchmakingProgress(id) {
+    id = userId(id);
+    const [packageList, context, intake] = await Promise.all([packages(id), readinessContext(id),
+      document(C.matchmakingReadiness, `intake_user_${id}`)]);
+    return matchmakingProgressView(packageList.list, context, intake);
+  }
   async function assertMatchmakingReady(id, transaction) {
     const context = await readinessContext(userId(id), transaction);
     if (!context.view.ready) throw fail('请先完善档案并由主理人确认服务准备情况', 409, 40903);
@@ -803,10 +864,12 @@ function createVipMembershipService(dependencies = {}) {
   }
   async function overview(id) {
     const entitlement = await getEntitlement(id);
-    const [packageList, readiness, setting, subscriptions] = await Promise.all([packages(id), getMatchmakingReadiness(id), privacy(id), onlineSubscriptions(id)]);
+    const [packageList, context, intake, setting, subscriptions] = await Promise.all([packages(id), readinessContext(id),
+      document(C.matchmakingReadiness, `intake_user_${userId(id)}`), privacy(id), onlineSubscriptions(id)]);
     return { ...entitlement, vipMembership: entitlement.active
       ? { tier: 'vip', expireAt: entitlement.expireAt, lifetime: entitlement.lifetime } : null,
-      matchmakingPackages: packageList.list, matchmakingReadiness: readiness, privacy: setting, onlineSubscriptions: subscriptions.list };
+      matchmakingPackages: packageList.list, matchmakingReadiness: context.view,
+      matchmakingProgress: matchmakingProgressView(packageList.list, context, intake), privacy: setting, onlineSubscriptions: subscriptions.list };
   }
   async function handleRoute(id, method, path, data = {}) {
     if (path === '/member/vip/overview' && method === 'GET') return overview(id);
@@ -840,7 +903,7 @@ function createVipMembershipService(dependencies = {}) {
         ? approveRequest(id, requestMatch[1]) : cancelRequest(id, requestMatch[1]);
     return undefined;
   }
-  return { getEntitlement, overview, fulfillOrder, refundOrder, preserveLegacyEntitlement, ensureIndependentEntitlement, restoreCredit, packages, getMatchmakingReadiness,
+  return { getEntitlement, overview, fulfillOrder, refundOrder, preserveLegacyEntitlement, ensureIndependentEntitlement, restoreCredit, packages, getMatchmakingReadiness, getMatchmakingProgress,
     assertMatchmakingReady, handleRoute, recordVisit, touchPresence };
 }
 

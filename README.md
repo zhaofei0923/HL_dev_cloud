@@ -1,49 +1,78 @@
-# HL 小程序云开发版
+# HL 微信小程序
 
-本项目由 `D:\HL_dev` 迁移而来，当前目录保留微信云开发项目配置和 AppID，并将业务接口改为云函数 `hlApi`。
+本仓库包含婚恋服务小程序、主理人工作台及原生管理后台。用户端通过云函数 `hlApi` 访问业务数据；主理人权限、管理员权限、支付结果和资料认证均由服务端核验。
+
+## 功能与使用
+
+- 首页使用微信快捷登录，无需独立账号密码；登录后可访问推荐、活动、消息和“我的”。
+- “我的”提供资料维护、认证中心、会员服务、订单中心和主理人入口。个人照片、联系方式、资产分类及公开区间分别按用途和授权处理。
+- 邀请链接或邀请码经本人确认后直接建立免费会员归属，无需管理员审批；加入免费会员不会替代已有付费权益。
+- 已开通且状态正常的主理人可维护名下会员、使用合作资源、直接发布自己的沙龙并管理报名。
+- 订单中心页面为 `pages/user/orders`，可查看本人订单及支付、履约、退款结果；未登录时先完成微信登录，再返回订单页。
+
+产品界面统一称“主理人”。代码中的 `matchmaker` 角色值、页面和接口路径，以及已有数据库字段保持兼容。
+
+## 商品与开通规则
+
+下表对应当前源码默认目录，金额由服务端生成并以分存储。正式收费还须核验微信平台商品、服务端目录和订单快照一致。
+
+| 产品 | 商品代码 | 一次性价格 | 有效期 | 牵线次数 |
+| --- | --- | ---: | --- | ---: |
+| VIP周卡 | `vip_week` | ¥61.60 | 7天 | 不适用 |
+| VIP月卡 | `vip_month` | ¥198.00 | 30天 | 不适用 |
+| VIP季卡 | `vip_quarter` | ¥398.00 | 90天 | 不适用 |
+| VIP年卡 | `vip_year` | ¥698.00 | 365天 | 不适用 |
+| 人工牵线2次 | `matchmaking_double` | ¥2,980.00 | 付款确认后30天 | 2次 |
+| 人工牵线1个月 | `matchmaking_month_6` | ¥6,980.00 | 付款确认后30天 | 6次 |
+| 主理人开通 | `matchmaker_lifetime` | ¥6,980.00 | 无期限 | 不适用 |
+
+VIP和人工牵线是独立产品。人工牵线购买不赠送VIP；新购套餐保留各自期限与剩余次数。本人申请、主理人安排及双方确认继续按服务流程执行，正式建联才扣次。旧套餐、已购服务和历史订单保留原始快照，不批量改价或补发次数。
+
+主理人开通入口为“我的 → 我的主理人 → 查看开通方案”。正常账号授权微信手机号后可付款；服务端确认付款并完成履约后自动开通，无需管理员审批。原已通过人工开通的正常主理人保留权限，无需重新付款；停用或其他受限账号仍须由平台核实资格。主理人开通与实名认证、学历或资产认证分别记录，付款不代表材料已经认证。
+
+新订单使用小程序虚拟支付，客户端成功回调只用于启动结果查询。页面必须核验服务端的付款及履约结果；主理人开通还须重新读取实际权限。未确认的原订单先查单，不能通过切换产品重复付款。旧JSAPI订单仅保留原通道查单、迟到付款履约和售后处理。
+
+## 认证与原生管理后台
+
+“我的 → 认证中心”支持身份、学历、车辆、房产和金融资产认证。用户可主动选择图片或PDF提交核验；学历也支持学信网验证码、留服认证编号等方式。材料通过受控云函数加密处理，公开页面只读取允许展示的核验摘要，资产区间公开另需本人同意。材料规则与权限见 [会员认证说明](docs/member-showcase-certification.md)。
+
+管理员入口为“微信登录 → 我的 → 管理后台”，使用本小程序的原生页面和 `admin-console` 子包。每次管理请求都核验当前会话、账号状态、`authVersion` 和服务端管理员名单 `MINIPROGRAM_ADMIN_USER_IDS`；客户端角色或主理人付费资格不能授予管理员权限。后台提供经营总览、主理人、认证、沙龙、套餐、订单及人工服务待办等管理能力。涉及写入的操作保留确认、版本校验、幂等和审计。
+
+CMS仅用于受控运营视图，不应手工修改支付状态、权益账本、身份关联或认证结论。字段与运营边界见 [CMS运营说明](docs/cloudbase-cms-operations.md) 和 [CMS视图清单](docs/cloudbase-cms-views.json)。原生后台设计见 [需求](specs/native-admin-miniprogram/requirements.md)、[实现设计](specs/native-admin-miniprogram/design.md) 和 [任务](specs/native-admin-miniprogram/tasks.md)；自主购买及人工服务分离见 [需求](specs/direct-purchase-20261019/requirements.md)、[实现设计](specs/direct-purchase-20261019/design.md) 和 [任务](specs/direct-purchase-20261019/tasks.md)。
 
 ## 项目结构
 
-- `miniprogram/`：HL 小程序用户端、主理人端页面、组件、资源和服务层。
-- `cloudfunctions/hlApi/`：统一业务云函数，承接登录、用户资料、主理人、会员、沙龙等接口。
-- `typings/`、`tsconfig.json`：TypeScript 类型和本地检查配置。
+- `miniprogram/`：用户端、主理人端、管理子包、组件、内置图片和API服务层。
+- `cloudfunctions/hlApi/`：登录、档案、关系、活动、支付与权限等业务逻辑。
+- `cloudfunctions/hlAdminOperations/`：原生管理后台复用的读写、认证材料和统计服务源码。
+- `integrations/wechat-pay/`：历史支付桥接、应答校验及售后兼容逻辑。
+- `scripts/`：小程序生成物同步、检查及受保护的部署准备工具。
+- `tests/`：业务规则、权限、支付、页面生命周期与部署合同回归。
+- `typings/`、`tsconfig.json`：小程序TypeScript类型及编译配置。
+- `specs/`、`docs/`：需求、设计与功能使用说明。
 
-## 云数据库集合
+`hl_users`、`hl_profiles`、`hl_matchmakers` 和 `hl_members` 分别维护账号、资料、主理人及会员归属。认证材料、内部档案、身份认领、支付订单、权益账本、聊天及隐私记录通过受控云函数访问。`hl_profiles.showcaseCertification` 等核验摘要只能由服务端维护，CMS不得代会员修改资产分类同意或区间公开选项。
 
-云函数会在调用时尝试创建以下集合，建议在 CloudBase 云后台/CMS 中围绕这些集合配置运营视图：
-
-- `hl_users`：用户基础信息，包含 `openid` 等系统字段。
-- `hl_profiles`：用户资料、择偶偏好和服务端受控的分类核验摘要；禁止小程序端直接读写，资料统一通过 `hlApi` 读取和保存。
-- `hl_matchmakers`：主理人申请、认证状态和运营指标。
-- `hl_members`：主理人管理的会员关系。
-- `hl_member_private_archives`：会员验资、资产、生活照和风险等高敏内部档案，仅由所属认证主理人的云函数接口读取；内部生活照按 `hl_uploads/member-private/<主理人用户ID>/` 隔离存放。
-- `hl_member_certifications`：实名、学历、车辆、房产和金融资产认证的申请、加密材料元数据、审核记录和当前结论；禁止小程序端直接读写及普通 CMS 运营账号操作，本人申请及管理员核验统一通过 `hlApi`。
-- `hl_salon_events`：沙龙活动。
-- `hl_registrations`：沙龙报名记录。
-- `hl_match_records`：会员推荐记录。
-- `hl_messages`：系统和推荐消息。
-- `hl_membership_plans`：会员套餐、服务端金额和有效期配置。
-- `hl_payment_orders`：微信支付业务订单和履约状态，禁止运营人员手工修改。
-- `hl_member_identity_claims`：手工会员的一次性微信认领邀请、并发锁和审计状态；只允许云函数读写，禁止 CMS 运营账号直接操作。
-- `hl_counters`：业务自增 ID 计数器，不建议运营人员编辑。
-
-> 产品界面统一使用“主理人”称呼。为兼容已发布版本和存量数据，代码中的 `matchmaker` 角色值、页面与接口路径，以及 `hl_matchmakers`、`matchmakerId`、`matchmakerNo` 等技术标识保持不变。
-
-## 后台管理建议
-
-后台管理优先使用 CloudBase 云后台/CMS。建议只给运营人员开放 `hl_profiles`、`hl_matchmakers`、`hl_members`、`hl_salon_events`、`hl_registrations` 的必要字段；`openid`、token 相关字段、`hl_counters`、`hl_member_private_archives`、`hl_member_identity_claims`、`hl_member_certifications` 等系统或高敏数据仅开发者可见。CMS 不得编辑 `hl_profiles.showcaseCertification`，也不得代会员设置 `assetCategoryConsent` 或 `assetRangeDisclosure`；资产分类同意及区间公开选项必须由会员本人通过 `hlApi` 保存。
-
-详细字段视图、角色权限和运营动作建议见 `docs/cloudbase-cms-operations.md`。微信手机号和会员支付的外部开通、环境变量及回调契约见 `docs/wechat-member-payment-integration.md`。
-
-“我的资料 → 认证中心”支持在小程序内提交核验材料，学历可选择学信网验证码、毕业或学位证照片、在读辅助材料、留服认证编号及留服认证证书照片，包含海外及港澳台学历。金融资产支持存款、股票、基金、理财及保单现金价值材料。图片和 PDF 经云函数加密后存储，公开页面只读取已审核的认证摘要。材料格式、密钥维护和管理员审核流程见 `docs/member-showcase-certification.md`。
-
-## 本地验证
+## 本地构建与验证
 
 ```bash
+npm ci
 npm run build:miniprogram
 npm run check
 ```
 
-## 部署提示
+构建会编译TypeScript、同步WXSS并生成主理人工作台模板。源码和对应的JS/WXSS生成物应一起提交；`check:generated` 只检查一致性，不会代为修复文件。
 
-在微信开发者工具中打开 `D:\HL_dev_cloud` 后，需要先为 `hlApi` 配置至少 32 个随机字符的生产环境变量 `JWT_SECRET`，再部署 `cloudfunctions/hlApi` 云函数，并在云开发控制台配置云后台/CMS、集合权限和运营角色。`hl_profiles`、`hl_member_private_archives`、`hl_member_identity_claims` 与 `hl_member_certifications` 必须禁止小程序端直接读写；`hl_profiles.showcaseCertification` 中的核验档位仅供服务端分类及公开投影使用，公开接口默认只返回“资产已认证”，本人同意公开区间时才返回对应区间。内部生活照必须禁止公开读取和目录枚举，只允许上传者写入/删除，查看时由 `hlApi` 为所属主理人换取临时地址。仅隔离本地/mock 环境可显式开启 `ALLOW_LOCAL_JWT=true` 并配置独立的 `JWT_DEV_SECRET`；生产环境不得启用该回退。以上权限需要在部署环境实际配置，本地配置清单不代表云端权限已生效。
+普通业务回归使用仓库内的测试和隔离样例执行，不需要真实付款或生产账号。依赖历史已验证云包、固定Node16运行时、外部CloudBase SDK或构建工具的部署集成测试，在相应依赖缺失时明确显示 `skip` 及原因；这些跳过不代表云端部署、运行时或真实支付验收通过。
+
+微信开发者工具应打开仓库根目录，使用根目录 `project.config.json`。完整小程序的预览、体验版上传、平台审核与正式发布是不同步骤；代码检查及模拟器验证不能代替真实付款、权益核对或平台审核结果。
+
+## 部署与仓库边界
+
+部署前先核验目标环境、当前云端代码和配置，保留可回退云包及文件清单，再按明确的代码范围生成候选。不能直接用本地 `cloudfunctions/hlApi/` 目录全量覆盖现网：其中的原生管理入口依赖自包含 `native-admin.bundle.js`，需要专用构建和目标运行时验证；已有依赖文件、认证密钥兼容配置、支付配置及其他云函数参数都要保护并在部署后回读。
+
+`scripts/prepare-native-admin-deployment.mjs` 保留原生后台的独立SDK打包、运行时和基线核验合同。脚本中的历史基线及本机工具链路径不能直接作为另一环境的一键部署命令。缺少必要工具链或无法确认当前基线时，应停止部署并报告缺失项，不能改用空依赖包覆盖。
+
+凭据由目标环境管理，不能写入客户端、仓库文档或部署日志。生产环境不得启用本地JWT回退。集合及文件权限须在实际环境核验，内部认证与验资材料不能公开读取或枚举。
+
+`output/`、`.cloudbase/`、本机私有配置、`.env`、依赖安装目录、回滚云包、原始平台应答、真实账号资料、凭据和本机验收截图不纳入仓库。当前功能文档与代码可以版本化，历史运行证据在本机单独保存，不作为新克隆仓库的必需依赖。

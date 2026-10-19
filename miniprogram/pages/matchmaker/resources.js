@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const member_1 = require("../../services/member");
 const chat_1 = require("../../services/chat");
 const member_format_1 = require("../../utils/member-format");
+const api_1 = require("../../services/api");
+const page_session_1 = require("../../utils/page-session");
 function normalizeResource(row) {
     return {
         ...(0, member_format_1.normalizeMemberProfile)(row),
@@ -10,6 +12,9 @@ function normalizeResource(row) {
     };
 }
 Page({
+    _scope: '',
+    _generation: 0,
+    _visible: true,
     data: {
         list: [],
         total: 0,
@@ -21,49 +26,153 @@ Page({
         accessNote: '已认证主理人可查看其他主理人的会员资源，并用自己的会员发起互推。',
         selectorOpen: false,
         loading: false,
-        recommendLoadingId: ''
+        recommendLoadingId: '',
+        resourcePage: 1,
+        resourceHasMore: false,
+        resourceLoadingMore: false,
+        resourceError: '',
+        ownPage: 1,
+        ownHasMore: false,
+        ownLoadingMore: false,
+        ownError: ''
     },
     onShow() {
-        this.load();
+        this._visible = true;
+        return this.load();
+    },
+    onHide() {
+        this._visible = false;
+        this._generation += 1;
+        this.setData({ loading: false, resourceLoadingMore: false, ownLoadingMore: false, recommendLoadingId: '' });
+    },
+    onUnload() { this.onHide(); this.clearResources(); },
+    clearResources() {
+        this.setData({ list: [], total: 0, myMembers: [], memberOptions: [], selectedMemberIndex: 0,
+            primaryMemberName: '', recommendButtonText: '先录入自己的会员', selectorOpen: false,
+            resourcePage: 1, resourceHasMore: false, resourceLoadingMore: false,
+            ownPage: 1, ownHasMore: false, ownLoadingMore: false, loading: false, recommendLoadingId: '' });
+    },
+    ensureSession() {
+        const scope = (0, page_session_1.pageSessionScope)();
+        if (scope !== this._scope) {
+            this._scope = scope;
+            this._generation += 1;
+            this.clearResources();
+        }
+        if (!scope && this._visible)
+            wx.redirectTo({ url: '/pages/index/index' });
+        return scope;
+    },
+    isCurrent(scope, generation) {
+        return this._visible && scope === (0, page_session_1.pageSessionScope)() && generation === this._generation;
+    },
+    setOwnMembers(myMembers) {
+        const selectedId = this.data.myMembers[this.data.selectedMemberIndex]?.id;
+        const index = Math.max(myMembers.findIndex(item => String(item.id) === String(selectedId)), 0);
+        const selected = myMembers[index];
+        const name = selected ? selected.realName || selected.nickname || '我的会员' : '';
+        this.setData({ myMembers, memberOptions: myMembers.map(item => item.realName || item.nickname || '我的会员'),
+            selectedMemberIndex: index, primaryMemberName: name,
+            recommendButtonText: selected ? `用 ${name} 发起互推` : '先录入自己的会员' });
     },
     async load() {
-        this.setData({ loading: true });
+        const scope = this.ensureSession();
+        if (!scope || !this._visible)
+            return;
+        const generation = ++this._generation;
+        this.setData({ loading: true, resourceLoadingMore: false, ownLoadingMore: false, resourceError: '', ownError: '' });
         try {
-            const resources = await member_1.memberApi.resources({ page: 1, pageSize: 50 });
-            const own = await member_1.memberApi.list({ page: 1, pageSize: 20 });
+            const [resources, own] = await Promise.all([
+                member_1.memberApi.resources({ page: 1, pageSize: 50 }),
+                member_1.memberApi.inviteOptions({ page: 1, pageSize: 20 })
+            ]);
+            if (!this.isCurrent(scope, generation))
+                return;
             const list = (resources.list || []).map((row) => normalizeResource(row));
             const myMembers = own.list || [];
-            const first = myMembers[0];
-            const memberOptions = myMembers.map((item) => item.realName || item.nickname || '我的会员');
+            this.setOwnMembers(myMembers);
             this.setData({
                 list,
-                total: Number(resources.total || list.length || 0),
-                myMembers,
-                memberOptions,
-                selectedMemberIndex: 0,
-                primaryMemberName: first ? (first.realName || first.nickname || '我的会员') : '',
-                recommendButtonText: first ? `用 ${first.realName || first.nickname || '我的会员'} 发起互推` : '先录入自己的会员',
+                total: Number(resources.total ?? list.length),
+                resourcePage: 1, resourceHasMore: list.length < Number(resources.total || 0),
+                ownPage: 1, ownHasMore: myMembers.length < Number(own.total || 0),
                 accessNote: '已为你整理可协作会员，可选择合适对象发起主理人协作。'
             });
         }
         catch (err) {
+            if (!this.isCurrent(scope, generation))
+                return;
             console.warn('load matchmaker resources failed', err);
-            this.setData({
-                list: [],
-                total: 0,
-                myMembers: [],
-                memberOptions: [],
-                selectedMemberIndex: 0,
-                primaryMemberName: '',
-                recommendButtonText: '先录入自己的会员',
-                accessNote: '暂无资源或尚未认证。认证后可查看其他主理人资源池。'
-            });
+            this.clearResources();
+            this.setData({ resourceError: (0, api_1.apiErrorMessage)(err) || '合作资源暂时无法读取，请重试。',
+                accessNote: '合作资源暂时无法读取，请重试或确认主理人权限。' });
         }
         finally {
-            this.setData({ loading: false });
+            if (this.isCurrent(scope, generation))
+                this.setData({ loading: false });
+        }
+    },
+    onPullDownRefresh() { return this.load().finally(() => wx.stopPullDownRefresh()); },
+    onReachBottom() { return this.loadMoreResources(); },
+    async loadMoreResources() {
+        const scope = this.ensureSession(), generation = this._generation;
+        if (!scope || !this._visible || this.data.loading || this.data.resourceLoadingMore || !this.data.resourceHasMore)
+            return;
+        const page = this.data.resourcePage + 1;
+        this.setData({ resourceLoadingMore: true, resourceError: '' });
+        try {
+            const result = await member_1.memberApi.resources({ page, pageSize: 50 });
+            if (!this.isCurrent(scope, generation))
+                return;
+            const seen = new Set(this.data.list.map(row => String(row.id)));
+            const incoming = (result.list || []).filter((row) => !seen.has(String(row.id))).map(normalizeResource);
+            const list = [...this.data.list, ...incoming];
+            this.setData({ list, total: Number(result.total ?? list.length), resourcePage: page,
+                resourceHasMore: incoming.length > 0 && list.length < Number(result.total || 0) });
+        }
+        catch (err) {
+            if (!this.isCurrent(scope, generation))
+                return;
+            if ([401, 403, 40100, 40300].includes(Number(err?.code)))
+                this.clearResources();
+            this.setData({ resourceError: (0, api_1.apiErrorMessage)(err) || '更多合作资源暂时无法读取，请重试。' });
+        }
+        finally {
+            if (this.isCurrent(scope, generation))
+                this.setData({ resourceLoadingMore: false });
+        }
+    },
+    async loadMoreOwnMembers() {
+        const scope = this.ensureSession(), generation = this._generation;
+        if (!scope || !this._visible || this.data.loading || this.data.ownLoadingMore || !this.data.ownHasMore)
+            return;
+        const page = this.data.ownPage + 1;
+        this.setData({ ownLoadingMore: true, ownError: '' });
+        try {
+            const result = await member_1.memberApi.inviteOptions({ page, pageSize: 20 });
+            if (!this.isCurrent(scope, generation))
+                return;
+            const seen = new Set(this.data.myMembers.map(row => String(row.id)));
+            const incoming = result.list.filter(row => !seen.has(String(row.id)));
+            const myMembers = [...this.data.myMembers, ...incoming];
+            this.setOwnMembers(myMembers);
+            this.setData({ ownPage: page, ownHasMore: incoming.length > 0 && myMembers.length < result.total });
+        }
+        catch (err) {
+            if (!this.isCurrent(scope, generation))
+                return;
+            if ([401, 403, 40100, 40300].includes(Number(err?.code)))
+                this.clearResources();
+            this.setData({ ownError: (0, api_1.apiErrorMessage)(err) || '更多服务会员暂时无法读取，请重试。' });
+        }
+        finally {
+            if (this.isCurrent(scope, generation))
+                this.setData({ ownLoadingMore: false });
         }
     },
     onMemberChange(e) {
+        if (!this.ensureSession() || !this._visible)
+            return;
         const index = Number(e.detail.value || 0);
         const selected = this.data.myMembers[index];
         const name = selected ? (selected.realName || selected.nickname || '我的会员') : '';
@@ -75,9 +184,14 @@ Page({
         });
     },
     toggleMemberSelector() {
+        if (!this.ensureSession() || !this._visible)
+            return;
         this.setData({ selectorOpen: !this.data.selectorOpen });
     },
     async recommend(e) {
+        const scope = this.ensureSession(), generation = this._generation;
+        if (!scope || !this._visible || this.data.loading || this.data.recommendLoadingId)
+            return;
         const resourceUserId = e.currentTarget.dataset.userId;
         const myMember = this.data.myMembers[this.data.selectedMemberIndex];
         if (!myMember) {
@@ -91,13 +205,15 @@ Page({
                 resourceUserId,
                 note: `${myMember.realName || myMember.nickname} 与对方条件较匹配`
             });
+            if (!this.isCurrent(scope, generation))
+                return;
             wx.showModal({
                 title: '互推成功',
                 content: '已创建互推记录，可继续和自己的会员跟进沟通。',
                 confirmText: '去聊天',
                 cancelText: '留在此页',
                 success: res => {
-                    if (res.confirm)
+                    if (res.confirm && this.isCurrent(scope, generation))
                         this.openChatForMember(myMember);
                 }
             });
@@ -106,18 +222,23 @@ Page({
             console.warn('recommend member failed', err);
         }
         finally {
-            this.setData({ recommendLoadingId: '' });
+            if (this.isCurrent(scope, generation))
+                this.setData({ recommendLoadingId: '' });
         }
     },
     openDetail(e) {
+        if (!this.ensureSession() || !this._visible)
+            return;
         const id = String(e.currentTarget.dataset.id || '');
         const member = this.data.list.find((item) => String(item.id) === id);
         if (!member)
             return;
-        wx.setStorageSync('selectedMatchmakerMember', member);
         wx.navigateTo({ url: `/pages/matchmaker/member-detail?id=${id}&scope=resource` });
     },
     async openChatForMember(member) {
+        const scope = this.ensureSession(), generation = this._generation;
+        if (!scope || !this._visible)
+            return;
         const targetUserId = member && member.userId ? String(member.userId) : '';
         if (!targetUserId) {
             wx.showToast({ title: '会员账号暂不可用', icon: 'none' });
@@ -125,6 +246,8 @@ Page({
         }
         try {
             const conversation = await chat_1.chatApi.getOrCreateConversation({ targetUserId });
+            if (!this.isCurrent(scope, generation))
+                return;
             wx.navigateTo({ url: `/pages/matchmaker/chat?id=${conversation.id}` });
         }
         catch (err) {

@@ -44,6 +44,15 @@
       </view>
     </view>
 
+    <view wx:if="{{isOwn && member.identityStatus !== 'pending'}}" class="card primary-actions-card">
+      <text class="section-title">人工牵线准备</text>
+      <text class="display-note">{{matchmakingReadinessLoading ? '正在确认服务准备状态' : matchmakingReadinessError || (matchmakingReadiness.matchmakerConfirmed ? '已确认服务准备' : '待主理人确认服务准备')}}</text>
+      <text wx:if="{{matchmakingReadiness}}" class="display-note">{{matchmakingReadiness.profileComplete ? '会员资料已完善' : '会员资料待完善'}} · {{matchmakingReadiness.ready ? '可启动服务' : '待完成准备'}}</text>
+      <button wx:if="{{matchmakingReadiness && !matchmakingReadiness.matchmakerConfirmed}}" class="btn gold" loading="{{matchmakingReadinessSaving}}" disabled="{{matchmakingReadinessLoading || matchmakingReadinessSaving}}" bindtap="confirmMatchmakingReadiness">确认已与本人核对服务准备</button>
+      <button wx:if="{{matchmakingReadinessError}}" class="btn ghost" bindtap="loadMatchmakingReadiness">重新加载准备状态</button>
+      <button class="btn ghost" bindtap="viewMatchmakingRequests">查看所属会员牵线申请</button>
+    </view>
+
     <view wx:if="{{isOwn}}" class="detail-tabs">
       <view class="detail-tab {{activeDetailTab === 'profile' ? 'active' : ''}}" data-tab="profile" bindtap="setDetailTab">会员档案</view>
       <view class="detail-tab {{activeDetailTab === 'matching' ? 'active' : ''}}" data-tab="matching" bindtap="setDetailTab">匹配跟进</view>

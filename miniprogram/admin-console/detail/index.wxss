@@ -1,0 +1,4 @@
+@import "../shared.wxss";
+
+.service-package { padding: 20rpx 0; border-bottom: 1rpx solid #eee4dc; }
+.service-package:last-child { border-bottom: 0; }

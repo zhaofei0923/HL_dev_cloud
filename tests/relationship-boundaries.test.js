@@ -54,7 +54,8 @@ test('conversation creation uses a deterministic document and a transaction', ()
   const createConversation = between('async function createChatConversationAtomically', 'async function ensureChatConversation');
   assert.match(createConversation, /conversationDocumentId\(participantKey, conversationType\)/);
   assert.match(createConversation, /db\.runTransaction/);
-  assert.match(createConversation, /where\(\{ _id: documentId \}\)\.limit\(1\)/);
+  assert.match(createConversation, /salonTransactionDocument\(transaction, C\.conversations, documentId\)/);
+  assert.doesNotMatch(createConversation, /\.where\(/);
   assert.match(createConversation, /ref\.set\(\{ data: payload \}\)/);
   assert.doesNotMatch(createConversation, /\.create\(/);
 });

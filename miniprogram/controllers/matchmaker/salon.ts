@@ -1,6 +1,7 @@
 import { defineMatchmakerController } from '../../utils/matchmaker-workspace'
 import { salonApi } from '../../services/salon'
 import { matchmakerApi } from '../../services/matchmaker'
+import { matchmakerAccessView } from '../../utils/matchmaker-access-view'
 import { memberApi } from '../../services/member'
 import type { InviteMemberOption } from '../../services/member'
 import { invitePath } from '../../utils/invite'
@@ -74,30 +75,7 @@ function normalizeSalonRow(row: any) {
 }
 
 function certificationView(matchmaker: any) {
-  const status = Number((matchmaker && matchmaker.certificationStatus) || 0)
-  const remark = (matchmaker && matchmaker.certificationRemark) || ''
-  if (status === 2) {
-    return {
-      canOperate: true,
-      statusText: '已认证',
-      statusTagClass: 'gold',
-      statusNote: '已认证的主理人及其合伙人可创建和管理自己的沙龙活动。'
-    }
-  }
-  if (status === 1) {
-    return {
-      canOperate: false,
-      statusText: '已拒绝',
-      statusTagClass: 'rose',
-      statusNote: remark || '本次申请暂未通过，请完善资料后重新提交。'
-    }
-  }
-  return {
-    canOperate: false,
-    statusText: '待审批',
-    statusTagClass: '',
-    statusNote: '主理人认证通过后，才可以发起沙龙并管理活动。'
-  }
+  return matchmakerAccessView(matchmaker, '主理人权限已开通，可创建和管理自己的沙龙活动。')
 }
 
 export const salonController = defineMatchmakerController({
@@ -133,9 +111,9 @@ export const salonController = defineMatchmakerController({
     managingEventId: '',
     canOperate: false,
     shareCode: '',
-    statusText: '待审批',
+    statusText: '待开通',
     statusTagClass: '',
-    statusNote: '主理人认证通过后，才可以发起沙龙并管理活动。'
+    statusNote: '主理人一次性开通费 ¥6980，长期有效。付款确认后自动开通。'
   },
 
   onLoad() {
@@ -194,8 +172,8 @@ export const salonController = defineMatchmakerController({
       selectedMemberName: '', managingEventId: '', invitingId: '', cancellingId: '',
       initialized: false, loading: false, refreshError: '', canOperate: false, shareCode: '',
       loadingMembers: false, memberOptionsError: '',
-      statusText: '待审批', statusTagClass: '',
-      statusNote: '主理人认证通过后，才可以发起沙龙并管理活动。'
+      statusText: '待开通', statusTagClass: '',
+      statusNote: '主理人一次性开通费 ¥6980，长期有效。付款确认后自动开通。'
     })
     return scope
   },
@@ -437,11 +415,17 @@ export const salonController = defineMatchmakerController({
   goCreate() {
     if (!this.ensurePageSession()) return
     if (!this.data.canOperate) {
-      wx.showToast({ title: '主理人认证通过后可创建沙龙', icon: 'none' })
+      wx.showToast({ title: '开通主理人后可创建沙龙', icon: 'none' })
       return
     }
     this._forceNextShow = true
     wx.navigateTo({ url: '/pages/matchmaker/salon-form' })
+  },
+
+  goActivation() {
+    if (!this.ensurePageSession() || this.data.loading) return
+    this._forceNextShow = true
+    wx.navigateTo({ url: '/pages/matchmaker/activation' })
   },
 
   async applyAgain() {

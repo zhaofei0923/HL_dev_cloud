@@ -4,9 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
-const { activeAttendance, minimumRegistrationStatus, salonAvailability } = require('../cloudfunctions/hlApi/salon-policy');
-const apiPath = path.join(__dirname, '..', 'cloudfunctions', 'hlApi', 'index.js');
+const apiPath = path.resolve(process.env.HL_API_TEST_PATH || path.join(__dirname, '..', 'cloudfunctions', 'hlApi', 'index.js'));
 const requireFromApi = createRequire(apiPath);
+const { activeAttendance, minimumRegistrationStatus, salonAvailability } = requireFromApi('./salon-policy');
 const plain = value => JSON.parse(JSON.stringify(value));
 const photo = id => `cloud://test-env.bucket/hl_uploads/profile/20261008/user-${id}.jpg`;
 
@@ -24,7 +24,7 @@ function fixture(count = 6) {
       eventDate: '2099-01-01T10:00:00.000Z', maxParticipants: 10, currentParticipants: 0,
       registrationCountVersion: 1, registrationRevision: 0 }],
     hl_registrations: [], hl_member_interactions: [], hl_members: [], hl_member_matchmaker_requests: [],
-    hl_counters: [{ _id: 'registration', key: 'registration', value: 0 },
+    hl_counters: [{ _id: 'salon', key: 'salon', value: 1 }, { _id: 'registration', key: 'registration', value: 0 },
       { _id: 'profile', key: 'profile', value: count }], hl_messages: [], hl_conversations: []
   };
 }
@@ -52,6 +52,7 @@ function runtime(input, settings = {}) {
     return Object.entries(query).every(([field, expected]) => matchesValue(row[field], expected));
   }
   function applyWrite(store, name, id, data, mode, record = true) {
+    if (settings.beforeWrite) settings.beforeWrite(store, name, id, data, mode);
     const rows = store[name] || (store[name] = []);
     const index = rows.findIndex(row => row._id === id);
     if (mode === 'update' && index < 0) throw new Error('DOCUMENT_NOT_EXIST');
@@ -120,6 +121,7 @@ function runtime(input, settings = {}) {
     async createCollection(name) { fixtures[name] = fixtures[name] || []; },
     async runTransaction(callback) {
       transactionCount += 1;
+      if (settings.beforeTransaction) settings.beforeTransaction(fixtures);
       for (let attempt = 0; attempt < 40; attempt += 1) {
         const snapshot = structuredClone(fixtures);
         const tx = { operations: 0, readVersions: new Map(), snapshotVersions: new Map(versions), pending: [] };
@@ -136,6 +138,7 @@ function runtime(input, settings = {}) {
   };
   const cloud = { init() {}, database: () => db, DYNAMIC_CURRENT_ENV: 'test-env',
     getWXContext: () => ({ OPENID: settings.openid || 'wx-3', APPID: 'test-app' }),
+    openapi: { phonenumber: { async getPhoneNumber() { return { phoneInfo: { purePhoneNumber: settings.phone || '13500000003' } }; } } },
     async getTempFileURL({ fileList }) {
       photoRequests.push([...fileList]);
       if (settings.onPhotoResolution) settings.onPhotoResolution(fixtures);
@@ -145,7 +148,7 @@ function runtime(input, settings = {}) {
     }
   };
   const module = { exports: {} };
-  vm.runInNewContext(fs.readFileSync(apiPath, 'utf8') + '\nexports.__test={salon,auth,matchmaker,tokenService,minimumRegistrationView,saveMinimumRegistration,acceptMemberMatchmakerInvite};', {
+  vm.runInNewContext(fs.readFileSync(process.env.HL_API_TEST_PATH || apiPath, 'utf8') + '\nexports.__test={salon,auth,admin,member,matchmaker,tokenService,minimumRegistrationView,saveMinimumRegistration,acceptMemberMatchmakerInvite,ensureChatConversation,createMemberIdentityClaimInvite,confirmMemberIdentityClaim};', {
     module, exports: module.exports,
     require(name) {
       if (name === 'wx-server-sdk') return cloud;
@@ -168,6 +171,269 @@ function registration(userId, extra = {}) {
   return { _id: `r-${userId}`, id: userId, eventId: 1, userId, status: 'registered',
     participantProfileVisible: true, createdAt: '2026-01-01', updatedAt: '2026-01-01', ...extra };
 }
+
+function claimFixture() {
+  const input = fixture();
+  Object.assign(input.hl_matchmakers[0], { matchmakerNo: 'MM000001', inviteCode: 'HLCLAIM',
+    inviteCodeStatus: 'active', inviteCodeUpdatedAt: '2026-01-01T00:00:00Z' });
+  input.hl_users[2].openid = 'manual_3';
+  input.hl_users[3].phone = '';
+  input.hl_members.push({ _id: 'member-200', id: 200, userId: 3, matchmakerId: 1, status: 1, memberNo: 'HL200' });
+  return input;
+}
+
+test('new conversations use supported document-only transactions and concurrent creation returns one conversation', async () => {
+  const r = runtime(fixture(), { strictMissingDocuments: true });
+  const rows = await Promise.all([r.hooks.ensureChatConversation([3, 4], 'member_pair', { matchRecordId: 20 }),
+    r.hooks.ensureChatConversation([4, 3], 'member_pair', { matchRecordId: 20 })]);
+  assert.equal(rows[0].id, rows[1].id);
+  assert.equal(r.fixtures.hl_conversations.length, 1);
+  assert.deepEqual(plain(r.fixtures.hl_conversations[0].participantIds), [3, 4]);
+  assert.equal(r.fixtures.hl_conversations[0].matchRecordId, 20);
+  assert.ok(r.reads.some(read => read.name === 'hl_conversations' && read.transaction && read.id));
+});
+
+test('manual claim invitation and verified-phone confirmation complete with document-only transactions', async () => {
+  const r = runtime(claimFixture(), { strictMissingDocuments: true, openid: 'wx-4' });
+  const invite = await r.hooks.createMemberIdentityClaimInvite(1, 200);
+  const token = new URL(invite.sharePath, 'https://fixture.test').searchParams.get('token');
+  const preview = await r.hooks.auth.previewMemberIdentityClaim(token);
+  assert.equal(preview.status, 'pending');
+  const result = await r.hooks.confirmMemberIdentityClaim(4, token, 'verified-phone-code');
+  assert.equal(result.user.id, 3);
+  assert.equal(result.claimStatus, 'claimed');
+  assert.equal(r.fixtures.hl_users.find(row => row.id === 3).openid, 'wx-4');
+  assert.equal(r.fixtures.hl_users.find(row => row.id === 4).status, 0);
+  assert.equal(r.fixtures.hl_member_identity_claims[0].status, 'claimed');
+  assert.equal(r.fixtures.hl_members[0].userId, 3, 'service ownership stays on the canonical manual account');
+  const writes = r.writes.length;
+  const repeated = await r.hooks.confirmMemberIdentityClaim(3, token, 'unused-phone-code');
+  assert.equal(repeated.idempotent, true);
+  assert.equal(r.writes.length, writes);
+});
+
+test('claim invitation rejects a phone changed between preflight and document transaction', async () => {
+  const r = runtime(claimFixture(), { strictMissingDocuments: true,
+    beforeTransaction(rows) { rows.hl_users.find(row => row.id === 3).phone = '13900000003'; } });
+  await assert.rejects(r.hooks.createMemberIdentityClaimInvite(1, 200), error => error.code === 42220);
+  assert.equal((r.fixtures.hl_member_identity_claims || []).length, 0);
+  assert.equal(r.fixtures.hl_users.find(row => row.id === 3).claimInviteVersion, undefined);
+});
+
+test('claim confirmation rechecks document status and cannot merge after principal approval is revoked', async () => {
+  let revoke = false;
+  const r = runtime(claimFixture(), { strictMissingDocuments: true, openid: 'wx-4',
+    beforeTransaction(rows) { if (revoke) rows.hl_matchmakers[0].certificationStatus = 1; } });
+  const invite = await r.hooks.createMemberIdentityClaimInvite(1, 200);
+  const token = new URL(invite.sharePath, 'https://fixture.test').searchParams.get('token');
+  revoke = true;
+  await assert.rejects(r.hooks.confirmMemberIdentityClaim(4, token, 'verified-phone-code'), error => error.code === 40927);
+  assert.equal(r.fixtures.hl_users.find(row => row.id === 3).openid, 'manual_3');
+  assert.equal(r.fixtures.hl_users.find(row => row.id === 4).status, 1);
+  assert.equal(r.fixtures.hl_member_identity_claims[0].status, 'pending');
+});
+
+test('claim invitation detects multiple active phone owners without unsupported transactional queries', async () => {
+  const input = claimFixture();
+  input.hl_users[4].phone = input.hl_users[2].phone;
+  const r = runtime(input, { strictMissingDocuments: true });
+  await assert.rejects(r.hooks.createMemberIdentityClaimInvite(1, 200), error => error.code === 40920);
+  assert.equal((r.fixtures.hl_member_identity_claims || []).length, 0);
+});
+
+test('claim invitation and confirmation reject a principal account revoked during preflight', async () => {
+  for (const changes of [{ status: 0 }, { mergedIntoUserId: 6 }]) {
+    const inviteRuntime = runtime(claimFixture(), { strictMissingDocuments: true,
+      beforeTransaction(rows) { Object.assign(rows.hl_users.find(row => row.id === 1), changes); } });
+    await assert.rejects(inviteRuntime.hooks.createMemberIdentityClaimInvite(1, 200), error => error.code === 40922);
+    assert.equal(inviteRuntime.writes.length, 0);
+
+    let revoke = false;
+    const confirmRuntime = runtime(claimFixture(), { strictMissingDocuments: true, openid: 'wx-4',
+      beforeTransaction(rows) { if (revoke) Object.assign(rows.hl_users.find(row => row.id === 1), changes); } });
+    const invite = await confirmRuntime.hooks.createMemberIdentityClaimInvite(1, 200);
+    const token = new URL(invite.sharePath, 'https://fixture.test').searchParams.get('token');
+    revoke = true;
+    const writes = confirmRuntime.writes.length;
+    await assert.rejects(confirmRuntime.hooks.confirmMemberIdentityClaim(4, token, 'verified-phone-code'), error => error.code === 40927);
+    assert.equal(confirmRuntime.writes.length, writes);
+    assert.equal(confirmRuntime.fixtures.hl_users.find(row => row.id === 3).openid, 'manual_3');
+    assert.equal(confirmRuntime.fixtures.hl_member_identity_claims[0].status, 'pending');
+  }
+});
+
+test('claim confirmation rejects mismatched verified phone and expired or replaced invitation without writes', async () => {
+  for (const reason of ['phone', 'expired', 'replaced']) {
+    const r = runtime(claimFixture(), { strictMissingDocuments: true, openid: 'wx-4',
+      ...(reason === 'phone' ? { phone: '13900000004' } : {}) });
+    const invite = await r.hooks.createMemberIdentityClaimInvite(1, 200);
+    const token = new URL(invite.sharePath, 'https://fixture.test').searchParams.get('token');
+    if (reason === 'expired') r.fixtures.hl_member_identity_claims[0].expiresAt = '2000-01-01T00:00:00Z';
+    if (reason === 'replaced') await r.hooks.createMemberIdentityClaimInvite(1, 200);
+    const writes = r.writes.length;
+    const expectedCode = { phone: 40924, expired: 41021, replaced: 41020 }[reason];
+    await assert.rejects(r.hooks.confirmMemberIdentityClaim(4, token, 'verified-phone-code'), error => error.code === expectedCode);
+    assert.equal(r.writes.length, writes);
+    assert.equal(r.fixtures.hl_users.find(row => row.id === 3).openid, 'manual_3');
+    assert.equal(r.fixtures.hl_users.find(row => row.id === 4).status, 1);
+  }
+});
+
+test('claim confirmation rechecks source and target account revocation and assignment changes', async () => {
+  for (const [targetId, changes] of [[3, { status: 0 }], [3, { mergedIntoUserId: 6 }],
+    [4, { status: 0 }], [4, { mergedIntoUserId: 6 }], [4, { openid: 'wx-other' }], ['member', { matchmakerId: 2 }]]) {
+    let revoke = false;
+    const r = runtime(claimFixture(), { strictMissingDocuments: true, openid: 'wx-4',
+      beforeTransaction(rows) {
+        if (revoke) Object.assign(targetId === 'member' ? rows.hl_members[0] : rows.hl_users.find(row => row.id === targetId), changes);
+      } });
+    const invite = await r.hooks.createMemberIdentityClaimInvite(1, 200);
+    const token = new URL(invite.sharePath, 'https://fixture.test').searchParams.get('token');
+    revoke = true;
+    const writes = r.writes.length;
+    await assert.rejects(r.hooks.confirmMemberIdentityClaim(4, token, 'verified-phone-code'), error => error.code === 40927);
+    assert.equal(r.writes.length, writes);
+    assert.equal(r.fixtures.hl_users.find(row => row.id === 3).openid, 'manual_3');
+    assert.equal(r.fixtures.hl_member_identity_claims[0].status, 'pending');
+  }
+});
+
+test('claim preserves canonical assignment and premium entitlements and prevents another account from replaying the token', async () => {
+  const input = claimFixture();
+  Object.assign(input.hl_members[0], { membershipTier: 'vip', membershipExpireAt: '2099-01-01', serviceCount: 6 });
+  input.hl_vip_entitlements = [{ _id: 'vip-3', userId: 3, status: 'active', expireAt: '2099-01-01' }];
+  input.hl_matchmaking_packages = [{ _id: 'package-3', userId: 3, totalCount: 6, usedCount: 2, status: 'active' }];
+  const r = runtime(input, { strictMissingDocuments: true, openid: 'wx-4' });
+  const invite = await r.hooks.createMemberIdentityClaimInvite(1, 200);
+  const token = new URL(invite.sharePath, 'https://fixture.test').searchParams.get('token');
+  const ownership = structuredClone(r.fixtures.hl_members);
+  const result = await r.hooks.confirmMemberIdentityClaim(4, token, 'verified-phone-code');
+  assert.equal(result.user.id, 3);
+  assert.deepEqual(r.fixtures.hl_members, ownership);
+  assert.deepEqual(r.fixtures.hl_vip_entitlements, input.hl_vip_entitlements);
+  assert.deepEqual(r.fixtures.hl_matchmaking_packages, input.hl_matchmaking_packages);
+  const writes = r.writes.length;
+  const repeated = await r.hooks.confirmMemberIdentityClaim(3, token, 'unused-phone-code');
+  assert.equal(repeated.idempotent, true);
+  assert.equal(r.writes.length, writes);
+  r.fixtures.hl_users.find(row => row.id === 5).openid = 'wx-4';
+  await assert.rejects(r.hooks.confirmMemberIdentityClaim(5, token, 'unused-phone-code'), error => error.code === 40921);
+  assert.equal(r.writes.length, writes);
+});
+
+test('public salon status filters cannot enumerate pending or rejected activities while organizers retain their own list', async () => {
+  const input = fixture();
+  input.hl_salon_events.push({ ...input.hl_salon_events[0], _id: 'e-2', id: 2, status: 'pending', title: '尚未审核' },
+    { ...input.hl_salon_events[0], _id: 'e-3', id: 3, status: 'rejected', title: '未通过' });
+  const r = runtime(input);
+  for (const status of ['pending', 'rejected']) {
+    const result = await r.main({ path: '/salon/events', token: r.token(3), data: { status } });
+    assert.equal(result.code, 0);
+    assert.ok(result.data.list.every(event => event.status === 'upcoming'));
+  }
+  assert.equal((await r.hooks.salon.myEvents(1)).total, 3);
+  await assert.rejects(r.hooks.salon.getEventDetail(2, 3), error => error.status === 404);
+});
+
+test('external recommendation rejects private, inactive or merged target accounts before creating business records', async () => {
+  for (const changes of [{ displayEnabled: false }, { status: 0 }, { mergedIntoUserId: 5 }]) {
+    const input = fixture();
+    input.hl_profiles[3].displayEnabled = true;
+    if (changes.displayEnabled !== undefined) input.hl_profiles[3].displayEnabled = changes.displayEnabled;
+    Object.assign(input.hl_users[3], { ...changes });
+    input.hl_members.push({ _id: 'member-200', id: 200, userId: 3, matchmakerId: 1, status: 1 });
+    const r = runtime(input, { strictMissingDocuments: true });
+    await assert.rejects(r.hooks.member.recommend(1, { myMemberId: 200, resourceUserId: 4 }), error => error.status === 404);
+    assert.equal((r.fixtures.hl_match_records || []).length, 0);
+    assert.equal(r.fixtures.hl_messages.length, 0);
+    assert.equal(r.fixtures.hl_conversations.length, 0);
+  }
+});
+
+test('external recommendation still creates a formal pair for a currently public and active target', async () => {
+  const input = fixture();
+  input.hl_profiles[3].displayEnabled = true;
+  input.hl_members.push({ _id: 'member-200', id: 200, userId: 3, matchmakerId: 1, status: 1 });
+  const r = runtime(input, { strictMissingDocuments: true });
+  const result = await r.hooks.member.recommend(1, { myMemberId: 200, resourceUserId: 4 });
+  assert.equal(result.matchRecord.userBId, 4);
+  assert.equal(r.fixtures.hl_match_records.length, 1);
+  assert.equal(r.fixtures.hl_messages.length, 1);
+  assert.equal(r.fixtures.hl_conversations.length, 1);
+});
+
+test('external recommendation rejects a target hidden while reserving the match record number', async () => {
+  const input = fixture();
+  input.hl_profiles[3].displayEnabled = true;
+  input.hl_members.push({ _id: 'member-200', id: 200, userId: 3, matchmakerId: 1, status: 1 });
+  const r = runtime(input, { strictMissingDocuments: true,
+    beforeWrite(rows, name, id) {
+      if (name === 'hl_counters' && id === 'matchRecord') rows.hl_profiles[3].displayEnabled = false;
+    } });
+  await assert.rejects(r.hooks.member.recommend(1, { myMemberId: 200, resourceUserId: 4 }), error => error.status === 404);
+  assert.equal((r.fixtures.hl_match_records || []).length, 0);
+  assert.equal(r.fixtures.hl_messages.length, 0);
+  assert.equal(r.fixtures.hl_conversations.length, 0);
+  assert.ok(r.reads.some(read => read.name === 'hl_profiles' && read.id === 'p-4' && read.transaction));
+});
+
+test('external recommendation transaction rechecks target identity, source assignment and principal eligibility', async () => {
+  const revocations = [
+    rows => { rows.hl_users[3].status = 0; },
+    rows => { rows.hl_users[3].mergedIntoUserId = 5; },
+    rows => { rows.hl_profiles[3].displayEnabled = false; },
+    rows => { rows.hl_profiles[3].userId = 5; },
+    rows => { rows.hl_members[0].status = 0; },
+    rows => { rows.hl_members[0].matchmakerId = 2; },
+    rows => { rows.hl_matchmakers[0].certificationStatus = 1; },
+    rows => { rows.hl_matchmakers[0].status = 0; },
+    rows => { rows.hl_users[0].status = 0; }
+  ];
+  for (const revoke of revocations) {
+    const input = fixture();
+    input.hl_profiles[3].displayEnabled = true;
+    input.hl_members.push({ _id: 'member-200', id: 200, userId: 3, matchmakerId: 1, status: 1 });
+    const r = runtime(input, { strictMissingDocuments: true, beforeTransaction: revoke });
+    await assert.rejects(r.hooks.member.recommend(1, { myMemberId: 200, resourceUserId: 4 }),
+      error => [403, 404].includes(error.status));
+    assert.equal((r.fixtures.hl_match_records || []).length, 0);
+    assert.equal(r.fixtures.hl_messages.length, 0);
+    assert.equal(r.fixtures.hl_conversations.length, 0);
+  }
+});
+
+test('salon reviews approve only future pending events and cannot reopen terminal or rejected states', async () => {
+  for (const status of ['cancelled', 'ended', 'rejected', 'upcoming']) {
+    const input = fixture();
+    input.hl_salon_events[0].status = status;
+    const r = runtime(input, { strictMissingDocuments: true });
+    await assert.rejects(r.hooks.admin.reviewSalon(1, 'upcoming'), error => error.code === 40940);
+    assert.equal(r.fixtures.hl_salon_events[0].status, status);
+    assert.equal(r.writes.length, 0);
+  }
+  for (const eventDate of ['2000-01-01', 'invalid']) {
+    const input = fixture();
+    Object.assign(input.hl_salon_events[0], { status: 'pending', eventDate });
+    const r = runtime(input, { strictMissingDocuments: true });
+    await assert.rejects(r.hooks.admin.reviewSalon(1, 'upcoming'), error => error.code === 40940);
+    assert.equal(r.writes.length, 0);
+  }
+  const input = fixture();
+  input.hl_salon_events[0].status = 'pending';
+  const r = runtime(input, { strictMissingDocuments: true });
+  assert.equal((await r.hooks.admin.reviewSalon(1, 'upcoming', '审核通过')).status, 'upcoming');
+  assert.equal((await r.hooks.admin.reviewSalon(1, 'rejected', '暂停活动')).status, 'rejected');
+});
+
+test('salon review rechecks a cancellation committed after the operator loaded the pending event', async () => {
+  const input = fixture();
+  input.hl_salon_events[0].status = 'pending';
+  const r = runtime(input, { strictMissingDocuments: true,
+    beforeTransaction(rows) { rows.hl_salon_events[0].status = 'cancelled'; } });
+  await assert.rejects(r.hooks.admin.reviewSalon(1, 'upcoming'), error => error.code === 40940);
+  assert.equal(r.fixtures.hl_salon_events[0].status, 'cancelled');
+  assert.equal(r.writes.length, 0);
+});
 
 test('salon availability distinguishes expiry, exact start, invalid date, status and capacity', () => {
   const now = new Date('2026-10-08T00:00:00Z');
@@ -321,13 +587,20 @@ test('profile delivery revalidates cancellation and hiding that occurs during me
   }
 });
 
-test('approved principals and approved partners create; pending applicants cannot inherit authority or promote themselves', async () => {
+test('approved principals and approved partners directly publish; pending applicants cannot inherit authority or promote themselves', async () => {
   const r = runtime(fixture());
   const create = { title: '新活动', eventDate: '2099-01-01', maxParticipants: 20, price: 0 };
   const principal = await r.hooks.salon.createEvent(1, create); assert.equal(principal.organizerRole, 'matchmaker');
+  assert.equal(principal.status, 'upcoming');
   assert.equal((await r.hooks.salon.getEventDetail(1, 1)).isOrganizer, true);
   assert.equal((await r.hooks.salon.shareCard(1, 1)).canShare, true, 'organizer may share without consuming an attendee seat');
   const partner = await r.hooks.salon.createEvent(2, create); assert.equal(partner.organizerRole, 'partner');
+  assert.equal(partner.status, 'upcoming');
+  const publicEvents = await r.hooks.salon.listEvents({}, 3);
+  assert.ok(publicEvents.list.some(event => event.id === principal.id));
+  assert.ok(publicEvents.list.some(event => event.id === partner.id));
+  assert.equal((await r.hooks.salon.getEventDetail(partner.id, 3)).status, 'upcoming');
+  assert.equal((await r.hooks.salon.register(partner.id, 3)).status, 'registered');
   for (const parentId of [999, -1, 'bad', 2]) {
     r.fixtures.hl_matchmakers[1].parentId = parentId;
     await assert.rejects(r.hooks.salon.createEvent(2, create), /关系无效|所属主理人/);
@@ -345,6 +618,85 @@ test('approved principals and approved partners create; pending applicants canno
   assert.equal(response.code, 0);
   assert.equal(response.data.certificationStatus, 0); assert.equal(response.data.level, 1); assert.equal(response.data.parentId, null);
   await assert.rejects(r.hooks.salon.createEvent(6, create), /审核通过/);
+});
+
+test('direct salon publishing retains future time, capacity, price and organizer ownership validation', async () => {
+  const r = runtime(fixture()), create = { title: '即时发布活动', eventDate: '2099-01-01', maxParticipants: 20, price: 0 };
+  const before = r.writes.length;
+  for (const patch of [{ eventDate: 'bad' }, { eventDate: '2000-01-01' }, { maxParticipants: -1 },
+    { maxParticipants: 1.5 }, { price: -1 }, { price: 'bad' }]) {
+    await assert.rejects(r.hooks.salon.createEvent(1, { ...create, ...patch }), error => error.code === 42240);
+    assert.equal(r.writes.length, before);
+  }
+  const event = await r.hooks.salon.createEvent(1, { ...create, organizerId: 2, organizerRole: 'admin', status: 'ended' });
+  assert.equal(event.organizerId, 1); assert.equal(event.organizerMatchmakerId, 1);
+  assert.equal(event.organizerRole, 'matchmaker'); assert.equal(event.status, 'upcoming');
+  await assert.rejects(r.hooks.salon.updateEvent(event.id, 2, { title: '越权修改' }), /发起人/);
+  r.fixtures.hl_users[0].status = 0;
+  await assert.rejects(r.hooks.salon.createEvent(1, create));
+});
+
+test('explicit organizer saves publish owned pending or rejected drafts and keep published edits public', async () => {
+  for (const status of ['upcoming', 'pending', 'rejected']) {
+    const input = fixture();
+    Object.assign(input.hl_salon_events[0], { status, reviewRemark: '旧审核意见' });
+    input.hl_salon_events.push({ ...input.hl_salon_events[0], _id: 'untouched', id: 90, status: 'pending' });
+    const r = runtime(input);
+    const changed = await r.hooks.salon.updateEvent(1, 1, { title: '已重新发布', eventDate: '2099-02-01', maxParticipants: 20, price: 0 });
+    assert.equal(changed.status, 'upcoming'); assert.equal(changed.reviewRemark, '');
+    assert.equal((await r.hooks.salon.getEventDetail(1, 3)).title, '已重新发布');
+    assert.equal((await r.hooks.salon.register(1, 3)).status, 'registered');
+    assert.equal(r.fixtures.hl_salon_events.find(row => row.id === 90).status, 'pending');
+  }
+});
+
+test('republishing never reopens terminal or expired activities and rejects invalid inherited draft dates', async () => {
+  for (const patch of [{ status: 'ended' }, { status: 'cancelled' }, { status: 'pending', eventDate: '2000-01-01' },
+    { status: 'rejected', eventDate: 'invalid' }]) {
+    const input = fixture(); Object.assign(input.hl_salon_events[0], patch);
+    const r = runtime(input);
+    await assert.rejects(r.hooks.salon.updateEvent(1, 1, { title: '不能绕过发布规则' }));
+    assert.equal(r.writes.length, 0);
+  }
+  const input = fixture(); input.hl_salon_events[0].status = 'pending';
+  const r = runtime(input);
+  await assert.rejects(r.hooks.salon.updateEvent(1, 1, { title: ' ' }), error => error.code === 42240);
+  assert.equal(r.writes.length, 0);
+});
+
+test('publishing transaction rejects revoked organizer, partner or parent credentials without creating an activity', async () => {
+  for (const change of [
+    rows => { rows.hl_users[1].status = 0; },
+    rows => { rows.hl_users[1].mergedIntoUserId = 3; },
+    rows => { rows.hl_matchmakers[1].certificationStatus = 0; },
+    rows => { rows.hl_matchmakers[1].parentId = null; },
+    rows => { rows.hl_matchmakers[0].status = 0; }
+  ]) {
+    const r = runtime(fixture(), { beforeTransaction: change });
+    await assert.rejects(r.hooks.salon.createEvent(2, { title: '不可越权发布', eventDate: '2099-01-01' }), error => error.code === 40301);
+    assert.equal(r.fixtures.hl_salon_events.length, 1); assert.equal(r.writes.length, 0);
+  }
+});
+
+test('publishing save rechecks organizer eligibility and concurrent cancellation without reopening an activity', async () => {
+  for (const change of [
+    rows => { rows.hl_users[0].status = 0; },
+    rows => { rows.hl_matchmakers[0].certificationStatus = 0; },
+    rows => { rows.hl_salon_events[0].status = 'cancelled'; }
+  ]) {
+    const r = runtime(fixture(), { beforeTransaction: change });
+    await assert.rejects(r.hooks.salon.updateEvent(1, 1, { title: '不可强制覆盖' }), error => [40301, 40942].includes(error.code));
+    assert.equal(r.writes.length, 0);
+  }
+});
+
+test('simultaneous salon publications reserve different activity numbers with document-only transactions', async () => {
+  const r = runtime(fixture());
+  const events = await Promise.all([1, 2].map(id => r.hooks.salon.createEvent(id, { title: `即时活动${id}`, eventDate: '2099-01-01' })));
+  assert.equal(new Set(events.map(row => row.id)).size, 2);
+  assert.ok(events.every(row => row.status === 'upcoming' && row.id > 1));
+  assert.equal(r.fixtures.hl_salon_events.length, 3);
+  assert.ok(r.metrics().conflicts > 0);
 });
 
 test('activity shares and old invite acceptance register without changing another principal assignment', async () => {

@@ -5,7 +5,17 @@ const { runtime } = require('./helpers/miniprogram-runtime');
 function overview(extra = {}) {
   return { isPremiumMember: false, phoneBound: true, phoneMasked: '', needsMatchmaker: false,
     membership: null, plans: [{ planCode: 'monthly', title: '月度会员', durationDays: 30, priceText: '100元' }],
-    payment: { available: true, reason: '', functionName: 'test-payment', createPath: '/order' }, ...extra };
+    payment: { provider: 'virtual', available: true, reason: '', functionName: '', createPath: '', queryPath: '' }, ...extra };
+}
+
+const paymentWx = { getDeviceInfo: () => ({ platform: 'android' }), getAppBaseInfo: () => ({ SDKVersion: '3.10.0' }) };
+
+// The membership API returns a complete order, including its original number.
+// Keep UX fixtures faithful to that contract so identity checks remain active.
+function paymentOrder(outTradeNo, status = 'pending') {
+  return { id: 1, outTradeNo, userId: 1, planCode: 'monthly', planTitle: '月度会员',
+    amountFen: 10000, durationDays: 30, status,
+    createdAt: '2026-10-08T00:00:00Z', updatedAt: '2026-10-08T00:00:00Z' };
 }
 
 test('membership payment distinguishes server terminal outcomes after the payment sheet succeeds', async () => {
@@ -14,9 +24,10 @@ test('membership payment distinguishes server terminal outcomes after the paymen
     let queries = 0;
     const { page } = runtime('pages/user/membership.js', { memberApi: {
       membershipOverview: async () => overview(),
-      createMembershipOrder: async () => ({ order: { outTradeNo: `order-${status}` }, payment: {} }),
-      membershipOrder: async () => { queries++; return { status }; }
-    }, wx: { showModal: value => modals.push(value) } });
+      createMembershipOrder: async () => ({ order: paymentOrder(`order-${status}`), payment: overview().payment }),
+      virtualPaymentQuery: async outTradeNo => ({ order: paymentOrder(outTradeNo, status) }),
+      membershipOrder: async outTradeNo => { queries++; return paymentOrder(outTradeNo, status); }
+    }, wx: { ...paymentWx, showModal: value => modals.push(value) } });
     await page.loadOverview();
     page.callPaymentFunction = async () => ({});
     page.requestPayment = async () => {};
@@ -32,12 +43,13 @@ test('unknown payment result retains a query path and avoids another charge atte
   let creates = 0;
   const { page } = runtime('pages/user/membership.js', { memberApi: {
     membershipOverview: async () => overview(),
-    membershipOrder: async () => ({ status: 'paid' }),
+    virtualPaymentQuery: async outTradeNo => ({ order: paymentOrder(outTradeNo, 'paid') }),
+    membershipOrder: async outTradeNo => paymentOrder(outTradeNo, 'paid'),
     createMembershipOrder: async () => { creates++; return {}; }
   } });
   await page.loadOverview();
   page.setData({ lastOrderId: 'pending-order', orderStatus: 'pending' });
-  await page.showOrderResult({ status: 'pending' });
+  await page.showOrderResult(paymentOrder('pending-order'));
   assert.match(page.data.orderTitle, /确认中/);
   await page.startPayment();
   assert.equal(creates, 0);
@@ -50,7 +62,10 @@ test('unavailable checkout presents assisted opening, while phone authorization 
   await page.loadOverview();
   assert.equal(page.data.onlineCheckout, false);
   assert.doesNotMatch(page.data.paymentActionText, /配置/);
-  current = overview({ payment: { available: false, reason: 'phone_required' } });
+  current = overview({ phoneBound: false, payment: { provider: 'jsapi', available: false, reason: 'phone_required' } });
+  await page.loadOverview();
+  assert.equal(page.data.onlineCheckout, false, 'phone authorization must not reopen a historical JSAPI cashier');
+  current = overview({ phoneBound: false, payment: { provider: 'virtual', available: false, reason: 'phone_required' } });
   await page.loadOverview();
   assert.equal(page.data.onlineCheckout, true);
 });
@@ -61,9 +76,10 @@ test('a pre-payment network failure resumes the same order instead of blocking f
   const orderNumbers = [];
   const { page } = runtime('pages/user/membership.js', { memberApi: {
     membershipOverview: async () => overview(),
-    createMembershipOrder: async () => { creates++; return { order: { outTradeNo: 'same-order', planTitle: '月度会员', amountFen: 10000 }, payment: {} }; },
-    membershipOrder: async () => ({ status: 'paid' })
-  } });
+    createMembershipOrder: async () => { creates++; return { order: paymentOrder('same-order'), payment: overview().payment }; },
+    virtualPaymentQuery: async outTradeNo => ({ order: paymentOrder(outTradeNo, 'paid') }),
+    membershipOrder: async outTradeNo => paymentOrder(outTradeNo, 'paid')
+  }, wx: paymentWx });
   await page.loadOverview();
   page.callPaymentFunction = async checkout => {
     orderNumbers.push(checkout.order.outTradeNo);

@@ -63,15 +63,36 @@ async function readSnapshot(db, name, projection) {
 
 function cachedVipService(snapshot, now) {
   const tables = new Map(Object.keys(COLLECTIONS).map(key => [COLLECTIONS[key], snapshot[key]]));
+  const indexes = new Map();
+  function indexed(name, field, normalize = value => value, indexName = field) {
+    if (!indexes.has(name)) indexes.set(name, new Map());
+    const tableIndexes = indexes.get(name);
+    if (!tableIndexes.has(indexName)) {
+      const index = new Map();
+      for (const row of tables.get(name) || []) {
+        const key = normalize(row[field]);
+        if (!index.has(key)) index.set(key, []);
+        index.get(key).push(row);
+      }
+      tableIndexes.set(indexName, index);
+    }
+    return tableIndexes.get(indexName);
+  }
   const matches = (row, query) => !query || Object.entries(query).every(([key, value]) => row[key] === value);
-  const read = async (name, query) => (tables.get(name) || []).filter(row => matches(row, query));
+  const read = async (name, query) => {
+    const first = query && Object.entries(query)[0];
+    const candidates = first ? indexed(name, first[0]).get(first[1]) || [] : tables.get(name) || [];
+    return candidates.filter(row => matches(row, query));
+  };
   // Expose reads only. A future entitlement implementation cannot silently write.
+  // Indexes are owned by this one immutable read window and preserve row order
+  // and strict field matching, including the legacy numeric userId/status query.
   const db = { collection(name) { return { doc(key) { return { async get() {
-    return { data: (tables.get(name) || []).find(row => row._id === key) || null };
+    return { data: indexed(name, '_id').get(key)?.[0] || null };
   } }; } }; } };
   return createVipMembershipService({ db, now: () => new Date(now), getAll: read,
     getOne: async (name, query) => (await read(name, query))[0] || null,
-    getById: async (name, id) => (tables.get(name) || []).find(row => Number(row.id) === Number(id)) || null });
+    getById: async (name, id) => Number.isNaN(Number(id)) ? null : indexed(name, 'id', Number, 'numeric:id').get(Number(id))?.[0] || null });
 }
 
 function maskName(value) {
@@ -136,4 +157,4 @@ async function buildCockpit(db, { periodDays = 30, now = Date.now() } = {}) {
       note: '统计采用一次读取窗口，业务并发更新时结果可能短暂变化。' } };
 }
 
-module.exports = { buildCockpit, readSnapshot, periodFor, maskName, COLLECTIONS, FIELDS, MAX_ROWS };
+module.exports = { buildCockpit, readSnapshot, cachedVipService, periodFor, maskName, COLLECTIONS, FIELDS, MAX_ROWS };

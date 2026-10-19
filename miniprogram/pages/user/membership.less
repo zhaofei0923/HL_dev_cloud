@@ -4,6 +4,30 @@
   font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
+.membership-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10rpx;
+  margin-bottom: 24rpx;
+  padding: 8rpx;
+  border: 1rpx solid #e7ded4;
+  border-radius: 16rpx;
+  background: #eee6db;
+}
+
+.membership-tab {
+  margin: 0;
+  padding: 18rpx 8rpx;
+  border-radius: 10rpx;
+  background: transparent;
+  color: #786658;
+  font-size: 28rpx;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.membership-tab::after { border: 0; }
+.membership-tab.selected { background: #2f2925; color: #e8c592; }
+
 .membership-hero {
   box-sizing: border-box;
   display: grid;
@@ -248,6 +272,40 @@
   white-space: nowrap;
 }
 
+.price-daily { display: block; margin-top: 6rpx; color: #786658; font-size: 19rpx; }
+
+.benefits-section,
+.matchmaking-section { margin-top: 30rpx; }
+.benefits-heading,
+.service-package-header { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.benefits-heading .text-command { padding: 12rpx 0 12rpx 16rpx; }
+.benefits-table { margin-top: 14rpx; overflow: hidden; border: 1rpx solid #e6d7c1; border-radius: 16rpx; background: #fffdf8; }
+.benefits-table-head,
+.benefits-table-row { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 0.75fr) minmax(0, 0.75fr); align-items: stretch; }
+.benefits-table-head { background: #e8d1aa; color: #65492e; font-size: 22rpx; font-weight: 700; }
+.benefits-table-head > text { padding: 20rpx 12rpx; text-align: center; }
+.benefits-table-head > text:first-child { padding-left: 22rpx; text-align: left; }
+.benefits-table-row + .benefits-table-row { border-top: 1rpx solid #eee5d8; }
+.benefits-copy { min-width: 0; padding: 18rpx 20rpx; }
+.benefits-title,
+.benefits-note { display: block; }
+.benefits-title { color: #3d3027; font-size: 25rpx; font-weight: 600; line-height: 1.4; }
+.benefits-note { margin-top: 5rpx; color: #8a7867; font-size: 19rpx; line-height: 1.45; }
+.benefits-free,
+.benefits-vip { display: flex; align-items: center; justify-content: center; padding: 12rpx 8rpx; font-size: 21rpx; text-align: center; }
+.benefits-free { color: #9a8b7e; }
+.benefits-vip { background: #f5e5c8; color: #8a5d2f; font-weight: 700; }
+.benefits-footnote { display: block; margin-top: 18rpx; color: #83705d; font-size: 21rpx; line-height: 1.6; }
+.readiness-guide { margin-top: 0; }
+.readiness-guide .text-command { margin-top: 16rpx; padding: 8rpx 0; text-align: left; }
+.service-packages { margin-top: 26rpx; }
+.service-package { margin-top: 16rpx; padding: 26rpx; border: 1rpx solid #e7ded4; border-radius: 16rpx; background: #fffdf8; }
+.service-package-status { color: #8b7866; font-size: 20rpx; white-space: nowrap; }
+.service-package-status.active { color: #3e6758; }
+.service-package-counts { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12rpx; margin: 20rpx 0 12rpx; color: #765534; font-size: 24rpx; }
+.service-request { margin-top: 20rpx; }
+.service-agreement { margin-top: 24rpx; padding: 20rpx 8rpx; border-top: 1rpx solid #e7ded4; color: #8a7867; font-size: 20rpx; line-height: 1.6; }
+
 .price-value {
   color: #963b35;
   font-size: 30rpx;
@@ -287,6 +345,8 @@
 }
 
 .membership-actions.contact-only { grid-template-columns: 1fr; }
+.membership-actions.single-action { grid-template-columns: 1fr; }
+.existing-service { border-color: #c6ab7d; background: #f6eddb; }
 .membership-guide,
 .order-feedback { margin-top: 26rpx; padding: 26rpx; border-radius: 16rpx; background: #fffdf8; border: 1rpx solid #e7ded4; }
 .membership-guide .section-note,

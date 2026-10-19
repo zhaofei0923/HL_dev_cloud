@@ -1,6 +1,7 @@
 import { defineMatchmakerController } from '../../utils/matchmaker-workspace'
 import { apiErrorMessage, currentUser, isSessionRecoverableError } from '../../services/api'
 import { matchmakerApi } from '../../services/matchmaker'
+import { matchmakerAccessView } from '../../utils/matchmaker-access-view'
 import { invitePath } from '../../utils/invite'
 import {
   MATCHMAKER_PAGE_TTL_MS,
@@ -49,32 +50,8 @@ function defaultInviteCard() {
 type Dashboard = ReturnType<typeof defaultDashboard>
 type InviteCard = ReturnType<typeof defaultInviteCard>
 
-function certificationView(matchmaker: { certificationStatus?: number | string; certificationRemark?: string } | undefined) {
-  const status = Number((matchmaker && matchmaker.certificationStatus) || 0)
-  const remark = (matchmaker && matchmaker.certificationRemark) || ''
-  if (status === 2) {
-    return {
-      canOperate: true,
-      statusText: '已认证',
-      statusTagClass: 'gold',
-      statusNote: '主理人权限已开通，可进入资源池和运营页面。'
-    }
-  }
-  if (status === 1) {
-    return {
-      canOperate: false,
-      statusText: '已拒绝',
-      statusTagClass: 'rose',
-      statusNote: remark || '本次申请暂未通过，请完善资料后重新提交。'
-    }
-  }
-  return {
-    canOperate: false,
-    statusText: '待审批',
-    statusTagClass: '',
-    statusNote: '主理人申请已提交，后台审批通过后将开放资源池、会员经营和沙龙发起权限。'
-  }
-}
+const certificationView = (matchmaker: Parameters<typeof matchmakerAccessView>[0]) =>
+  matchmakerAccessView(matchmaker, '主理人权限已开通，可进入资源池和运营页面。')
 
 function isAccessDenied(err: unknown) {
   const code = Number((err as { code?: number } | null)?.code)
@@ -103,9 +80,9 @@ export const mineController = defineMatchmakerController({
     inviteResetting: false,
     inviteOpen: false,
     canOperate: false,
-    statusText: '待审批',
+    statusText: '待开通',
     statusTagClass: '',
-    statusNote: '申请已提交，后台审核通过后将开放资源池、会员经营和沙龙发起权限。'
+    statusNote: '主理人一次性开通费 ¥6980，长期有效。付款确认后自动开通。'
   },
 
   onShow() {
@@ -387,10 +364,15 @@ export const mineController = defineMatchmakerController({
   goResources() {
     if (!this.synchronizeSession()) return
     if (!this.data.canOperate) {
-      wx.showToast({ title: '主理人认证通过后可使用', icon: 'none' })
+      wx.showToast({ title: '开通主理人后可使用', icon: 'none' })
       return
     }
     wx.navigateTo({ url: '/pages/matchmaker/resources' })
+  },
+
+  goActivation() {
+    if (!this.synchronizeSession() || this.data.loading) return
+    wx.navigateTo({ url: '/pages/matchmaker/activation' })
   },
 
   logout() {

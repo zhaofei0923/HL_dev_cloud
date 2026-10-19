@@ -274,6 +274,28 @@ test('unpersisted default plans are created atomically at their fixed canonical 
   assert.equal(row._id, 'plan_vip_week'); assert.equal(row.active, false); assert.equal(row.amountFen, 6160);
   assert.equal(row.durationDays, 7); assert.equal(row.productType, 'vip');
 });
+
+test('new matchmaking activation persists the two- and six-service contracts without rewriting historical products', async () => {
+  for (const [planCode, title, amountFen, serviceCount] of [
+    ['matchmaking_double', '人工牵线2次', 298000, 2],
+    ['matchmaking_month_6', '人工牵线1个月', 698000, 6]
+  ]) {
+    const rt = runtime();
+    rt.rows[C.plans] = [
+      { _id: 'original-single', planCode: 'matchmaking_single', serviceCount: 1, active: true },
+      { _id: 'original-month', planCode: 'matchmaking_month_3', serviceCount: 3, active: true }
+    ];
+    const historical = clone(rt.rows[C.plans]);
+    const detail = await createReadService({ db: rt.db, now: () => Date.parse(NOW) }).detailPlan({ planCode });
+    const result = await rt.service.execute('plans.update', { planCode, active: false, expectedVersion: detail.version }, actor);
+    const saved = rt.rows[C.plans].find(row => row.planCode === planCode);
+    assert.deepEqual([saved._id, saved.title, saved.amountFen, saved.durationDays, saved.productType, saved.serviceCount],
+      [`plan_${planCode}`, title, amountFen, 30, 'matchmaking', serviceCount]);
+    assert.equal(result.active, false);
+    assert.deepEqual(rt.rows[C.plans].slice(0, 2), historical);
+    assert.deepEqual(rt.writes.map(row => row.name), [C.plans, C.audit]);
+  }
+});
 test('a plan created concurrently after detail fetch cannot overwrite the other change', async () => {
   const rt = runtime({ beforeTransaction: rows => { rows[C.plans].push({ ...DEFAULT_MEMBERSHIP_PLANS[0], _id: 'plan_vip_week', active: false, updatedAt: NOW }); } });
   rt.rows[C.plans] = [];
@@ -281,7 +303,8 @@ test('a plan created concurrently after detail fetch cannot overwrite the other 
 });
 test('retired, test and arbitrary plan codes, price changes and coerced boolean flags are rejected', async () => {
   const rt = runtime();
-  for (const patch of [{ planCode: 'matchmaking_month' }, { planCode: 'payment_probe' }, { planCode: 'custom' }, { active: 'false' }, { active: 1 },
+  for (const patch of [{ planCode: 'matchmaking_month' }, { planCode: 'matchmaking_single' }, { planCode: 'matchmaking_month_3' },
+    { planCode: 'payment_probe' }, { planCode: 'custom' }, { active: 'false' }, { active: 1 },
     { amountFen: 1 }, { amountFen: -1 }, { amountFen: Number.MAX_SAFE_INTEGER + 1 }, { title: 'changed' }, { durationDays: 999 }, { paymentReady: true }]) {
     await assert.rejects(rt.service.execute('plans.update', planArgs(rt, patch), actor), code(42260));
   }

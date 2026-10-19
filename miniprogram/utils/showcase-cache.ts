@@ -9,6 +9,11 @@ export type ShowcaseQuery = {
   city: string
   gender: string
   category?: ShowcaseCategory
+  ageMin?: string
+  ageMax?: string
+  education?: string
+  maritalStatus?: string
+  incomeRange?: string
 }
 
 export type FavoriteQuota = {
@@ -55,7 +60,7 @@ const PUBLIC_FIELDS = [
   'isVerified', 'memberType', 'identityStatus', 'identityStatusText',
   'profileCompletion', 'displayStatus', 'lastRecommendStatus',
   'identityVerified', 'educationVerified', 'verifiedEducation', 'vehicleVerified', 'propertyVerified',
-  'assetVerified', 'financialAssetRange'
+  'assetVerified', 'financialAssetRange', 'vipBadge', 'membershipTier'
 ]
 
 const snapshots = new Map<string, ShowcaseSnapshot>()
@@ -91,7 +96,8 @@ export function showcaseSessionScope(token: unknown, user: unknown, env: unknown
 }
 
 export function showcaseQueryKey(query: ShowcaseQuery) {
-  return JSON.stringify([query.page, query.pageSize, query.keyword, query.city, query.gender, query.category || 'recommend'])
+  return JSON.stringify([query.page, query.pageSize, query.keyword, query.city, query.gender, query.category || 'recommend',
+    query.ageMin || '', query.ageMax || '', query.education || '', query.maritalStatus || '', query.incomeRange || ''])
 }
 
 function synchronizeScope(scope: string) {

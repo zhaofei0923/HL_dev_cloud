@@ -1,0 +1,23 @@
+<view class="page admin-portal">
+  <view class="admin-portal-heading"><text class="eyebrow">运营管理</text><text class="title">管理后台</text><text class="subtitle">查看经营情况，处理审核与日常运营。</text></view>
+  <view wx:if="{{!ready || note}}" class="card admin-portal-status" aria-live="polite">
+    <text class="section-title">{{title}}</text><text class="section-note">{{note}}</text>
+    <button wx:if="{{canRetry}}" class="btn gold" bindtap="loadEntry" loading="{{checking}}" disabled="{{checking}}">重新尝试</button>
+    <button wx:if="{{!ready}}" class="admin-portal-back" bindtap="returnToProfile">返回我的</button>
+  </view>
+  <block wx:if="{{ready}}">
+    <view class="admin-modules">
+      <button wx:for="{{modules}}" wx:key="id" class="card module" data-resource="{{item.id}}" bindtap="openModule"><view><text class="section-title">{{item.title}}</text><text class="section-note">{{item.note}}</text></view><text class="module-arrow">›</text></button>
+    </view>
+    <view class="row section-heading"><text class="section-title">经营总览</text><button class="text-button" bindtap="loadEntry" disabled="{{checking}}">刷新</button></view>
+    <view class="period-row"><button wx:for="{{periods}}" wx:key="*this" class="period {{periodDays === item ? 'selected' : ''}}" data-days="{{item}}" bindtap="setPeriod" disabled="{{checking}}">近{{item}}天</button></view>
+    <text wx:if="{{checking}}" class="section-note">正在读取统计…</text>
+    <view class="metric-grid"><view wx:for="{{metrics}}" wx:key="label" class="metric"><text class="metric-label">{{item.label}}</text><text class="metric-value">{{item.value}}</text></view></view>
+    <view wx:if="{{memberMetrics.length}}" class="card"><text class="section-title">会员结构</text><view wx:for="{{memberMetrics}}" wx:key="label" class="stat-row"><text>{{item.label}}</text><text>{{item.value}}</text></view><view wx:for="{{matchmakerMetrics}}" wx:key="label" class="stat-row"><text>{{item.label}}</text><text>{{item.value}}</text></view></view>
+    <view wx:if="{{metrics.length}}" class="card"><text class="section-title">套餐收款构成</text><view wx:for="{{products}}" wx:key="label" class="stat-row"><text>{{item.label}}</text><text>{{item.value}}</text></view><text wx:if="{{!products.length}}" class="section-note">暂无套餐收款记录</text></view>
+    <view wx:if="{{metrics.length}}" class="card"><text class="section-title">主理人排名</text><view wx:for="{{ranking}}" wx:key="label" class="stat-row"><text>{{index + 1}}. {{item.label}}</text><text>{{item.value}}</text></view><text wx:if="{{!ranking.length}}" class="section-note">暂无符合条件的主理人</text></view>
+    <view wx:if="{{memberTrend.length}}" class="card"><text class="section-title">会员趋势</text><view wx:for="{{memberTrend}}" wx:key="label" class="stat-row"><text>{{item.label}}</text><text>{{item.value}}</text></view></view>
+    <view wx:if="{{revenueTrend.length}}" class="card"><text class="section-title">收款趋势</text><view wx:for="{{revenueTrend}}" wx:key="label" class="stat-row"><text>{{item.label}}</text><text>{{item.value}}</text></view></view>
+    <text class="section-note">{{updatedAt}}</text><text class="section-note">{{quality}}</text>
+  </block>
+</view>

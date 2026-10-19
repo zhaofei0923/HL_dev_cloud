@@ -101,12 +101,14 @@ function createReadService({ db, now = Date.now } = {}) {
     if (!Number.isFinite(time)) throw fail(503, '当前时间不可用');
     return time;
   };
-  async function scan(name, projection) {
+  async function scan(name, projection, condition = {}, firstPageOnly = false) {
     const all = [];
     let cursor;
     while (true) {
       let query = db.collection(name);
-      if (cursor !== undefined && db.command?.gt) query = query.where({ _id: db.command.gt(cursor) });
+      const where = { ...condition };
+      if (cursor !== undefined && db.command?.gt) where._id = db.command.gt(cursor);
+      if (Object.keys(where).length) query = query.where(where);
       query = query.orderBy('_id', 'asc').field(projection);
       if (!db.command?.gt) query = query.skip(all.length);
       const snapshot = await query.limit(100).get();
@@ -118,12 +120,46 @@ function createReadService({ db, now = Date.now } = {}) {
         all.push(row); cursor = row._id;
         if (all.length > MAX_ROWS) throw fail(503, '数据超过实时查询上限，请配置索引或预聚合');
       }
+      if (firstPageOnly) return { rows: all, complete: snapshot.data.length < 100 };
       if (snapshot.data.length < 100) return all;
     }
   }
+  async function related(name, field, ids, projection) {
+    const references = [...new Set(ids.map(numberId).filter(id => id !== null))];
+    if (!references.length) return [];
+    const wanted = new Set(references);
+    // Keep the projected scan fallback for adapters without the set operator.
+    // Each request owns these reads; no authorization or business data is cached.
+    if (typeof db.command?.in !== 'function') {
+      return (await scan(name, projection)).filter(row => wanted.has(numberId(row[field])));
+    }
+    const batches = [];
+    for (let offset = 0; offset < references.length; offset += 50) {
+      const batch = references.slice(offset, offset + 50);
+      const values = batch.flatMap(id => [id, String(id)]), batchIds = new Set(batch);
+      batches.push(scan(name, projection, { [field]: db.command.in(values) }).then(rows => {
+        if (rows.some(row => !batchIds.has(numberId(row[field])))) throw fail(409, '关联记录归属异常，请重新读取');
+        return rows;
+      }));
+    }
+    const all = (await Promise.all(batches)).flat();
+    if (all.length > MAX_ROWS) throw fail(503, '数据超过实时查询上限，请配置索引或预聚合');
+    return all;
+  }
+  async function prepareRelated(name, field, projection) {
+    // Start small tables alongside the primary scans, retaining one network
+    // round for current small datasets. Large tables switch to scoped reads.
+    const snapshot = await scan(name, projection, {}, true);
+    return ids => {
+      if (!snapshot.complete) return related(name, field, ids, projection);
+      const wanted = new Set(ids.map(numberId).filter(id => id !== null));
+      return snapshot.rows.filter(row => wanted.has(numberId(row[field])));
+    };
+  }
   async function lookup(name, field, value, projection) {
     const values = typeof value === 'number' ? [value, String(value)] : [value];
-    const snapshots = await Promise.all(values.map(expected => db.collection(name).where({ [field]: expected })
+    const selectors = values.length > 1 && typeof db.command?.in === 'function' ? [db.command.in(values)] : values;
+    const snapshots = await Promise.all(selectors.map(expected => db.collection(name).where({ [field]: expected })
       .orderBy('_id', 'asc').field(projection).limit(2).get()));
     const found = new Map();
     for (const snapshot of snapshots) {
@@ -206,46 +242,57 @@ function createReadService({ db, now = Date.now } = {}) {
       const page = pageArgs(args, ['status']);
       if (args.status !== undefined && typeof args.status !== 'number' && typeof args.status !== 'string') throw fail(422, '筛选条件无效');
       const status = args.status === undefined || args.status === '' ? '' : choice(String(args.status), ['0', '1', '2']);
-      const [rows, users, profiles, members, salons] = await Promise.all([
-        scan(C.matchmakers, FIELDS.matchmakers), scan(C.users, FIELDS.users), scan(C.profiles, FIELDS.profiles),
-        scan(C.members, FIELDS.members), scan(C.salons, fields(['id', 'organizerId']))
+      const [rows, users, readProfiles, readMembers, readSalons] = await Promise.all([
+        scan(C.matchmakers, FIELDS.matchmakers), scan(C.users, FIELDS.users),
+        prepareRelated(C.profiles, 'userId', FIELDS.profiles), prepareRelated(C.members, 'matchmakerId', FIELDS.members),
+        prepareRelated(C.salons, 'organizerId', fields(['id', 'organizerId']))
       ]);
       uniqueIndex(rows, 'id');
-      const usersById = uniqueIndex(users, 'id'), byUser = groupBy(profiles, 'userId');
+      const usersById = uniqueIndex(users, 'id');
       const selected = rows.filter(row => Number(row.status) === 1 && (!status || String(row.certificationStatus) === status)
         && matches(page.keyword, [row.id, row.matchmakerNo, usersById.get(numberId(row.userId))?.nickname])).sort(numericOrder);
       const result = paginate(selected, page);
+      const userIds = result.list.map(row => row.userId);
+      const [profiles, members, salons] = await Promise.all([
+        readProfiles(userIds), readMembers(result.list.map(row => row.id)), readSalons(userIds)
+      ]);
+      const byUser = groupBy(profiles, 'userId'), membersByMatchmaker = groupBy(members, 'matchmakerId'), salonsByUser = groupBy(salons, 'organizerId');
       return { ...result, list: result.list.map(row => matchmakerDto(row, usersById.get(numberId(row.userId)),
-        byUser.get(numberId(row.userId)) || [], members, salons, false)) };
+        byUser.get(numberId(row.userId)) || [], membersByMatchmaker.get(numberId(row.id)) || [],
+        salonsByUser.get(numberId(row.userId)) || [], false)) };
     },
     async detailMatchmaker(args = {}) {
       allowed(args, ['id']); const id = positiveId(args.id);
       const row = await required(C.matchmakers, 'id', id, FIELDS.matchmakers);
       const userId = positiveId(row.userId);
       const [user, profiles, members, salons] = await Promise.all([
-        lookup(C.users, 'id', userId, FIELDS.userDetail), scan(C.profiles, FIELDS.profiles),
-        scan(C.members, FIELDS.members), scan(C.salons, fields(['id', 'organizerId']))
+        lookup(C.users, 'id', userId, FIELDS.userDetail), related(C.profiles, 'userId', [userId], FIELDS.profiles),
+        related(C.members, 'matchmakerId', [id], FIELDS.members), related(C.salons, 'organizerId', [userId], fields(['id', 'organizerId']))
       ]);
       return matchmakerDto(row, user, profiles.filter(profile => numberId(profile.userId) === userId), members, salons, true);
     },
     async listSalons(args = {}) {
       const page = pageArgs(args, ['status']), status = choice(args.status, SALON_STATUSES);
-      const [rows, users, registrations] = await Promise.all([scan(C.salons, FIELDS.salons), scan(C.users, FIELDS.users), scan(C.registrations, FIELDS.registrations)]);
+      const [rows, users, readRegistrations] = await Promise.all([scan(C.salons, FIELDS.salons), scan(C.users, FIELDS.users),
+        prepareRelated(C.registrations, 'eventId', FIELDS.registrations)]);
       uniqueIndex(rows, 'id'); const byId = uniqueIndex(users, 'id');
       const result = paginate(rows.filter(row => (!status || row.status === status)
         && matches(page.keyword, [row.id, row.title, row.location, byId.get(numberId(row.organizerId))?.nickname])).sort(numericOrder), page);
-      return { ...result, list: result.list.map(row => salonDto(row, byId.get(numberId(row.organizerId)), registrations, false)) };
+      const registrations = await readRegistrations(result.list.map(row => row.id));
+      const byEvent = groupBy(registrations, 'eventId');
+      return { ...result, list: result.list.map(row => salonDto(row, byId.get(numberId(row.organizerId)), byEvent.get(numberId(row.id)) || [], false)) };
     },
     async detailSalon(args = {}) {
       allowed(args, ['id']); const id = positiveId(args.id);
       const row = await required(C.salons, 'id', id, FIELDS.salonDetail);
-      const [organizer, registrations] = await Promise.all([lookup(C.users, 'id', positiveId(row.organizerId), FIELDS.users), scan(C.registrations, FIELDS.registrations)]);
+      const [organizer, registrations] = await Promise.all([lookup(C.users, 'id', positiveId(row.organizerId), FIELDS.users), related(C.registrations, 'eventId', [id], FIELDS.registrations)]);
       return salonDto(row, organizer, registrations, true);
     },
     async listCertifications(args = {}) {
       const page = pageArgs(args, ['kind', 'status']), kind = choice(args.kind, KINDS), status = choice(args.status, CERT_STATUSES);
-      const [records, users, profiles] = await Promise.all([scan(C.certifications, FIELDS.certifications), scan(C.users, FIELDS.users), scan(C.profiles, FIELDS.profiles)]);
-      const byId = uniqueIndex(users, 'id'), byUser = groupBy(profiles, 'userId'), all = [];
+      const [records, users, readProfiles] = await Promise.all([scan(C.certifications, FIELDS.certifications), scan(C.users, FIELDS.users),
+        prepareRelated(C.profiles, 'userId', FIELDS.profiles)]);
+      const byId = uniqueIndex(users, 'id'), all = [];
       for (const row of records) {
         const userId = numberId(row.userId), user = byId.get(userId);
         if (userId === null || row._id !== `user_${userId}`) continue;
@@ -255,8 +302,7 @@ function createReadService({ db, now = Date.now } = {}) {
           const application = row.applications?.[entry.kind], current = row.current?.[entry.kind];
           if (!application && !current) continue;
           const applicationId = typeof application?.requestId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(application.requestId) ? application.requestId : '';
-          const profileRows = byUser.get(userId) || [];
-          const canView = !!applicationId && activeUser(user) && profileRows.length === 1;
+          const canView = !!applicationId && activeUser(user);
           const validMaterials = Array.isArray(application?.materialIds) && application.materialIds.length <= 3
             && new Set(application.materialIds).size === application.materialIds.length
             && application.materialIds.every(id => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(id));
@@ -269,7 +315,13 @@ function createReadService({ db, now = Date.now } = {}) {
         }
       }
       all.sort((a, b) => String(b.submittedAt || b.updatedAt).localeCompare(String(a.submittedAt || a.updatedAt)) || b.userId - a.userId || a.kind.localeCompare(b.kind));
-      return paginate(all, page);
+      const result = paginate(all, page);
+      const profiles = await readProfiles(result.list.map(row => row.userId));
+      const byUser = groupBy(profiles, 'userId');
+      return { ...result, list: result.list.map(row => {
+        const hasProfile = (byUser.get(row.userId) || []).length === 1;
+        return { ...row, canView: row.canView && hasProfile, canReview: row.canReview && hasProfile };
+      }) };
     },
     async detailCertification(args = {}) {
       allowed(args, ['userId', 'kind', 'applicationId']);

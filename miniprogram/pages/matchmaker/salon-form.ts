@@ -114,7 +114,7 @@ Page({
     try {
       await salonApi.create(form)
       if (!this.isCurrent(generation, scope)) return
-      wx.showToast({ title: '已提交审核' })
+      wx.showToast({ title: '活动已发布' })
       wx.navigateBack()
     } catch (err) {
       if (this.isCurrent(generation, scope)) console.warn('create salon failed', err)

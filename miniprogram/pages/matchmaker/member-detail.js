@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const member_1 = require("../../services/member");
 const chat_1 = require("../../services/chat");
 const member_format_1 = require("../../utils/member-format");
+const api_1 = require("../../services/api");
+const page_session_1 = require("../../utils/page-session");
 const INCOME_SOURCE_LABELS = {
     salary: '工资',
     business: '企业经营',
@@ -138,6 +140,9 @@ function archiveSections(archive) {
     ];
 }
 Page({
+    _readinessVisible: true,
+    _detailScope: '',
+    _detailGeneration: 0,
     data: {
         id: '',
         scope: 'own',
@@ -157,7 +162,11 @@ Page({
         claimInvite: null,
         claimPhone: '',
         claimPhoneFocus: false,
-        claimPhoneSaving: false
+        claimPhoneSaving: false,
+        matchmakingReadiness: null,
+        matchmakingReadinessLoading: false,
+        matchmakingReadinessSaving: false,
+        matchmakingReadinessError: ''
     },
     onLoad(options) {
         wx.hideShareMenu({ menus: ['shareAppMessage', 'shareTimeline'] });
@@ -169,29 +178,65 @@ Page({
         });
     },
     onShow() {
+        this._readinessVisible = true;
+        this.setData({ matchmakingReadinessLoading: false, matchmakingReadinessSaving: false });
         if (this.data.id)
-            void this.load();
+            return this.load();
+    },
+    onHide() {
+        this._readinessVisible = false;
+        this._detailGeneration += 1;
+        this.clearDetail();
+    },
+    onUnload() { this.onHide(); },
+    clearDetail() {
+        this.setData({ member: null, privateSections: [], profilePrivateSections: [], matchingPrivateSections: [],
+            servicePrivateSections: [], privateLifePhotos: [], complianceVerified: false, claimInvite: null,
+            claimPhone: '', claimPhoneFocus: false, loading: false, displaySaving: false, chatStarting: false,
+            claimInviteLoading: false, claimPhoneSaving: false, matchmakingReadiness: null,
+            matchmakingReadinessLoading: false, matchmakingReadinessSaving: false, matchmakingReadinessError: '' });
+    },
+    ensureDetailSession() {
+        const scope = (0, page_session_1.pageSessionScope)();
+        if (scope !== this._detailScope) {
+            this._detailScope = scope;
+            this._detailGeneration += 1;
+            this.clearDetail();
+        }
+        if (!scope && this._readinessVisible)
+            wx.redirectTo({ url: '/pages/index/index' });
+        return scope;
+    },
+    isDetailCurrent(scope, generation) {
+        return this._readinessVisible && scope === (0, page_session_1.pageSessionScope)() && generation === this._detailGeneration;
     },
     async load() {
-        if (!this.data.id)
+        const scope = this.ensureDetailSession();
+        if (!scope || !this._readinessVisible || !this.data.id)
             return;
-        this.setData({ loading: true });
+        const generation = ++this._detailGeneration;
+        this.setData({ loading: true, displaySaving: false, chatStarting: false, claimInviteLoading: false, claimPhoneSaving: false });
         try {
             let row = null;
             if (this.data.isOwn) {
                 row = await member_1.memberApi.detail(this.data.id);
             }
             else {
-                const cached = wx.getStorageSync('selectedMatchmakerMember');
-                if (cached && String(cached.id) === this.data.id) {
-                    row = cached;
-                }
-                else {
-                    const result = await member_1.memberApi.resources({ page: 1, pageSize: 100 });
+                const seen = new Set();
+                for (let page = 1; !row; page += 1) {
+                    const result = await member_1.memberApi.resources({ page, pageSize: 100 });
+                    if (!this.isDetailCurrent(scope, generation))
+                        return;
                     row = (result.list || []).find((item) => String(item.id) === this.data.id);
+                    const incoming = (result.list || []).filter((item) => !seen.has(String(item.id)));
+                    incoming.forEach((item) => seen.add(String(item.id)));
+                    if (!incoming.length || seen.size >= Number(result.total || 0))
+                        break;
                 }
             }
-            const archive = row && row.privateArchive;
+            if (!this.isDetailCurrent(scope, generation))
+                return;
+            const archive = this.data.isOwn && row && row.privateArchive;
             const privateSections = archiveSections(archive);
             const privateLifePhotos = archive && archive.personalProfile
                 ? (Array.isArray(archive.personalProfile.lifePhotos) ? archive.personalProfile.lifePhotos : [])
@@ -209,25 +254,92 @@ Page({
                 claimInvite: row && row.identityStatus === 'pending' ? this.data.claimInvite : null,
                 claimPhone: row && row.phone ? String(row.phone) : this.data.claimPhone
             });
+            void this.loadMatchmakingReadiness();
         }
         catch (err) {
+            if (!this.isDetailCurrent(scope, generation))
+                return;
             console.warn('load matchmaker member detail failed', err);
-            this.setData({ member: null });
+            this.clearDetail();
         }
         finally {
-            this.setData({ loading: false });
+            if (this.isDetailCurrent(scope, generation))
+                this.setData({ loading: false });
         }
     },
     goBack() {
         wx.navigateBack();
     },
+    async loadMatchmakingReadiness() {
+        const scope = this.ensureDetailSession(), generation = this._detailGeneration, memberUserId = Number(this.data.member?.userId);
+        this.setData({ matchmakingReadiness: null, matchmakingReadinessError: '' });
+        if (!scope || !this.data.isOwn || !Number.isSafeInteger(memberUserId) || memberUserId <= 0)
+            return;
+        this.setData({ matchmakingReadinessLoading: true });
+        try {
+            const readiness = await member_1.memberApi.matchmakingReadiness(memberUserId);
+            if (this.isDetailCurrent(scope, generation) && Number(this.data.member?.userId) === memberUserId)
+                this.setData({ matchmakingReadiness: readiness });
+        }
+        catch (err) {
+            if (this.isDetailCurrent(scope, generation) && Number(this.data.member?.userId) === memberUserId)
+                this.setData({ matchmakingReadinessError: '暂时无法确认人工牵线准备状态，请重试。' });
+            console.warn('load matchmaking readiness failed', err);
+        }
+        finally {
+            if (this.isDetailCurrent(scope, generation) && Number(this.data.member?.userId) === memberUserId)
+                this.setData({ matchmakingReadinessLoading: false });
+        }
+    },
+    confirmMatchmakingReadiness() {
+        const scope = this.ensureDetailSession(), generation = this._detailGeneration;
+        if (!scope || !this._readinessVisible)
+            return;
+        const memberUserId = Number(this.data.member?.userId);
+        if (!this.data.isOwn || !memberUserId || this.data.matchmakingReadinessSaving || !this.data.matchmakingReadiness)
+            return;
+        wx.showModal({ title: '确认人工牵线准备', content: '请确认已与会员本人核对服务资料和牵线意向。本操作仅确认服务准备，不替会员同意具体牵线。',
+            success: async (result) => {
+                if (!result.confirm || !this.isDetailCurrent(scope, generation) || Number(this.data.member?.userId) !== memberUserId)
+                    return;
+                this.setData({ matchmakingReadinessSaving: true });
+                try {
+                    const readiness = await member_1.memberApi.confirmMatchmakingReadiness(memberUserId, true);
+                    if (!this.isDetailCurrent(scope, generation) || Number(this.data.member?.userId) !== memberUserId)
+                        return;
+                    this.setData({ matchmakingReadiness: readiness });
+                    wx.showToast({ title: '已确认人工牵线服务准备', icon: 'none' });
+                }
+                catch (err) {
+                    if (this.isDetailCurrent(scope, generation))
+                        wx.showToast({ title: (0, api_1.apiErrorMessage)(err) || '确认未完成，请重试', icon: 'none' });
+                }
+                finally {
+                    if (this.isDetailCurrent(scope, generation) && Number(this.data.member?.userId) === memberUserId)
+                        this.setData({ matchmakingReadinessSaving: false });
+                }
+            }
+        });
+    },
+    viewMatchmakingRequests() {
+        if (!this.ensureDetailSession() || !this._readinessVisible)
+            return;
+        const memberUserId = Number(this.data.member?.userId);
+        if (this.data.isOwn && Number.isSafeInteger(memberUserId) && memberUserId > 0)
+            wx.navigateTo({ url: `/pages/user/vip-privileges?tab=matchmaking&memberUserId=${memberUserId}` });
+    },
     setDetailTab(e) {
+        if (!this.ensureDetailSession() || !this._readinessVisible)
+            return;
         const tab = String(e.currentTarget.dataset.tab || 'profile');
         if (!['profile', 'matching', 'service'].includes(tab))
             return;
         this.setData({ activeDetailTab: tab });
     },
     async onDisplayEnabledChange(e) {
+        const scope = this.ensureDetailSession(), generation = this._detailGeneration;
+        if (!scope || !this._readinessVisible)
+            return;
         if (!this.data.isOwn || !this.data.member || this.data.displaySaving)
             return;
         const displayEnabled = !!e.detail.value;
@@ -244,6 +356,8 @@ Page({
         });
         try {
             const updated = await member_1.memberApi.update(this.data.id, { displayEnabled });
+            if (!this.isDetailCurrent(scope, generation))
+                return;
             const member = {
                 ...(0, member_format_1.normalizeMemberProfile)(updated, true),
                 privateArchive: previousMember.privateArchive
@@ -252,14 +366,20 @@ Page({
             wx.showToast({ title: displayEnabled ? '已开启展示' : '已关闭展示', icon: 'none' });
         }
         catch (err) {
+            if (!this.isDetailCurrent(scope, generation))
+                return;
             console.warn('update member display failed', err);
             this.setData({ member: previousMember });
         }
         finally {
-            this.setData({ displaySaving: false });
+            if (this.isDetailCurrent(scope, generation))
+                this.setData({ displaySaving: false });
         }
     },
     async startChat() {
+        const scope = this.ensureDetailSession(), generation = this._detailGeneration;
+        if (!scope || !this._readinessVisible)
+            return;
         const member = this.data.member;
         if (member && member.identityStatus === 'pending') {
             wx.showToast({ title: '会员认领后才能在线联系', icon: 'none' });
@@ -278,16 +398,21 @@ Page({
             const conversation = await chat_1.chatApi.getOrCreateConversation(targetUserId
                 ? { targetUserId }
                 : { targetMemberId: memberId });
+            if (!this.isDetailCurrent(scope, generation))
+                return;
             wx.navigateTo({ url: `/pages/matchmaker/chat?id=${conversation.id}` });
         }
         catch (err) {
             console.warn('start matchmaker chat failed', err);
         }
         finally {
-            this.setData({ chatStarting: false });
+            if (this.isDetailCurrent(scope, generation))
+                this.setData({ chatStarting: false });
         }
     },
     async prepareClaimInvite() {
+        if (!this.ensureDetailSession() || !this._readinessVisible)
+            return;
         if (!this.data.isOwn || !this.data.member || this.data.claimInviteLoading)
             return;
         if (this.data.claimInvite)
@@ -295,6 +420,9 @@ Page({
         await this.requestClaimInvite();
     },
     async requestClaimInvite() {
+        const scope = this.ensureDetailSession(), generation = this._detailGeneration;
+        if (!scope || !this._readinessVisible || !this.data.isOwn || !this.data.member || this.data.claimInviteLoading)
+            return;
         if (!this.data.member.phone) {
             this.setData({ claimPhoneFocus: true });
             wx.showToast({ title: '请先补录会员手机号', icon: 'none' });
@@ -303,6 +431,8 @@ Page({
         this.setData({ claimInviteLoading: true });
         try {
             const claimInvite = await member_1.memberApi.createIdentityClaimInvite(this.data.id);
+            if (!this.isDetailCurrent(scope, generation))
+                return;
             if (claimInvite.status === 'claimed') {
                 wx.showToast({ title: '该会员已绑定微信', icon: 'none' });
                 await this.load();
@@ -315,10 +445,14 @@ Page({
             console.warn('create member identity claim invite failed', err);
         }
         finally {
-            this.setData({ claimInviteLoading: false });
+            if (this.isDetailCurrent(scope, generation))
+                this.setData({ claimInviteLoading: false });
         }
     },
     regenerateClaimInvite() {
+        const scope = this.ensureDetailSession(), generation = this._detailGeneration;
+        if (!scope || !this._readinessVisible)
+            return;
         if (!this.data.member || this.data.claimInviteLoading)
             return;
         wx.showModal({
@@ -327,20 +461,24 @@ Page({
             confirmText: '重新生成',
             confirmColor: '#8f493f',
             success: res => {
-                if (!res.confirm)
+                if (!res.confirm || !this.isDetailCurrent(scope, generation))
                     return;
                 void this.requestClaimInvite();
             }
         });
     },
     onClaimPhoneInput(e) {
+        if (!this.ensureDetailSession() || !this._readinessVisible)
+            return;
         this.setData({ claimPhone: e.detail.value });
     },
     onClaimPhoneBlur() {
         this.setData({ claimPhoneFocus: false });
     },
     async saveClaimPhoneAndPrepare() {
-        if (this.data.claimPhoneSaving)
+        const scope = this.ensureDetailSession(), generation = this._detailGeneration;
+        let operationGeneration = generation;
+        if (!scope || !this._readinessVisible || !this.data.member || !this.data.isOwn || this.data.claimPhoneSaving)
             return;
         const phone = String(this.data.claimPhone || '').replace(/\s+/g, '');
         if (!/^1[3-9]\d{9}$/.test(phone)) {
@@ -350,23 +488,31 @@ Page({
         this.setData({ claimPhoneSaving: true });
         try {
             await member_1.memberApi.update(this.data.id, { phone });
-            await this.load();
+            if (!this.isDetailCurrent(scope, generation))
+                return;
+            const reload = this.load();
+            operationGeneration = this._detailGeneration;
+            await reload;
+            if (!this.isDetailCurrent(scope, operationGeneration))
+                return;
             await this.prepareClaimInvite();
         }
         catch (err) {
             console.warn('save member claim phone failed', err);
         }
         finally {
-            this.setData({ claimPhoneSaving: false });
+            if (this.isDetailCurrent(scope, operationGeneration))
+                this.setData({ claimPhoneSaving: false });
         }
     },
     onShareAppMessage(options) {
+        const canShare = this.ensureDetailSession() && this._readinessVisible;
         const isClaimShare = options
             && options.from === 'button'
             && options.target
             && options.target.dataset
             && options.target.dataset.claim === 'member';
-        if (isClaimShare && this.data.claimInvite && this.data.claimInvite.sharePath) {
+        if (canShare && isClaimShare && this.data.claimInvite && this.data.claimInvite.sharePath) {
             return {
                 title: '主理人邀请你认领 HL 会员档案',
                 path: this.data.claimInvite.sharePath,

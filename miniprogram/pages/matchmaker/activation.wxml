@@ -1,0 +1,44 @@
+<view class="page activation-page">
+  <view class="activation-heading">
+    <text class="eyebrow">主理人</text>
+    <text class="title">{{active ? '主理人已开通' : '开启你的主理人工作台'}}</text>
+    <text class="subtitle">{{active ? '可使用会员经营、资源池和沙龙管理。' : '付款确认后自动开通，无需管理员审批。'}}</text>
+  </view>
+
+  <view class="card activation-plan">
+    <view class="activation-plan-head">
+      <text class="section-title">主理人长期方案</text>
+      <text class="tag gold">长期有效</text>
+    </view>
+    <view class="activation-price-row"><text class="activation-price">¥6980</text><text class="activation-term">一次性开通</text></view>
+    <view class="activation-benefit"><text>会员经营</text><text>邀请、维护并服务名下会员</text></view>
+    <view class="activation-benefit"><text>合作资源</text><text>使用主理人资源池开展互推</text></view>
+    <view class="activation-benefit"><text>沙龙管理</text><text>发起沙龙并管理活动报名</text></view>
+    <text class="activation-footnote">本方案开通主理人工作台权限。实名认证及其他资料认证需单独提交核验。</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="card activation-state"><text>正在读取开通信息…</text></view>
+  <view wx:elif="{{errorText}}" class="card activation-state">
+    <text class="activation-error">{{errorText}}</text>
+    <button class="btn secondary" bindtap="refresh">重新加载</button>
+  </view>
+  <view wx:elif="{{overview}}" class="card activation-actions">
+    <text class="section-title">{{active ? '已开通' : '确认开通'}}</text>
+    <text class="section-note">{{paymentNote}}</text>
+    <button wx:if="{{active}}" class="btn gold activation-button" bindtap="openWorkbench">进入主理人工作台</button>
+    <button wx:elif="{{!phoneBound}}" class="btn gold activation-button" open-type="getPhoneNumber" bindgetphonenumber="authorizePhone" loading="{{phoneAuthorizing}}" disabled="{{phoneAuthorizing || paymentStarting}}">授权微信手机号</button>
+    <button wx:elif="{{!foreignOrder && (!order || order.status === 'closed' || order.status === 'failed' || order.status === 'refunded' || orderCanResume)}}" class="btn gold activation-button" loading="{{paymentStarting}}" disabled="{{!paymentAvailable || paymentStarting || orderChecking}}" bindtap="startPayment">{{orderCanResume ? '继续支付原订单 · ¥6980' : '付款开通 · ¥6980'}}</button>
+    <text wx:if="{{!active}}" class="activation-footnote">请确认开通方案与金额。付款结果和开通权限以服务端确认为准。</text>
+  </view>
+
+  <view wx:if="{{order}}" class="card activation-order">
+    <text class="section-title">{{orderTitle}}</text>
+    <text class="section-note">{{orderNote}}</text>
+    <text class="activation-order-number">订单号：{{order.outTradeNo}}</text>
+    <button class="btn secondary activation-button" loading="{{orderChecking}}" disabled="{{orderChecking || paymentStarting}}" bindtap="refreshOrderStatus">{{foreignOrder ? '查看我的订单' : '查询原订单状态'}}</button>
+  </view>
+  <view class="activation-links">
+    <text bindtap="openOrders">我的订单</text>
+    <text bindtap="openCertifications">资料与认证</text>
+  </view>
+</view>

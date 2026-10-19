@@ -3,6 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.matchmakerApi = void 0;
 const api_1 = require("./api");
 exports.matchmakerApi = {
+    activation(showError = false) {
+        return (0, api_1.request)('/matchmaker/activation', { showError });
+    },
+    createActivationOrder() {
+        return (0, api_1.request)('/matchmaker/activation/orders', { method: 'POST', data: {} });
+    },
     apply() {
         return (0, api_1.request)('/matchmaker/apply', { method: 'POST' });
     },

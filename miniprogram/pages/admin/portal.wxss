@@ -1,0 +1,40 @@
+.admin-portal-heading {
+  padding: 42rpx 2rpx 30rpx;
+}
+
+.admin-portal-status {
+  padding: 30rpx 26rpx;
+}
+
+.admin-portal-action {
+  margin-top: 28rpx;
+}
+
+.admin-portal-back {
+  margin: 22rpx 0 0;
+  padding: 0;
+  color: #a35d45;
+  background: transparent;
+  text-align: left;
+  font-size: 26rpx;
+  line-height: 56rpx;
+}
+
+.admin-portal-back::after {
+  border: 0;
+}
+
+.admin-portal { background: #f4efe7; color: #2b2420; }
+.admin-modules { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
+.admin-portal .admin-modules button.module { width: 100%; margin: 0 0 16rpx; display: flex; align-items: center; justify-content: space-between; text-align: left; line-height: 1.5; }
+.module::after, .text-button::after, .period::after { border: 0; }
+.module-arrow { color: #a35d45; font-size: 42rpx; }
+.section-heading { margin: 34rpx 0 18rpx; }
+.text-button { margin: 0; padding: 0 12rpx; color: #a35d45; background: transparent; font-size: 26rpx; }
+.period-row { display: flex; gap: 12rpx; margin-bottom: 18rpx; }
+.period { flex: 1; margin: 0; background: #fffdf9; color: #736256; font-size: 25rpx; }
+.period.selected { color: #fffdf9; background: #a35d45; }
+.metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14rpx; margin-bottom: 18rpx; }
+.metric-value { font-size: 32rpx; overflow-wrap: anywhere; }
+.stat-row { display: flex; gap: 20rpx; justify-content: space-between; padding: 18rpx 0; border-bottom: 1rpx solid #eee5d9; font-size: 24rpx; line-height: 1.5; }
+.stat-row text:last-child { text-align: right; overflow-wrap: anywhere; }

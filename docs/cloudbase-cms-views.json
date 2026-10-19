@@ -30,7 +30,16 @@
     "hl_counters",
     "hl_payment_orders",
     "hl_member_private_archives",
-    "hl_member_certifications"
+    "hl_member_certifications",
+    "hl_vip_entitlements",
+    "hl_matchmaking_packages",
+    "hl_matchmaking_requests",
+    "hl_matchmaking_readiness",
+    "hl_member_visits",
+    "hl_member_privacy",
+    "hl_wechat_exchanges",
+    "hl_online_subscriptions",
+    "hl_member_presence"
   ],
   "statusDictionary": {
     "matchmakerCertificationStatus": [

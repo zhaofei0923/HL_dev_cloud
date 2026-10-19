@@ -5,6 +5,7 @@ const matchmaker_workspace_1 = require("../../utils/matchmaker-workspace");
 const member_1 = require("../../services/member");
 const member_format_1 = require("../../utils/member-format");
 const matchmaker_1 = require("../../services/matchmaker");
+const matchmaker_access_view_1 = require("../../utils/matchmaker-access-view");
 const matchmaker_page_cache_1 = require("../../utils/matchmaker-page-cache");
 const PAGE_ROUTE = '/pages/matchmaker/members';
 function errorCode(error) {
@@ -85,30 +86,7 @@ function normalizeRequest(row) {
     };
 }
 function certificationView(matchmaker) {
-    const status = Number((matchmaker && matchmaker.certificationStatus) || 0);
-    const remark = (matchmaker && matchmaker.certificationRemark) || '';
-    if (status === 2) {
-        return {
-            canOperate: true,
-            statusText: '已认证',
-            statusTagClass: 'gold',
-            statusNote: '主理人权限已开通，可录入会员并进入资源池协作。'
-        };
-    }
-    if (status === 1) {
-        return {
-            canOperate: false,
-            statusText: '已拒绝',
-            statusTagClass: 'rose',
-            statusNote: remark || '本次申请暂未通过，请完善资料后重新提交。'
-        };
-    }
-    return {
-        canOperate: false,
-        statusText: '待审批',
-        statusTagClass: '',
-        statusNote: '主理人申请通过后，才可使用会员经营和资源池功能。'
-    };
+    return (0, matchmaker_access_view_1.matchmakerAccessView)(matchmaker, '主理人权限已开通，可录入会员并进入资源池协作。');
 }
 exports.membersController = (0, matchmaker_workspace_1.defineMatchmakerController)({
     _pageScope: '',
@@ -161,9 +139,9 @@ exports.membersController = (0, matchmaker_workspace_1.defineMatchmakerControlle
         refreshError: '',
         removingId: '',
         canOperate: false,
-        statusText: '待审批',
+        statusText: '待开通',
         statusTagClass: '',
-        statusNote: '主理人申请通过后，才可使用会员经营和资源池功能。'
+        statusNote: '主理人一次性开通费 ¥6980，长期有效。付款确认后自动开通。'
     },
     onLoad() {
         this.restorePageSnapshot();
@@ -208,8 +186,8 @@ exports.membersController = (0, matchmaker_workspace_1.defineMatchmakerControlle
             filtersOpen: false, approvalsOpen: false, recommendOpen: false,
             activeMemberActionId: '', removingId: '', requestProcessingId: '', recommendLoading: false,
             initialized: false, loading: false, refreshError: '', canOperate: false,
-            statusText: '待审批', statusTagClass: '',
-            statusNote: '主理人申请通过后，才可使用会员经营和资源池功能。'
+            statusText: '待开通', statusTagClass: '',
+            statusNote: '主理人一次性开通费 ¥6980，长期有效。付款确认后自动开通。'
         });
         return scope;
     },
@@ -630,6 +608,12 @@ exports.membersController = (0, matchmaker_workspace_1.defineMatchmakerControlle
             return;
         this._forceNextShow = true;
         wx.navigateTo({ url: '/pages/matchmaker/resources' });
+    },
+    goActivation() {
+        if (!this.ensurePageSession() || this.data.loading)
+            return;
+        this._forceNextShow = true;
+        wx.navigateTo({ url: '/pages/matchmaker/activation' });
     },
     async applyAgain() {
         const scope = this.ensurePageSession();

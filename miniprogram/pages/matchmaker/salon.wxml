@@ -16,7 +16,7 @@
       </view>
       <text class="tag {{statusTagClass}}">{{statusText}}</text>
     </view>
-    <button wx:if="{{statusText === '已拒绝'}}" class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="applyAgain">重新提交申请</button>
+    <button class="btn gold approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="goActivation">查看开通方案</button>
     <button wx:if="{{refreshError || statusText === '待核验'}}" class="btn ghost approval-btn" loading="{{loading}}" disabled="{{loading}}" bindtap="refreshGate">重新加载</button>
   </view>
 
@@ -80,7 +80,7 @@
               </view>
               <button class="btn ghost share-btn" open-type="share" data-id="{{item.id}}" data-title="{{item.title}}">微信分享</button>
             </block>
-            <text wx:else class="review-note">活动通过审核并开始报名后，可推送给名下会员。</text>
+            <text wx:else class="review-note">活动处于报名中且尚未开始时，可推送给名下会员。</text>
             <button class="cancel-link" data-id="{{item.id}}" loading="{{cancellingId === item.idText}}" disabled="{{cancellingId === item.idText}}" bindtap="cancel">取消活动</button>
           </view>
         </view>

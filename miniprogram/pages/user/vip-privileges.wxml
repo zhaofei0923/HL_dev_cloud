@@ -1,0 +1,95 @@
+<view class="page safe-bottom vip-privileges-page">
+  <view class="privilege-header">
+    <text class="privilege-kicker">HL · 会员服务</text>
+    <text class="privilege-title">{{managingMember ? '人工牵线跟进' : '我的VIP权益'}}</text>
+    <text class="privilege-status">{{vipStatusText}}</text>
+    <button wx:if="{{!managingMember && !isVip && !loading}}" class="btn gold" bindtap="goMembership">查看VIP权益</button>
+  </view>
+  <view wx:if="{{!managingMember}}" class="privilege-tabs">
+    <view wx:for="{{sections}}" wx:key="id" class="privilege-tab {{section === item.id ? 'active' : ''}}" data-section="{{item.id}}" bindtap="switchSection">{{item.label}}</view>
+  </view>
+  <view wx:if="{{loading}}" class="privilege-note">正在确认权益与服务记录…</view>
+  <view wx:if="{{error}}" class="privilege-error">{{error}}<text class="privilege-retry" bindtap="load">重新加载</text></view>
+
+  <block wx:if="{{section === 'visitors'}}">
+    <view class="card privilege-section">
+      <view class="privilege-row"><view class="privilege-row-copy"><text class="section-title">隐身访问</text><text class="privilege-note">开启后，查看他人资料不会留下来访记录。默认关闭。</text></view><switch checked="{{invisible}}" color="#a17c43" disabled="{{!isVip || loading || busy !== ''}}" bindchange="onPrivacyChange" /></view>
+      <view wx:if="{{!isVip && !loading}}" class="privilege-lock" bindtap="goMembership">隐身访问和来访详情为VIP专属 ›</view>
+    </view>
+    <view class="card privilege-section">
+      <text class="section-title">查看来访{{isVip ? ' · ' + visitorTotal : ''}}</text>
+      <text wx:if="{{visitorError}}" class="privilege-error">{{visitorError}}</text>
+      <text wx:if="{{isVip && !loading && !visitors.length && !visitorError}}" class="privilege-note">暂无来访记录。</text>
+      <view wx:for="{{visitors}}" wx:key="id" class="privilege-list-row" data-id="{{item.memberId}}" bindtap="openVisitor">
+        <image wx:if="{{item.avatarUrl}}" class="privilege-avatar" src="{{item.avatarUrl}}" mode="aspectFill" />
+        <view class="privilege-row-copy"><text class="privilege-name">{{item.displayName || '会员 ' + item.visitorUserId}}</text><text class="privilege-note">{{item.timeText}}</text></view>
+        <text wx:if="{{item.memberId}}" class="privilege-link">查看 ›</text>
+      </view>
+      <button wx:if="{{visitorHasMore}}" class="btn ghost privilege-small-button" loading="{{busy === 'visitors-more'}}" disabled="{{busy !== ''}}" bindtap="moreVisitors">查看更多来访</button>
+    </view>
+  </block>
+
+  <block wx:if="{{section === 'exchanges'}}">
+    <view class="card privilege-section">
+      <text class="section-title">交换微信</text><text class="privilege-note">双方自愿同意后，才展示彼此提交的微信号。</text>
+      <view wx:if="{{!isVip && !loading}}" class="privilege-lock" bindtap="goMembership">开通VIP可发起交换；收到的申请仍可回应 ›</view>
+      <block wx:if="{{isVip || canRespondExchange}}">
+        <input class="privilege-input" value="{{wechatId}}" maxlength="64" placeholder="填写本人微信号，用于发起或同意交换" bindinput="onWechatInput" />
+        <view wx:if="{{isVip && targetUserId}}" class="privilege-target"><text>当前对象：{{targetName || '会员 ' + targetUserId}}</text><button class="btn gold privilege-small-button" disabled="{{loading || busy !== ''}}" loading="{{busy === 'exchange-new'}}" bindtap="requestExchange">申请交换微信</button></view>
+        <text wx:if="{{isVip && !targetUserId}}" class="privilege-note">从会员资料页选择“交换微信”，即可向TA发起申请。</text>
+      </block>
+    </view>
+    <view class="card privilege-section">
+      <text class="section-title">交换记录</text><text wx:if="{{exchangeError}}" class="privilege-error">{{exchangeError}}</text>
+      <text wx:if="{{!loading && !exchanges.length && !exchangeError}}" class="privilege-note">暂无微信交换申请。</text>
+      <view wx:for="{{exchanges}}" wx:key="id" class="privilege-record">
+        <view class="privilege-row"><text class="privilege-name">{{item.otherName}}</text><text class="privilege-state">{{item.statusText}}</text></view><text class="privilege-note">{{item.incoming ? '收到申请' : '我发出的申请'}} · {{item.timeText}}</text>
+        <view wx:if="{{item.canRespond}}" class="privilege-actions"><button class="btn gold privilege-small-button" data-id="{{item.id}}" data-accepted="{{true}}" disabled="{{busy !== '' || loading}}" bindtap="respondExchange">同意并交换</button><button class="btn ghost privilege-small-button" data-id="{{item.id}}" data-accepted="{{false}}" disabled="{{busy !== '' || loading}}" bindtap="respondExchange">婉拒</button></view>
+        <button wx:if="{{item.status === 'accepted'}}" class="btn ghost privilege-small-button" data-id="{{item.id}}" disabled="{{busy !== '' || loading}}" bindtap="revealWechat">查看对方微信</button>
+        <view wx:if="{{revealedExchangeId === item.id && revealedWechat}}" class="revealed-wechat"><text>{{revealedWechat}}</text><text class="privilege-link" bindtap="copyWechat">复制</text></view>
+      </view>
+    </view>
+  </block>
+
+  <block wx:if="{{section === 'online'}}">
+    <view class="card privilege-section"><text class="section-title">上线提醒</text><text class="privilege-note">仅对你主动订阅的会员发送站内提醒，默认不订阅。</text>
+      <view wx:if="{{!isVip && !loading}}" class="privilege-lock" bindtap="goMembership">开通VIP，开启上线提醒 ›</view>
+      <button wx:if="{{isVip && targetUserId}}" class="btn gold privilege-small-button" disabled="{{busy !== '' || loading}}" bindtap="subscribeTarget">提醒我：{{targetName || '会员 ' + targetUserId}}上线</button>
+      <text wx:if="{{isVip && !targetUserId}}" class="privilege-note">可在会员资料页开启对TA的上线提醒。</text>
+      <text wx:if="{{onlineError}}" class="privilege-error">{{onlineError}}</text>
+      <view wx:for="{{subscriptions}}" wx:key="targetUserId" class="privilege-list-row"><text class="privilege-name">{{item.displayName || '会员 ' + item.targetUserId}}</text><button class="btn ghost privilege-small-button" data-id="{{item.targetUserId}}" disabled="{{busy !== '' || loading}}" bindtap="unsubscribe">取消提醒</button></view>
+      <text wx:if="{{!loading && !subscriptions.length && !onlineError}}" class="privilege-note">暂无已订阅会员。</text>
+    </view>
+    <view wx:if="{{isVip}}" class="card privilege-section"><text class="section-title">最近站内提醒</text><text wx:if="{{!loading && !reminders.length}}" class="privilege-note">暂无上线提醒。</text>
+      <view wx:for="{{reminders}}" wx:key="id" class="privilege-record"><text class="privilege-name">{{item.content}}</text><view class="privilege-row"><text class="privilege-note">{{item.timeText}}</text><text wx:if="{{!item.isRead}}" class="privilege-link" data-id="{{item.id}}" bindtap="markReminderRead">标为已读</text><text wx:else class="privilege-note">已读</text></view></view>
+    </view>
+  </block>
+
+  <block wx:if="{{section === 'matchmaking'}}">
+    <view class="card privilege-section"><text class="section-title">人工牵线服务</text><text class="privilege-note">付款确认后2次或6次权益立即到账，每次购买独立有效30天，原套餐到期时间不会延长。实际推荐需资料完善及主理人对接就绪；每次牵线由主理人确认安排、双方本人同意后建立联系并扣1次，拒绝或取消不扣次数。</text>
+      <text wx:if="{{matchmakingError}}" class="privilege-error">{{matchmakingError}}</text>
+      <view wx:if="{{!managingMember && matchmakingProgress}}" class="privilege-progress">
+        <text class="privilege-name">{{matchmakingProgressTitle}}</text>
+        <text class="privilege-note">{{matchmakingProgressNote}}</text>
+        <text wx:if="{{hasMatchmakingService}}" class="privilege-note">服务期从付款确认起计30天，完善资料及等待对接期间仍计期。</text>
+        <button wx:if="{{hasMatchmakingService && !matchmakingProgress.profileComplete}}" class="btn gold privilege-small-button" bindtap="goProfile">完善我的资料</button>
+        <button wx:if="{{canContactMatchmaker}}" class="btn ghost privilege-small-button" bindtap="contactMatchmaker">联系主理人咨询（可选）</button>
+      </view>
+      <view wx:for="{{packages}}" wx:key="id" class="privilege-package"><text class="privilege-name">{{item.planTitle}}</text><text class="package-count">剩余 {{item.remainingCount}} 次 / 共 {{item.totalCount}} 次</text><text class="privilege-note">已用 {{item.usedCount}} 次 · 有效至 {{item.expireText}}</text><text wx:if="{{item.status !== 'active'}}" class="privilege-note">{{item.status === 'expired' ? '已到期，记录保留' : item.status === 'exhausted' ? '次数已用完' : '已退款'}}</text></view>
+      <button wx:if="{{!managingMember && !hasMatchmakingService && !loading}}" class="btn gold privilege-small-button" bindtap="goMembership">查看人工牵线套餐</button>
+      <button wx:if="{{!managingMember && hasMatchmakingService && !loading}}" class="btn ghost privilege-small-button" bindtap="goMembership">查看其他牵线套餐</button>
+      <view wx:if="{{managingMember && readiness}}" class="privilege-readiness"><text class="privilege-name">服务准备状态</text><text class="privilege-note">{{readiness.profileComplete ? '资料已完善' : '资料待完善'}} · {{readiness.matchmakerConfirmed ? '主理人已确认准备' : '等待主理人确认准备'}}</text><text wx:if="{{!readiness.ready}}" class="privilege-note">{{readinessNote}}</text></view>
+      <view wx:if="{{!managingMember && targetUserId && hasMatchmakingService}}" class="privilege-target"><text class="privilege-name">申请对象：{{targetName || '会员 ' + targetUserId}}</text><textarea class="privilege-textarea" value="{{matchmakingNote}}" maxlength="300" placeholder="补充牵线意向（选填）" bindinput="onNoteInput" /><button class="btn gold privilege-small-button" disabled="{{loading || busy !== '' || !matchmakingReady}}" bindtap="applyMatchmaking">提交人工牵线申请</button></view>
+      <button wx:if="{{!managingMember && !targetUserId && hasMatchmakingService}}" class="btn {{matchmakingReady ? 'gold' : 'ghost'}} privilege-small-button" bindtap="goRecommend">浏览会员并选择牵线对象</button>
+    </view>
+    <view class="card privilege-section"><text class="section-title">牵线记录与确认</text><text wx:if="{{!loading && !requests.length && !matchmakingError}}" class="privilege-note">暂无人工牵线申请。</text>
+      <view wx:for="{{requests}}" wx:key="id" class="privilege-record"><view class="privilege-row"><text class="privilege-name">{{item.otherName}}</text><text class="privilege-state">{{item.statusText}}</text></view><text class="privilege-note">{{item.timeText}}</text>
+        <button wx:if="{{managingMember && item.status === 'pending' && !item.serviceConfirmed}}" class="btn gold privilege-small-button" data-id="{{item.id}}" disabled="{{busy !== '' || loading || !readiness.ready}}" bindtap="approveMatchmaking">确认已完成服务安排</button>
+        <view wx:if="{{item.canRespond}}" class="privilege-actions"><button class="btn gold privilege-small-button" data-id="{{item.id}}" data-accepted="{{true}}" disabled="{{busy !== '' || loading}}" bindtap="respondMatchmaking">确认同意牵线</button><button class="btn ghost privilege-small-button" data-id="{{item.id}}" data-accepted="{{false}}" disabled="{{busy !== '' || loading}}" bindtap="respondMatchmaking">婉拒</button></view>
+        <button wx:if="{{item.canCancel}}" class="btn ghost privilege-small-button" data-id="{{item.id}}" disabled="{{busy !== '' || loading}}" bindtap="cancelMatchmaking">取消申请</button>
+        <button wx:if="{{item.status === 'connected' && item.conversationId}}" class="btn gold privilege-small-button" data-id="{{item.conversationId}}" bindtap="openConversation">进入双方沟通</button>
+      </view>
+    </view>
+  </block>
+  <button class="btn ghost privilege-reload" disabled="{{loading || busy !== ''}}" bindtap="load">刷新权益与记录</button>
+</view>

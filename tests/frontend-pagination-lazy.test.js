@@ -89,7 +89,10 @@ test('a new leading member cannot trap deduplicated recommendation pages on the 
 test('an entirely duplicated ranking page advances and its terminal cursor survives a category switch', async () => {
   let rows = Array.from({ length: 150 }, (_, index) => member(index + 1));
   const pages = [];
-  const { page } = runtime('pages/user/members.js', { memberApi: { showcase: async query => {
+  const { page } = runtime('pages/user/members.js', { memberApi: {
+    vipOverview: async () => ({ membershipTier: 'vip', isPremiumMember: true, lifetime: true, expireAt: null,
+      entitlements: { specialZones: true, advancedFilter: true } }),
+    showcase: async query => {
     if (query.category !== 'popularity') return { list: [member(200)], total: 1 };
     pages.push(query.page);
     return pageOf(rows, query);

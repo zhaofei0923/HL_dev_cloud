@@ -7,7 +7,8 @@ const {
   isReusablePaymentOrder,
   normalizeMembershipPlan,
   paymentConfirmationMatches,
-  paymentIntegrationConfig
+  paymentIntegrationConfig,
+  paymentProviderConfig
 } = require('../cloudfunctions/hlApi/membership-payment-policy');
 const merchant = require('../cloudfunctions/hlApi/payment-merchant-config.json');
 const identity = { merchantId: merchant.merchantId, appId: merchant.appId, currency: merchant.currency };
@@ -61,6 +62,7 @@ test('invalid or inactive plans cannot create a checkout', () => {
 test('payment integration stays disabled until every external setting exists', () => {
   assert.deepEqual(paymentIntegrationConfig({}), {
     ...identity,
+    provider: 'jsapi',
     available: false,
     reason: 'merchant_not_configured',
     functionName: '',
@@ -75,6 +77,7 @@ test('payment integration stays disabled until every external setting exists', (
     PAYMENT_CALLBACK_TOKEN: 'x'.repeat(32)
   }), {
     ...identity,
+    provider: 'jsapi',
     available: true,
     reason: '',
     functionName: 'generated-payment-function',
@@ -93,6 +96,43 @@ test('payment integration stays disabled until every external setting exists', (
   }).available, false, 'a missing trusted query route must keep payments unavailable');
 });
 
+test('membership checkout stays virtual and disabled when only the legacy integration is ready', () => {
+  const legacyEnv = {
+    PAYMENT_INTEGRATION_READY: 'true', PAYMENT_FUNCTION_NAME: 'generated-payment-function',
+    PAYMENT_CREATE_PATH: '/member-pay/create', PAYMENT_QUERY_PATH: '/member-pay/query',
+    PAYMENT_CALLBACK_TOKEN: 'x'.repeat(32)
+  };
+  assert.equal(paymentIntegrationConfig(legacyEnv).available, true, 'historical integration remains queryable');
+  for (const partialVirtual of [{}, { VPAY_OFFER_ID: '1450674507' }, {
+    VPAY_OFFER_ID: '1450674507', VPAY_ENV: '0', VPAY_APP_KEY: 'virtual-key-fixture-0123456789'
+  }]) {
+    assert.deepEqual(paymentProviderConfig({ ...legacyEnv, ...partialVirtual }), {
+      ...identity, provider: 'virtual', available: false, reason: 'integration_incomplete',
+      functionName: '', createPath: '', queryPath: ''
+    });
+  }
+});
+
+test('membership checkout requires explicit virtual environment and all active credentials', () => {
+  const env = {
+    PAYMENT_INTEGRATION_READY: 'true', VPAY_OFFER_ID: '1450674507', VPAY_ENV: '0',
+    VPAY_APP_KEY: 'virtual-key-fixture-0123456789', VPAY_SANDBOX_APP_KEY: 'sandbox-key-fixture-0123456789',
+    WX_APP_SECRET: 'app-secret-fixture-0123456789', PAYMENT_CALLBACK_TOKEN: 'x'.repeat(32)
+  };
+  assert.equal(paymentProviderConfig(env).available, true);
+  assert.equal(paymentProviderConfig({ ...env, VPAY_ENV: '1', VPAY_APP_KEY: '' }).available, true);
+  for (const invalidEnv of [undefined, null, '', '2', 'sandbox', 'production', false]) {
+    const config = paymentProviderConfig({ ...env, VPAY_ENV: invalidEnv });
+    assert.equal(config.provider, 'virtual');
+    assert.equal(config.available, false);
+    assert.equal(config.reason, 'integration_incomplete');
+  }
+  for (const field of ['VPAY_OFFER_ID', 'VPAY_APP_KEY', 'WX_APP_SECRET', 'PAYMENT_CALLBACK_TOKEN']) {
+    assert.equal(paymentProviderConfig({ ...env, [field]: '' }).available, false, field);
+  }
+  assert.equal(paymentProviderConfig({ ...env, VPAY_ENV: '1', VPAY_SANDBOX_APP_KEY: '' }).available, false);
+});
+
 test('maintenance disables new checkouts but preserves the configured route for existing-order queries', () => {
   const env = {
     PAYMENT_INTEGRATION_READY: 'false', PAYMENT_FUNCTION_NAME: 'generated-payment-function',
@@ -100,7 +140,7 @@ test('maintenance disables new checkouts but preserves the configured route for 
     PAYMENT_CALLBACK_TOKEN: 'x'.repeat(32)
   };
   assert.deepEqual(paymentIntegrationConfig(env), {
-    ...identity, available: false, reason: 'merchant_not_configured',
+    ...identity, provider: 'jsapi', available: false, reason: 'merchant_not_configured',
     functionName: 'generated-payment-function', createPath: '', queryPath: '/member-pay/query'
   });
   for (const field of ['PAYMENT_FUNCTION_NAME', 'PAYMENT_CREATE_PATH', 'PAYMENT_QUERY_PATH', 'PAYMENT_CALLBACK_TOKEN']) {
@@ -188,7 +228,7 @@ test('confirmation requires every registered identity field and rejects conflict
   assert.equal(paymentConfirmationMatches(order, confirmation), true, 'only legacy missing snapshot fields use registered identity');
 });
 
-test('recent matching pending orders can be reused without duplicating checkout records', () => {
+test('unpaid matching orders remain reusable until a trusted terminal result regardless of age', () => {
   const plan = { planCode: 'paid_90d', amountFen: 29900, durationDays: 90 };
   const pending = {
     status: 'pending',
@@ -200,5 +240,7 @@ test('recent matching pending orders can be reused without duplicating checkout 
   assert.equal(isReusablePaymentOrder(pending, plan, '2026-07-18T00:10:00.000Z'), true);
   assert.equal(isReusablePaymentOrder({ ...pending, status: 'paid' }, plan, '2026-07-18T00:10:00.000Z'), false);
   assert.equal(isReusablePaymentOrder({ ...pending, amountFen: 1 }, plan, '2026-07-18T00:10:00.000Z'), false);
-  assert.equal(isReusablePaymentOrder(pending, plan, '2026-07-18T00:20:01.000Z'), false);
+  assert.equal(isReusablePaymentOrder(pending, plan, '2026-07-18T00:20:01.000Z'), true);
+  assert.equal(isReusablePaymentOrder(pending, plan, '2026-08-18T00:20:01.000Z'), true);
+  assert.equal(isReusablePaymentOrder({ ...pending, status: 'closed' }, plan), false);
 });

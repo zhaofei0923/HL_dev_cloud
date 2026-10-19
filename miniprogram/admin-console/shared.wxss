@@ -1,0 +1,37 @@
+.admin-page { min-height: 100vh; box-sizing: border-box; padding: 28rpx 24rpx 52rpx; background: #f4efe7; color: #2b2420; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; }
+.admin-card { margin-top: 22rpx; padding: 26rpx; border: 1rpx solid #e7dccb; border-radius: 14rpx; background: #fffdf9; }
+.title { display: block; margin-bottom: 22rpx; font-size: 40rpx; font-weight: 700; }
+.eyebrow { display: block; margin-bottom: 10rpx; color: #a35d45; font-size: 23rpx; }
+.record-title, .section-title { display: block; font-size: 30rpx; line-height: 1.5; font-weight: 700; }
+.record-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18rpx; }
+.status { flex-shrink: 0; color: #a35d45; font-size: 23rpx; line-height: 1.7; }
+.muted, .label { color: #786b60; font-size: 24rpx; line-height: 1.7; }
+.record-subtitle { display: block; margin: 10rpx 0 18rpx; word-break: break-all; }
+.field { display: flex; justify-content: space-between; gap: 24rpx; padding: 17rpx 0; border-bottom: 1rpx solid #eee6db; }
+.field .label { flex: 0 0 150rpx; }
+.field .value { flex: 1; text-align: right; font-size: 25rpx; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
+button { margin-top: 20rpx; font-size: 27rpx; line-height: 2.8; border-radius: 10rpx; }
+button::after { border: 0; }
+.primary { background: #a35d45; color: #fffdf9; }
+.secondary { background: #eee5d9; color: #704b3a; }
+button[disabled] { opacity: .5; }
+.small { margin: 0; padding: 0 28rpx; }
+.admin-page .search-row button.small { width: 140rpx; flex: 0 0 140rpx; }
+.text-button { background: transparent; color: #a35d45; }
+.search-row { display: flex; gap: 14rpx; align-items: center; }
+.search-row input { flex: 1; min-width: 0; height: 82rpx; font-size: 26rpx; }
+.picker { display: flex; justify-content: space-between; padding: 24rpx 0; border-bottom: 1rpx solid #e7dccb; font-size: 26rpx; }
+.member-filter { height: 82rpx; font-size: 26rpx; }
+.empty { color: #786b60; text-align: center; padding: 55rpx 22rpx; }
+.error { color: #9d3f32; font-size: 26rpx; line-height: 1.7; white-space: pre-wrap; }
+.pagination { display: flex; align-items: center; justify-content: space-between; gap: 10rpx; margin-top: 25rpx; }
+.pagination button { margin: 0; padding: 0 16rpx; color: #704b3a; background: #fffdf9; font-size: 24rpx; }
+.admin-page .pagination button { width: 150rpx; flex: 0 0 150rpx; }
+.pagination text { font-size: 23rpx; color: #786b60; }
+.form-label { display: block; margin: 25rpx 0 14rpx; color: #786b60; font-size: 25rpx; }
+textarea { box-sizing: border-box; width: 100%; min-height: 160rpx; padding: 18rpx; background: #f4efe7; border-radius: 8rpx; font-size: 26rpx; line-height: 1.6; }
+input.form-input { height: 80rpx; padding: 0 18rpx; background: #f4efe7; font-size: 26rpx; }
+.actions { display: flex; gap: 18rpx; flex-wrap: wrap; }
+.actions button { flex: 1; min-width: 200rpx; }
+.material-image { display: block; width: 100%; margin: 20rpx 0; }
+.notice { margin: 20rpx 0; color: #4c6c5e; font-size: 25rpx; line-height: 1.7; white-space: pre-wrap; }

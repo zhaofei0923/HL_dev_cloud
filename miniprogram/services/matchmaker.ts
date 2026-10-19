@@ -1,16 +1,41 @@
 import { request } from './api'
+import type { MembershipOrderCheckout, MembershipPaymentConfig, MembershipPaymentOrder, MembershipPlan } from './member'
+
+export type MatchmakerActivationSource = '' | 'manual' | 'paid'
+
+export type MatchmakerAccount = {
+  id: number | string
+  userId?: number
+  certificationStatus: number
+  certificationRemark?: string
+  status?: number
+  activationSource?: MatchmakerActivationSource
+  lifetime?: boolean
+}
 
 export type MatchmakerStatusResult = {
-  matchmaker: null | {
-    id: number | string
-    userId?: number
-    certificationStatus: number
-    certificationRemark?: string
-    status?: number
-  }
+  matchmaker: MatchmakerAccount | null
+}
+
+export type MatchmakerActivationResult = {
+  matchmaker: MatchmakerAccount | null
+  active: boolean
+  activationSource: MatchmakerActivationSource
+  lifetime: boolean
+  plan: MembershipPlan & { lifetime: boolean }
+  payment: MembershipPaymentConfig
+  pendingOrder?: MembershipPaymentOrder | null
+  pendingOrderPayment?: MembershipPaymentConfig | null
+  phoneBound: boolean
 }
 
 export const matchmakerApi = {
+  activation(showError = false) {
+    return request<MatchmakerActivationResult>('/matchmaker/activation', { showError })
+  },
+  createActivationOrder() {
+    return request<MembershipOrderCheckout>('/matchmaker/activation/orders', { method: 'POST', data: {} })
+  },
   apply() {
     return request('/matchmaker/apply', { method: 'POST' })
   },

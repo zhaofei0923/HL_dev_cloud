@@ -1,0 +1,35 @@
+.vip-privileges-page { padding-top: 24rpx; padding-bottom: calc(36rpx + env(safe-area-inset-bottom)); }
+.privilege-header { margin-bottom: 26rpx; padding: 30rpx 28rpx; border-left: 6rpx solid #a17c43; border-radius: 4rpx 20rpx 20rpx 4rpx; background: #f3e5cd; }
+.privilege-kicker, .privilege-title, .privilege-status, .privilege-note, .privilege-name, .package-count { display: block; }
+.privilege-kicker { color: #9b773f; font-size: 21rpx; letter-spacing: 3rpx; }
+.privilege-title { margin-top: 10rpx; color: #241f1b; font-size: 40rpx; font-weight: 800; }
+.privilege-status { margin: 12rpx 0; color: #79634e; font-size: 24rpx; }
+.privilege-tabs { display: flex; gap: 10rpx; margin-bottom: 22rpx; border-bottom: 1rpx solid rgba(151, 119, 82, .2); }
+.privilege-tab { flex: 1; padding: 18rpx 0; color: #79634e; font-size: 24rpx; text-align: center; }
+.privilege-tab.active { border-bottom: 4rpx solid #8f493f; color: #8f493f; font-weight: 800; }
+.privilege-section { margin-top: 18rpx; padding: 26rpx; background: #fffdf8; box-shadow: none; }
+.privilege-row, .privilege-list-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.privilege-row-copy { flex: 1; min-width: 0; }
+.privilege-note { margin-top: 10rpx; color: #91877f; font-size: 23rpx; line-height: 1.55; overflow-wrap: break-word; }
+.privilege-name { color: #4f4944; font-size: 26rpx; font-weight: 700; line-height: 1.5; overflow-wrap: break-word; }
+.privilege-lock { margin-top: 18rpx; padding: 20rpx 16rpx; border-radius: 12rpx; background: #f5ebd9; color: #8a6238; font-size: 24rpx; line-height: 1.5; }
+.privilege-error { display: block; margin: 14rpx 0; color: #8f493f; font-size: 24rpx; line-height: 1.5; }
+.privilege-retry, .privilege-link { color: #8f493f; font-size: 23rpx; }
+.privilege-retry { margin-left: 18rpx; }
+.privilege-list-row { margin-top: 12rpx; padding: 18rpx 0; border-bottom: 1rpx solid rgba(151, 119, 82, .12); }
+.privilege-avatar { flex-shrink: 0; width: 70rpx; height: 70rpx; border-radius: 50%; }
+.privilege-record { padding: 22rpx 0; border-bottom: 1rpx solid rgba(151, 119, 82, .14); }
+.privilege-record:last-child { border-bottom: 0; }
+.privilege-state { flex-shrink: 0; max-width: 52%; color: #a17c43; font-size: 22rpx; line-height: 1.5; text-align: right; }
+.privilege-input, .privilege-textarea { box-sizing: border-box; width: 100%; margin-top: 18rpx; padding: 18rpx; border: 1rpx solid rgba(151, 119, 82, .24); border-radius: 12rpx; background: #f9f5ed; color: #4f4944; font-size: 24rpx; }
+.privilege-input { height: 84rpx; }
+.privilege-textarea { height: 150rpx; }
+.privilege-target, .privilege-readiness { margin-top: 22rpx; padding-top: 20rpx; border-top: 1rpx solid rgba(151, 119, 82, .14); color: #4f4944; font-size: 25rpx; }
+.privilege-actions { display: flex; gap: 14rpx; }
+.privilege-small-button { width: auto; min-width: 0; max-width: 100%; margin: 16rpx 0 0; padding: 0 24rpx; min-height: 66rpx; font-size: 23rpx; line-height: 66rpx; }
+.privilege-actions .privilege-small-button { flex: 1; }
+.privilege-package { margin-top: 18rpx; padding: 20rpx; border-radius: 12rpx; background: #f7efe0; }
+.privilege-progress { margin-top: 20rpx; padding: 20rpx; border-left: 4rpx solid #a17c43; background: #f7efe0; }
+.package-count { margin-top: 9rpx; color: #71501f; font-size: 27rpx; font-weight: 800; }
+.revealed-wechat { display: flex; justify-content: space-between; gap: 20rpx; margin-top: 18rpx; padding: 18rpx; border-radius: 10rpx; background: #f7efe0; color: #71501f; font-size: 27rpx; overflow-wrap: break-word; }
+.privilege-reload { margin-top: 28rpx; }
