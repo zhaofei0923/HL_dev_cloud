@@ -1,4 +1,13 @@
 <view class="page safe-bottom with-bottom-nav profile-page {{editingProfile ? 'editing-mode' : ''}}">
+  <view wx:if="{{guest}}" class="card">
+    <text class="eyebrow">我的 IF.U</text>
+    <text class="title">按自己的节奏了解</text>
+    <text class="subtitle">登录后可管理个人资料、按需要申请认证、查询服务订单和查看主理人服务。</text>
+    <text class="section-note">先浏览公开活动，准备使用个人服务时再自愿登录。资料会在对应功能中按需要填写。</text>
+    <button class="btn" bindtap="goGuestLogin">登录后使用</button>
+    <button class="btn ghost" bindtap="browseActivities">浏览活动</button>
+  </view>
+  <block wx:else>
   <block wx:if="{{!editingProfile}}">
   <view class="profile-summary">
     <image class="profile-summary-avatar" src="{{preview.avatarUrl}}" mode="aspectFill"></image>
@@ -7,7 +16,7 @@
       <view class="profile-name-row"><text class="profile-name">{{preview.displayName || '我的资料'}}</text><text wx:if="{{isVipBadge}}" class="profile-vip-badge" aria-label="有效VIP会员">VIP</text></view>
       <text class="profile-meta">{{preview.metaText || '完善资料，让主理人更了解你'}}</text>
     </view>
-    <text class="profile-visibility {{form.displayEnabled ? 'open' : ''}}">{{form.displayEnabled ? '展示中' : '仅自己'}}</text>
+    <text class="profile-visibility {{form.displayEnabled ? 'open' : ''}}">{{form.relationshipStatus === 'coupled' ? '已脱单·隐藏' : form.displayEnabled ? '展示中' : '仅自己'}}</text>
   </view>
 
   <view class="profile-completion">
@@ -71,6 +80,14 @@
         <text class="profile-menu-title">我的特权</text>
         <text class="profile-menu-note">VIP会员权益与人工牵线服务</text>
       </view>
+      <view class="profile-menu-chevron"></view>
+    </view>
+    <view class="profile-menu-row" bindtap="goPreferences" aria-role="button" aria-label="设置我心仪的Ta">
+      <view class="profile-menu-copy"><text class="profile-menu-title">我心仪的Ta</text><text class="profile-menu-note">设置年龄、身高、生活习惯等匹配偏好</text></view>
+      <view class="profile-menu-chevron"></view>
+    </view>
+    <view class="profile-menu-row" bindtap="goRelationshipStatus" aria-role="button" aria-label="成功脱单与匹配管理">
+      <view class="profile-menu-copy"><text class="profile-menu-title">{{form.relationshipStatus === 'coupled' ? '已脱单' : '成功脱单 · 邀请脱单'}}</text><text class="profile-menu-note">{{form.relationshipStatus === 'coupled' ? '资料已隐藏，查看脱单邀请与匹配状态' : '确认脱单后自动隐藏资料，也可管理匹配'}}</text></view>
       <view class="profile-menu-chevron"></view>
     </view>
     <view class="profile-menu-row" bindtap="goOrders" aria-role="button" aria-label="查看我的订单">
@@ -159,7 +176,7 @@
         <text class="section-title">资料展示</text>
         <text class="section-note">开启后进入会员浏览与主理人资源池；联系方式仍不公开。</text>
       </view>
-      <switch checked="{{form.displayEnabled}}" color="#a45d43" disabled="{{!profileReady || loading || saving}}" bindchange="onDisplayEnabledChange"></switch>
+      <switch checked="{{form.displayEnabled}}" color="#a45d43" disabled="{{!profileReady || loading || saving || form.relationshipStatus === 'coupled'}}" bindchange="onDisplayEnabledChange"></switch>
     </view>
     <view class="divider"></view>
     <view class="privacy-row">
@@ -367,4 +384,5 @@
     </view>
   </view>
 
+  </block>
 </view>

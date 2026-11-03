@@ -24,6 +24,14 @@ import {
 type ProfileForm = Record<string, any>
 const PROFILE_TTL_MS = 30 * 1000
 
+function submissionFailureMessage(error: unknown) {
+  const code = error && typeof error === 'object' ? Number((error as { code?: unknown }).code) : 0
+  if (code === 40061) return '内容含有违规信息，请修改后重试'
+  if (code === 40062) return '内容格式不正确，请修改后重试'
+  if (code === 50361) return '暂时无法提交，请稍后重试'
+  return ''
+}
+
 const FORM_DEFAULTS: ProfileForm = {
   realName: '',
   photoText: '',
@@ -242,7 +250,9 @@ async function resolveFormDisplayUrls(form: ProfileForm) {
 }
 
 async function prepareProfileForm(raw: ProfileForm, user: ProfileForm, source?: ProfileForm): Promise<ProfileForm> {
-  const form = preserveImageDisplay(hydrateImageDisplay(normalizeForm(raw, user)), source)
+  const normalized = hydrateImageDisplay(normalizeForm(raw, user))
+  const form = Array.isArray(raw.photoDisplayUrls) && raw.photoDisplayUrls.length
+    ? normalized : preserveImageDisplay(normalized, source)
   return resolveFormDisplayUrls(form)
 }
 
@@ -321,6 +331,7 @@ Page({
   _adminEntryGeneration: 0,
 
   data: {
+    guest: true,
     user: null as any,
     loading: false,
     profileReady: false,
@@ -369,13 +380,17 @@ Page({
   },
 
   onShow() {
-    if (!this.synchronizeSession()) return
+    syncUserTabBar(this, 'mine')
+    if (!this.synchronizeSession()) {
+      this._profileVisible = false
+      wx.setNavigationBarTitle({ title: '我的' })
+      return
+    }
     this._profileVisible = true
     void this.loadVipBadge()
     void this.loadAdminEntry()
     this.syncLeaveGuard()
     wx.setNavigationBarTitle({ title: this.data.editingProfile ? '编辑资料' : '我的资料' })
-    syncUserTabBar(this, 'mine')
     const force = this._refreshOnShow
     this._refreshOnShow = false
     const refreshCertifications = this._certificationRefreshOnShow
@@ -464,6 +479,7 @@ Page({
 
   synchronizeSession() {
     const scope = pageSessionScope()
+    if (this.data.guest !== !scope) this.setData({ guest: !scope })
     if (scope !== this._profileScope) {
       this._adminEntryGeneration += 1
       this._vipBadgeGeneration += 1
@@ -483,7 +499,7 @@ Page({
       this._certificationGeneration += 1
       this._certificationLoadPromise = null
       this._certificationRefreshOnShow = false
-      const user = currentUser() || {}
+      const user = scope ? currentUser() || {} : null
       const form = hydrateImageDisplay(normalizeForm({}, user))
       this._savedForm = form
       const completion = completionFor(form)
@@ -495,7 +511,7 @@ Page({
         completionNote: completion.note,
         loading: false, profileReady: false, profileError: '', isVipBadge: false, saving: false, uploadingPhotos: false, referralLoading: false,
         adminEntryVisible: false, adminEntryReady: false, adminEntryOpening: false,
-        referralCard: { canShare: false }, matchmakerCode: '',
+        referralCard: { canShare: false }, matchmakerCode: '', matchmakerRequesting: false,
         editingProfile: false, previewOpen: false,
         formDirty: false, saveState: 'idle', saveStatus: '资料已同步',
         matchmakerPanelOpen: false, accountPanelOpen: false,
@@ -505,8 +521,17 @@ Page({
       })
     }
     if (scope) return scope
-    wx.redirectTo({ url: '/pages/index/index' })
+    this._profileVisible = false
+    wx.removeStorageSync('selectedUserMember')
     return ''
+  },
+
+  goGuestLogin() {
+    wx.navigateTo({ url: '/pages/index/index?login=1&returnTo=profile' })
+  },
+
+  browseActivities() {
+    wx.switchTab({ url: '/pages/user/salon' })
   },
 
   loadProfile(force = false): Promise<void> {
@@ -545,6 +570,17 @@ Page({
           })
         } else {
           this.setData({ user })
+          // A success declaration may happen while profile text remains a draft.
+          // Refresh server-owned visibility/status without discarding that draft.
+          if (form.relationshipStatus !== this.data.form.relationshipStatus) {
+            const relationshipPatch = {
+              relationshipStatus: form.relationshipStatus,
+              coupledAt: form.coupledAt || null,
+              displayEnabled: form.displayEnabled
+            }
+            this._savedForm = { ...this._savedForm, ...relationshipPatch }
+            this.renderForm({ ...this.data.form, ...relationshipPatch })
+          }
         }
         this._profileLoadedAt = Date.now()
         this._profileInitialized = true
@@ -799,7 +835,21 @@ Page({
 
   async onDisplayEnabledChange(e: any) {
     const displayEnabled = e.detail.value === true
+    if (displayEnabled && this.data.form.relationshipStatus === 'coupled') {
+      this.setData({ 'form.displayEnabled': false })
+      wx.showToast({ title: '已脱单状态下资料保持隐藏', icon: 'none' })
+      return
+    }
     await this.saveImmediatePatch({ displayEnabled }, { displayEnabled }, displayEnabled ? '已开启展示' : '已关闭展示')
+  },
+
+  goRelationshipStatus() {
+    this._refreshOnShow = true
+    wx.navigateTo({ url: '/pages/user/relationship-status' })
+  },
+
+  goPreferences() {
+    wx.navigateTo({ url: '/pages/user/preferences' })
   },
 
   async onAssetPreferenceChange(e: { currentTarget: { dataset: { field?: string } }; detail: { value: boolean } }) {
@@ -958,7 +1008,11 @@ Page({
     const isCurrent = () => pageSessionScope() === scope && this._profileGeneration === generation
     this._profileLoadPromise = null
     this.setData({ saving: true, loading: false, referralLoading: false })
-    this.renderForm({ ...previous, ...formPatch }, '正在保存…', 'saving')
+    const previousPhotos = photosFromText(String(previous.photoText || ''))
+    const containsNewPhotos = Array.isArray(payload.photos)
+      && payload.photos.some((photo: string) => !previousPhotos.includes(photo))
+    // Newly selected images become the profile avatar only after the server accepts them.
+    this.renderForm(containsNewPhotos ? previous : { ...previous, ...formPatch }, '正在保存…', 'saving')
     try {
       const result = await request<Record<string, unknown>>('/user/profile', { method: 'PUT', data: payload })
       if (!isCurrent()) return false
@@ -988,10 +1042,12 @@ Page({
         patch[field] = previous[field]
         return patch
       }, {})
-      const message = Object.prototype.hasOwnProperty.call(payload, 'photos')
+      const contentMessage = submissionFailureMessage(err)
+      const message = contentMessage || (Object.prototype.hasOwnProperty.call(payload, 'photos')
         ? '照片未保存，已恢复原照片，请重试' : '设置未保存，已恢复原设置，请重试'
+      )
       this.renderForm({ ...this.data.form, ...rollback }, message, 'error')
-      wx.showToast({ title: Object.prototype.hasOwnProperty.call(payload, 'photos') ? '照片未保存，请重试' : '设置未保存，请重试', icon: 'none' })
+      wx.showToast({ title: contentMessage || (Object.prototype.hasOwnProperty.call(payload, 'photos') ? '照片未保存，请重试' : '设置未保存，请重试'), icon: 'none' })
       return false
     } finally {
       if (isCurrent()) this.setData({ saving: false })
@@ -1033,7 +1089,9 @@ Page({
     } catch (err) {
       if (!isCurrent()) return false
       console.warn('save user profile failed', err)
-      this.setData({ saveState: 'error', saveStatus: '保存失败，修改仍保留，请重试' })
+      const contentMessage = submissionFailureMessage(err)
+      this.setData({ saveState: 'error', saveStatus: contentMessage || '保存失败，修改仍保留，请重试' })
+      if (contentMessage) wx.showToast({ title: contentMessage, icon: 'none' })
       return false
     } finally {
       if (isCurrent()) this.setData({ saving: false })

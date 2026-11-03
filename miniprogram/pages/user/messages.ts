@@ -208,6 +208,7 @@ Page({
   _relationshipPendingKey: '',
 
   data: {
+    guest: true,
     list: [] as ConversationItem[],
     total: 0,
     conversationLoading: false,
@@ -236,11 +237,11 @@ Page({
   async onShow() {
     this._messagesVisible = true
     this._messagesUnloaded = false
+    syncUserTabBar(this, 'messages')
     if (!this.ensureMessageSession()) {
-      wx.redirectTo({ url: '/pages/index/index' })
+      wx.removeStorageSync('selectedUserMember')
       return
     }
-    syncUserTabBar(this, 'messages')
     const initial = !this.data.relationshipInitialized
     const type: RelationshipKind = initial ? 'incoming' : this.data.relationshipType
     await Promise.allSettled([
@@ -271,6 +272,7 @@ Page({
 
   ensureMessageSession() {
     const scope = pageSessionScope()
+    if (this.data.guest !== !scope) this.setData({ guest: !scope })
     if (scope === this._messagesScope) return scope
     this._messagesScope = scope
     this._conversationRequestSerial += 1
@@ -293,6 +295,14 @@ Page({
       emptyNote: '和主理人建立服务关系，或由主理人发起配对后，这里会出现会话。'
     })
     return scope
+  },
+
+  goGuestLogin() {
+    wx.navigateTo({ url: '/pages/index/index?login=1&returnTo=messages' })
+  },
+
+  browseActivities() {
+    wx.switchTab({ url: '/pages/user/salon' })
   },
 
   isMessageSessionCurrent(scope: string) {

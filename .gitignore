@@ -26,3 +26,4 @@ preview-info.json
 # Local deployment evidence, rollback archives, and assistant scratch state.
 output/
 .workbuddy/
+tmp/

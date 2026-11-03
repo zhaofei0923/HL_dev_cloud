@@ -4,6 +4,20 @@ const auth_1 = require("../../services/auth");
 const api_1 = require("../../services/api");
 const local_image_1 = require("../../utils/local-image");
 const page_session_1 = require("../../utils/page-session");
+const public_browse_1 = require("../../services/public-browse");
+function returnTab(value) {
+    return value === 'salon' || value === 'messages' || value === 'profile' ? value : 'members';
+}
+function publicContext() {
+    const app = getApp();
+    return `${app.globalData.env || ''}|${(0, page_session_1.pageSessionScope)() || 'guest'}`;
+}
+function publicDate(value) {
+    const date = new Date(value || '');
+    if (!Number.isFinite(date.getTime()))
+        return '时间待定';
+    return `${date.getMonth() + 1}月${date.getDate()}日 ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
 function eventIdFrom(value) {
     const raw = String(value || '').trim();
     const id = Number(raw);
@@ -19,10 +33,21 @@ Page({
     _registrationInitialized: false,
     _registrationUnloaded: false,
     _registrationPending: null,
+    _publicGeneration: 0,
+    _publicVisible: false,
+    _publicContext: '',
+    _publicLoadedAt: 0,
+    _publicPending: null,
     data: {
         loading: false,
         registrationMode: false,
+        loginIntent: false,
+        returnTab: 'members',
         returnToOrders: false,
+        publicLoading: false,
+        publicError: '',
+        publicSalons: [],
+        publicPlans: [],
         eventId: '',
         loggedIn: false,
         checking: false,
@@ -39,10 +64,12 @@ Page({
         const registrationMode = String(options.register || '') === '1';
         const eventId = eventIdFrom(options.eventId);
         this.setData({ registrationMode, eventId, returnToOrders: !registrationMode && options.returnTo === 'orders',
+            loginIntent: options.login === '1' || options.returnTo === 'orders', returnTab: returnTab(options.returnTo),
             errorText: registrationMode && !eventId ? '活动链接不完整，请重新打开活动邀请。' : '' });
     },
     onShow() {
         this._registrationUnloaded = false;
+        this._publicVisible = true;
         const scope = this.synchronizeRegistrationSession();
         if (this.data.registrationMode) {
             if (scope && this.data.eventId)
@@ -51,19 +78,89 @@ Page({
         }
         if (scope) {
             this.continueAfterLogin();
+            return Promise.resolve();
         }
-        return Promise.resolve();
+        return this.data.loginIntent ? Promise.resolve() : this.loadPublicContent();
+    },
+    onHide() {
+        this._publicVisible = false;
+        this._publicGeneration += 1;
+        this._publicPending = null;
+        this.setData({ publicLoading: false });
     },
     onUnload() {
         this._registrationUnloaded = true;
         this._registrationGeneration += 1;
         this._registrationPending = null;
+        this._publicVisible = false;
+        this._publicGeneration += 1;
+        this._publicPending = null;
     },
     continueAfterLogin() {
         if (this.data.returnToOrders)
             wx.redirectTo({ url: '/pages/user/orders' });
         else
-            wx.switchTab({ url: '/pages/user/members' });
+            wx.switchTab({ url: `/pages/user/${this.data.returnTab}` });
+    },
+    loadPublicContent(force = false) {
+        if (this.data.registrationMode || this.data.loginIntent || (0, page_session_1.pageSessionScope)())
+            return Promise.resolve();
+        const context = publicContext();
+        if (context !== this._publicContext) {
+            this._publicContext = context;
+            this._publicGeneration += 1;
+            this._publicLoadedAt = 0;
+            this._publicPending = null;
+            this.setData({ publicSalons: [], publicPlans: [], publicError: '' });
+        }
+        if (this._publicPending && !force)
+            return this._publicPending;
+        if (!force && this._publicLoadedAt && Date.now() - this._publicLoadedAt < 30000)
+            return Promise.resolve();
+        const generation = ++this._publicGeneration;
+        this.setData({ publicLoading: true, publicError: '' });
+        const isCurrent = () => this._publicVisible && !this._registrationUnloaded
+            && this._publicGeneration === generation && publicContext() === context && !(0, page_session_1.pageSessionScope)();
+        const promise = Promise.allSettled([public_browse_1.publicBrowseApi.salons(), public_browse_1.publicBrowseApi.plans()]).then(results => {
+            if (!isCurrent())
+                return;
+            const [salons, plans] = results;
+            const update = { publicError: '' };
+            const validSalons = salons.status === 'fulfilled' && Array.isArray(salons.value.list);
+            const validPlans = plans.status === 'fulfilled' && Array.isArray(plans.value.plans);
+            if (salons.status === 'fulfilled' && validSalons)
+                update.publicSalons = salons.value.list.map(event => ({
+                    ...event, dateText: publicDate(event.eventDate),
+                    priceText: Number(event.price || 0) > 0 ? `¥${Number(event.price).toFixed(2)}` : '免费'
+                }));
+            if (plans.status === 'fulfilled' && validPlans)
+                update.publicPlans = plans.value.plans.map(plan => ({
+                    ...plan, priceText: `¥${(plan.priceFen / 100).toFixed(2)}`,
+                    termsText: `${plan.durationDays}天${plan.serviceTimes > 0 ? ` · ${plan.serviceTimes}次牵线` : ' VIP权益'}`
+                }));
+            const failed = !validSalons || !validPlans;
+            update.publicError = failed ? '部分内容暂时无法更新，可继续浏览或重试。' : '';
+            this._publicLoadedAt = failed ? 0 : Date.now();
+            this.setData(update);
+        }).finally(() => {
+            if (isCurrent())
+                this.setData({ publicLoading: false });
+            if (this._publicPending === promise)
+                this._publicPending = null;
+        });
+        this._publicPending = promise;
+        return promise;
+    },
+    retryPublicContent() { return this.loadPublicContent(true); },
+    browseActivities() { wx.switchTab({ url: '/pages/user/salon' }); },
+    openPublicSalon(e) {
+        const id = String(e.currentTarget.dataset.id || '');
+        if (/^\d+$/.test(id))
+            wx.navigateTo({ url: `/pages/user/salon-detail?id=${encodeURIComponent(id)}` });
+    },
+    onPullDownRefresh() {
+        const task = this.data.registrationMode ? this.retryRegistration() : this.loadPublicContent(true);
+        return Promise.resolve(task).finally(() => wx.stopPullDownRefresh());
     },
     synchronizeRegistrationSession() {
         const scope = (0, page_session_1.pageSessionScope)();
@@ -108,7 +205,9 @@ Page({
                 }
                 const photos = result.profile && Array.isArray(result.profile.photos) ? result.profile.photos : [];
                 const photoFileId = photos[0] || (result.user && result.user.avatarUrl) || '';
-                const displayUrls = await (0, local_image_1.resolveImageUrls)(photoFileId ? [photoFileId] : []);
+                const serverDisplayUrl = result.profile && Array.isArray(result.profile.photoDisplayUrls)
+                    ? result.profile.photoDisplayUrls[0] : '';
+                const displayUrls = await (0, local_image_1.resolveImageUrls)(serverDisplayUrl ? [serverDisplayUrl] : photoFileId ? [photoFileId] : []);
                 if (!this.isRegistrationCurrent(scope, generation))
                     return;
                 this.setData({ phone: (result.user && result.user.phone) || '',
@@ -208,7 +307,7 @@ Page({
         const photo = this.data.photoFileId;
         const errorText = !/^1\d{10}$/.test(phone) ? '请填写有效的 11 位手机号。'
             : !nickname || nickname.length > 40 ? '请填写 1 至 40 个字的称呼。'
-                : !/^cloud:\/\/\S+\/hl_uploads\/profile\/\S+$/.test(photo) ? '请上传一张本人照片。' : '';
+                : !/^cloud:\/\/\S+\/(?:hl_uploads\/profile|hl_moderated\/images)\/\S+$/.test(photo) ? '请上传一张本人照片。' : '';
         if (errorText) {
             this.setData({ errorText });
             return;

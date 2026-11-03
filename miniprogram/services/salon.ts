@@ -24,6 +24,7 @@ export interface SalonEvent {
   canRegister?: boolean
   registrationBlockedReason?: string
   registrationRequirements?: SalonRegistrationRequirements
+  requiresLogin?: boolean
 }
 
 export interface SalonParticipant {
@@ -71,6 +72,12 @@ function activitySessionReturn(id: number | string) {
 }
 
 export const salonApi = {
+  publicList(data?: Record<string, any>) {
+    return request('/public/salon/events', { data, auth: false, preserveSessionOnUnauthorized: true, showError: false })
+  },
+  publicDetail(id: number | string) {
+    return request<SalonEvent>(`/public/salon/events/${id}`, { auth: false, preserveSessionOnUnauthorized: true, showError: false })
+  },
   list(data?: Record<string, any>) {
     return request('/salon/events', { data })
   },

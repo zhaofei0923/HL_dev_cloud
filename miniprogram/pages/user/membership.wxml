@@ -80,7 +80,7 @@
         <text class="benefits-vip">可用</text>
       </view>
     </view>
-    <text class="benefits-footnote">互相喜欢或正式牵线后可聊天；交换微信需双方同意。认证资料和联系方式按你的设置展示。</text>
+    <text class="benefits-footnote">公开资料可免费查看；互相喜欢或正式牵线后，开通VIP可聊天并查看消息已读。交换微信需双方同意。认证资料和联系方式按你的设置展示。</text>
   </view>
 
   <view wx:if="{{activeProductType === 'matchmaking'}}" class="matchmaking-section">

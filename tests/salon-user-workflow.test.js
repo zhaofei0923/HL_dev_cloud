@@ -8,7 +8,7 @@ function event(extra = {}) {
 }
 function salonRuntime(extra = {}, overrides = {}) {
   const state = { event: event(extra), writes: 0 };
-  const harness = runtime('pages/user/salon-detail.js', { salonApi: {
+  const harness = runtime('pages/user/salon-detail.js', { source: true, salonApi: {
     detail: async () => state.event,
     participants: async () => ({ list: [], total: 0, page: 1, pageSize: 20 }),
     shareCard: async () => ({ canShare: true }),
@@ -34,6 +34,107 @@ test('past upcoming activities disable even registered actions, and crossing the
   await page.primaryAction();
   assert.equal(state.writes, 0);
   assert.equal(page.data.event.primaryAction.disabled, true);
+});
+
+test('guest activity lists browse public upcoming and past events without login or private reads', async () => {
+  const reads = [];
+  const instance = runtime('pages/user/salon.js', { source: true, salonApi: {
+    publicList: async query => { reads.push(query); return { list: [event()], total: 1 }; },
+    list: async () => { throw new Error('guest requested authenticated list'); },
+    myRegistrations: async () => { throw new Error('guest requested private registrations'); }
+  }, wx: { showModal: options => options.success({ confirm: false }) } });
+  instance.session.token = ''; instance.session.user = null;
+  await instance.page.onShow();
+  assert.equal(instance.page.data.loggedIn, false);
+  assert.equal(instance.page.data.list.length, 1);
+  assert.equal(reads[0].period, 'upcoming');
+  assert.equal(reads[0].pageSize, 20);
+  await instance.page.loadPast();
+  assert.equal(reads[1].period, 'past');
+  assert.equal(reads[1].pageSize, 20);
+  await instance.page.loadMine();
+  assert.equal(instance.page.data.active, 'past', 'declining login preserves the browsed list');
+  assert.equal(instance.calls.navigation.length, 0);
+  instance.page.openDetail({ currentTarget: { dataset: { id: 7 } } });
+  assert.equal(instance.calls.navigation[0].url, '/pages/user/salon-detail?id=7');
+});
+
+test('guest registration history offers a voluntary login while preserving public activity browsing', async () => {
+  const instance = runtime('pages/user/salon.js', { source: true, salonApi: {
+    publicList: async () => ({ list: [], total: 0 })
+  } });
+  instance.session.token = ''; instance.session.user = null;
+  await instance.page.onShow();
+  assert.equal(instance.calls.navigation.length, 0);
+  await instance.page.loadMine();
+  assert.equal(instance.calls.navigation[0].url, '/pages/index/index?login=1&returnTo=salon');
+  assert.equal(instance.page.data.active, 'all');
+});
+
+test('guests see a real activity detail before choosing login and never read participant or sharing data', async () => {
+  const reads = [];
+  const instance = runtime('pages/user/salon-detail.js', { source: true, salonApi: {
+    publicDetail: async id => { reads.push(id); return event(); },
+    detail: async () => { throw new Error('guest requested authenticated detail'); },
+    participants: async () => { throw new Error('guest requested participant data'); },
+    shareCard: async () => { throw new Error('guest requested private share card'); },
+    register: async () => { throw new Error('guest attempted registration'); }
+  } });
+  instance.session.token = ''; instance.session.user = null;
+  instance.page.onLoad({ id: '7' });
+  await instance.page.onShow();
+  assert.deepEqual(reads, ['7']);
+  assert.equal(instance.page.data.event.title, '测试活动');
+  assert.equal(instance.page.data.event.primaryAction.text, '登录后报名');
+  assert.equal(instance.page.data.participants.length, 0);
+  assert.equal(instance.page.data.shareCard.canShare, false);
+  assert.equal(instance.calls.navigation.length, 0);
+  await instance.page.loadParticipants(); await instance.page.loadShareCard();
+  assert.equal(instance.calls.navigation.length, 0);
+  await instance.page.primaryAction();
+  assert.equal(instance.calls.navigation[0].url, '/pages/index/index?register=1&eventId=7');
+});
+
+test('activity guest and authenticated reads cannot populate a changed account or overwrite public state', async () => {
+  for (const startLoggedIn of [true, false]) {
+    const pending = deferred();
+    const instance = runtime('pages/user/salon-detail.js', { source: true, salonApi: {
+      publicDetail: () => startLoggedIn ? Promise.resolve(event({ title: '公开活动' })) : pending.promise,
+      detail: () => startLoggedIn ? pending.promise : Promise.resolve(event({ title: '当前活动' })),
+      participants: async () => ({ list: [], total: 0, page: 1 }),
+      shareCard: async () => ({ canShare: false })
+    } });
+    if (!startLoggedIn) { instance.session.token = ''; instance.session.user = null; }
+    instance.page.onLoad({ id: '7' });
+    const first = instance.page.onShow();
+    if (startLoggedIn) { instance.session.token = ''; instance.session.user = null; }
+    else { instance.session.token = 'current-session'; instance.session.user = { id: 2 }; }
+    await instance.page.onShow();
+    pending.resolve(event({ title: '旧会话活动', isRegistered: true }));
+    await first;
+    assert.equal(instance.page.data.event.title, startLoggedIn ? '公开活动' : '当前活动');
+    assert.equal(instance.page.data.loggedIn, !startLoggedIn);
+    assert.equal(instance.page.data.shareCard.canShare, false);
+  }
+});
+
+test('guest activity responses and warm lists remain isolated when the cloud environment changes', async () => {
+  for (const pageName of ['salon', 'salon-detail']) {
+    const old = deferred(); let reads = 0;
+    const response = title => pageName === 'salon' ? { list: [event({ title })], total: 1 } : event({ title });
+    const read = () => ++reads === 1 ? old.promise : Promise.resolve(response('当前环境活动'));
+    const instance = runtime(`pages/user/${pageName}.js`, { source: true, salonApi: {
+      publicList: read, publicDetail: read
+    } });
+    instance.session.token = ''; instance.session.user = null;
+    if (pageName === 'salon-detail') instance.page.onLoad({ id: '7' });
+    const first = instance.page.onShow();
+    instance.session.env = 'another-environment';
+    await instance.page.onShow();
+    old.resolve(response('旧环境活动')); await first;
+    assert.equal(reads, 2);
+    assert.equal(pageName === 'salon' ? instance.page.data.list[0].title : instance.page.data.event.title, '当前环境活动');
+  }
 });
 
 test('incomplete registration returns to the same activity via the minimal form without a write', async () => {

@@ -1,6 +1,11 @@
 const cloud = require('wx-server-sdk');
 const crypto = require('node:crypto');
+const { normalizeMemberLocation, currentLocation, memberDistanceText } = require('./member-location-policy');
+const { normalizeMatchingPreferences, matchingPreferenceScore } = require('./matching-preferences-policy');
+const { createMemberRelationshipService } = require('./member-relationship-service');
 const { miniprogramAdminEntry } = require('./admin-entry-policy');
+const { createPublicBrowseService } = require('./public-browse');
+const { createContentSecurityService } = require('./content-security');
 const {
   activeAttendance,
   latestAttendanceRows,
@@ -88,6 +93,9 @@ cloud.init({
 
 const db = cloud.database();
 const _ = db.command;
+const publicBrowse = createPublicBrowseService({ db, plans: DEFAULT_MEMBERSHIP_PLANS, env: process.env });
+const contentSecurity = createContentSecurityService({ cloud, error: createHttpError, env: process.env,
+  logger: (record) => console.log('content_security_check', record) });
 
 const C = {
   users: 'hl_users',
@@ -283,7 +291,25 @@ function createHttpError(message, status = 400, code = 40001) {
   return err;
 }
 
-function ok(data = null, message = 'success') {
+async function ok(data = null, message = 'success') {
+  // Server-owned images remain PRIVATE in storage. Resolve only display fields
+  // already present in an authorized DTO; editable profile.photos keep file IDs.
+  const displayKeys = new Set(['avatarUrl', 'coverUrl', 'coverImage']);
+  const files = new Set();
+  function visit(value, urls, depth = 0) {
+    if (!value || typeof value !== 'object' || depth > 12) return value;
+    if (Array.isArray(value)) return value.map(item => visit(item, urls, depth + 1));
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+      if (displayKeys.has(key) && typeof item === 'string'
+        && /^cloud:\/\/[^/]+\/hl_moderated\/images\/[a-f0-9]{64}\.(?:jpg|png)$/.test(item)) {
+        files.add(item);
+        return [key, urls ? (urls[item] || '') : item];
+      }
+      return [key, visit(item, urls, depth + 1)];
+    }));
+  }
+  visit(data);
+  if (files.size) data = visit(data, await memberMediaURLMap([...files]));
   return { code: 0, message, data };
 }
 
@@ -420,6 +446,7 @@ async function ensureCollections() {
 
 function baseCollectionsForPath(path) {
   const common = [C.users, C.profiles, C.counters];
+  if (path.startsWith('/member/relationship-') || path === '/member/unmatch') return [...common, C.memberInteractions, C.matchRecords, C.conversations];
   if (path === '/user/profile') return [...common, C.memberCertifications, C.members, VIP_COLLECTIONS.entitlements];
   if (path === '/matchmaker/status') return [C.users, C.matchmakers];
   if (path === '/member/invite-options') return [C.users, C.matchmakers, C.members, C.profiles];
@@ -453,7 +480,7 @@ function baseCollectionsForPath(path) {
     return [...common, C.matchmakers, C.members, C.salonEvents, C.registrations, C.messages, C.memberCertifications];
   }
   if (path.startsWith('/chat')) {
-    return [...common, C.matchmakers, C.members, C.matchRecords, C.conversations, C.chatMessages];
+    return [...common, C.matchmakers, C.members, C.matchRecords, C.conversations, C.chatMessages, C.memberInteractions];
   }
   if (path.startsWith('/messages')) {
     return [...common, C.members, C.messages, C.conversations, C.memberInteractions];
@@ -936,7 +963,7 @@ async function memberView(member, context = {}) {
     selfIntro: profile.selfIntro || '',
     partnerRequirement: profile.partnerRequirement || '',
     photos,
-    displayEnabled: isTrue(profile.displayEnabled),
+    displayEnabled: profile.relationshipStatus !== 'coupled' && isTrue(profile.displayEnabled),
     displayUpdatedAt: profile.displayUpdatedAt || ''
   };
   const completion = profileCompletionFor(row);
@@ -989,7 +1016,7 @@ async function profileMemberView(profile, context = {}) {
     selfIntro: profile.selfIntro || '',
     partnerRequirement: profile.partnerRequirement || '',
     photos,
-    displayEnabled: isTrue(profile.displayEnabled),
+    displayEnabled: profile.relationshipStatus !== 'coupled' && isTrue(profile.displayEnabled),
     displayUpdatedAt: profile.displayUpdatedAt || ''
   };
   const completion = profileCompletionFor(row);
@@ -1039,7 +1066,7 @@ async function publicShowcaseRows(options = {}) {
   ]);
   const memberUserIds = new Set(rows.map(row => Number(row.userId)));
   const profileRows = profiles
-    .filter(row => isTrue(row.displayEnabled))
+    .filter(row => row.relationshipStatus !== 'coupled' && isTrue(row.displayEnabled))
     .filter(row => !memberUserIds.has(Number(row.userId)));
   const [usersById, profilesByUserId] = await Promise.all([
     getFirstRowsByNumericField(C.users, 'id', [...memberUserIds, ...profileRows.map(row => row.userId)]),
@@ -1064,7 +1091,8 @@ const SHOWCASE_MEMBER_INDEX_FIELDS = Object.fromEntries([
 ].map(field => [field, true]));
 const SHOWCASE_PROFILE_INDEX_FIELDS = Object.fromEntries([
   '_id', 'id', 'userId', 'displayEnabled', 'realName', 'gender', 'age', 'city',
-  'occupation', 'education', 'maritalStatus', 'incomeRange',
+  'occupation', 'education', 'maritalStatus', 'incomeRange', 'height', 'relationshipStatus',
+  'weightKg', 'marriageTimeline', 'hasChildren', 'wantsChildren', 'zodiac', 'constellation', 'smoking', 'drinking', 'pets',
   'showcaseCertification', 'assetCategoryConsent', 'assetRangeDisclosure'
 ].map(field => [field, true]));
 const SHOWCASE_USER_INDEX_FIELDS = { id: true, nickname: true, gender: true, status: true };
@@ -1096,6 +1124,8 @@ async function pageRecommendationRecords(userIds) {
 }
 
 async function publicShowcasePage(userId, filters = {}) {
+  const ownProfile = await getOne(C.profiles, { userId: Number(userId) }, { fields: { userId: true, matchingPreferences: true } });
+  const matchingPreferences = normalizeMatchingPreferences(ownProfile?.matchingPreferences || {});
   const category = normalizeShowcaseCategory(filters.category);
   // Source indexes stay fresh per request. Exact mixed-source totals and legacy visibility
   // require these lightweight scans; full profiles, users and recommendation history are page-scoped.
@@ -1126,7 +1156,7 @@ async function publicShowcasePage(userId, filters = {}) {
   });
   const candidates = [];
   function appendCandidate(member, profile) {
-    if (!profile || !isTrue(profile.displayEnabled)) return;
+    if (!profile || profile.relationshipStatus === 'coupled' || !isTrue(profile.displayEnabled)) return;
     const targetUserId = Number(member ? member.userId : profile.userId);
     const user = usersById.get(targetUserId) || {};
     if (category !== 'recommend' && (!Number.isFinite(targetUserId) || targetUserId <= 0
@@ -1154,7 +1184,9 @@ async function publicShowcasePage(userId, filters = {}) {
     .filter(row => !(viewerStates[String(row.userId)] || {}).hide)
     .map(row => ({ ...row, categoryRank: categoryRank(category, row.profile, counts.get(row.userId) || 0) }))
     .filter(row => row.categoryRank !== null)
-    .sort((a, b) => b.categoryRank - a.categoryRank || sortMemberRowsDesc(a, b));
+    .sort((a, b) => b.categoryRank - a.categoryRank
+      || (category === 'recommend' ? matchingPreferenceScore(b.profile, matchingPreferences) - matchingPreferenceScore(a.profile, matchingPreferences) : 0)
+      || sortMemberRowsDesc(a, b));
   const page = paginate(visible, filters.page, filters.pageSize);
   if (!page.list.length) return page;
   const pageUserIds = page.list.map(row => row.userId);
@@ -1183,7 +1215,7 @@ async function publicShowcasePage(userId, filters = {}) {
     const view = candidate.member
       ? await publicMemberView(candidate.member, context, { keepUserId: true })
       : sanitizePublicMemberRow(await profileMemberView(profile, context), { keepUserId: true });
-    if (!view || !isTrue(profile.displayEnabled) || Number(view.status) !== 1 || !matchesMemberFilters(view, filters)
+    if (!view || profile.relationshipStatus === 'coupled' || !isTrue(profile.displayEnabled) || Number(view.status) !== 1 || !matchesMemberFilters(view, filters)
       || categoryRank(category, profile, counts.get(candidate.userId) || 0) === null) return null;
     const state = viewerStates[String(candidate.userId)] || {};
     return { ...view, ...(category === 'popularity' ? { popularityCount: counts.get(candidate.userId) || 0 } : {}),
@@ -1220,13 +1252,16 @@ async function memberInteractionStateMap(userId, targetUserIds = []) {
   );
   if (!Number(userId) || !targets.size) return {};
 
-  const rows = await getAll(C.memberInteractions, { userId: Number(userId) }, Infinity);
+  const rows = await getAll(C.memberInteractions, _.or([
+    { userId: Number(userId) }, { targetUserId: Number(userId), actionType: 'unmatch' }
+  ]), Infinity);
   return latestMemberInteractionRows(rows).reduce((map, row) => {
-    const targetUserId = Number(row.targetUserId);
+    const targetUserId = row.actionType === 'unmatch' && Number(row.targetUserId) === Number(userId)
+      ? Number(row.userId) : Number(row.targetUserId);
     if (!targets.has(targetUserId) || !isActiveInteraction(row)) return map;
     const key = String(targetUserId);
     map[key] = map[key] || {};
-    map[key][row.actionType] = true;
+    map[key][row.actionType === 'unmatch' ? 'hide' : row.actionType] = true;
     return map;
   }, {});
 }
@@ -1296,11 +1331,10 @@ async function memberFavoriteQuota(userId, targetUserId = null) {
 }
 
 async function assertVipDiscoveryAccess(userId, filters = {}) {
-  const category = normalizeShowcaseCategory(filters.category);
   const advanced = ['ageMin', 'ageMax', 'education', 'maritalStatus', 'incomeRange']
     .some(key => filters[key] !== undefined && filters[key] !== null && String(filters[key]).trim() !== '');
-  if ((category !== 'recommend' || advanced) && !(await hasPremiumMemberEntitlement(userId))) {
-    throw createHttpError(category !== 'recommend' ? '开通VIP后可查看专区' : '开通VIP后可使用高级筛选', 403, 40302);
+  if (advanced && !(await hasPremiumMemberEntitlement(userId))) {
+    throw createHttpError('开通VIP后可使用高级筛选', 403, 40302);
   }
 }
 
@@ -1355,7 +1389,7 @@ async function publicShowcaseTarget(data = {}) {
   if (members.length) {
     target = await publicMemberView(members[0], context, { keepUserId: true });
   } else {
-    const profile = profiles.find(row => isTrue(row.displayEnabled));
+    const profile = profiles.find(row => row.relationshipStatus !== 'coupled' && isTrue(row.displayEnabled));
     if (profile) {
       const row = await profileMemberView(profile, context);
       if (Number(row.status) === 1) target = sanitizePublicMemberRow(row, { keepUserId: true });
@@ -1425,17 +1459,24 @@ async function areMutualFavorites(userAId, userBId) {
   return aToB && bToA;
 }
 
-async function mutualFavoritePeerIds(userId) {
+async function chatRelationshipPeers(userId) {
   const viewerId = Number(userId);
   const rows = latestMemberInteractionRows(await getAll(C.memberInteractions, _.and([
-    { actionType: 'favorite' },
+    { actionType: _.in(['favorite', 'unmatch']) },
     _.or([{ userId: viewerId }, { targetUserId: viewerId }])
   ]), Infinity)).filter(isActiveInteraction);
-  const outgoing = new Set(rows.filter(row => Number(row.userId) === viewerId)
-    .map(row => Number(row.targetUserId)));
-  return new Set(rows.filter(row => Number(row.targetUserId) === viewerId
-    && Number(row.userId) !== viewerId && outgoing.has(Number(row.userId)))
+  const unmatchedPeerIds = new Set(rows.filter(row => row.actionType === 'unmatch')
+    .map(row => Number(row.userId) === viewerId ? Number(row.targetUserId) : Number(row.userId)));
+  const favorites = rows.filter(row => row.actionType === 'favorite');
+  const outgoing = new Set(favorites.filter(row => Number(row.userId) === viewerId).map(row => Number(row.targetUserId)));
+  const mutualPeerIds = new Set(favorites.filter(row => Number(row.targetUserId) === viewerId
+    && Number(row.userId) !== viewerId && !unmatchedPeerIds.has(Number(row.userId)) && outgoing.has(Number(row.userId)))
     .map(row => Number(row.userId)));
+  return { mutualPeerIds, unmatchedPeerIds };
+}
+
+async function mutualFavoritePeerIds(userId) {
+  return (await chatRelationshipPeers(userId)).mutualPeerIds;
 }
 
 async function createFavoriteNotification(senderId, target, conversation = null) {
@@ -1504,7 +1545,9 @@ async function ensureMutualFavoriteConversation(userAId, userBId, context = {}) 
   const isMutual = context.mutualFavoritePeerIds
     ? context.mutualFavoritePeerIds.has(Number(userBId))
     : await areMutualFavorites(userAId, userBId);
-  if (!isMutual) return null;
+  const blocked = context.unmatchedPeerIds ? context.unmatchedPeerIds.has(Number(userBId))
+    : await memberRelationships.isUnmatched(userAId, userBId);
+  if (!isMutual || blocked) return null;
   return ensureChatConversation(
     [Number(userAId), Number(userBId)],
     'member_pair',
@@ -1560,7 +1603,7 @@ function normalizeChatVoice(data = {}) {
 }
 
 function assertChatParticipant(conversation, userId) {
-  if (!conversation || Number(conversation.status || 1) === 0) {
+  if (!conversation || String(conversation.status) === '0') {
     throw createHttpError('conversation not found', 404, 40400);
   }
   if (!chatParticipantIds(conversation).includes(Number(userId))) {
@@ -1603,7 +1646,9 @@ async function chatConversationView(conversation, currentUserId, context = {}) {
   const peer = peerId ? await chatParticipantView(peerId, context) : null;
   const unreadCount = chatUnreadCount(conversation, currentUserId);
   return {
-    ...stripInternal(conversation),
+    ...publicChatConversation(conversation),
+    canViewReadReceipts: context.canViewReadReceipts === undefined
+      ? await hasPremiumMemberEntitlement(currentUserId) : context.canViewReadReceipts,
     participantIds: ids,
     peer,
     title: peer ? peer.nickname : 'Conversation',
@@ -1614,12 +1659,26 @@ async function chatConversationView(conversation, currentUserId, context = {}) {
   };
 }
 
+function publicChatConversation(conversation) {
+  const safe = stripInternal(conversation);
+  delete safe.unreadBy;
+  return safe;
+}
+
+function chatReadStatus(message, currentUserId, canView) {
+  if (!canView || Number(message.senderId) !== Number(currentUserId)) return undefined;
+  return Array.isArray(message.readBy) && message.readBy.map(Number).includes(Number(message.receiverId)) ? 'read' : 'unread';
+}
+
 async function chatMessageView(message, currentUserId, context = {}) {
-  return {
-    ...stripInternal(message),
+  const safe = stripInternal(message);
+  delete safe.readBy;
+  delete safe.readAt;
+  const canView = context.canViewReadReceipts === undefined ? await hasPremiumMemberEntitlement(currentUserId) : context.canViewReadReceipts;
+  const readStatus = chatReadStatus(message, currentUserId, canView);
+  return { ...safe, ...(readStatus ? { readStatus } : {}),
     isMine: Number(message.senderId) === Number(currentUserId),
-    sender: await chatParticipantView(message.senderId, context)
-  };
+    sender: await chatParticipantView(message.senderId, context) };
 }
 
 async function resolveTargetUserId(data = {}) {
@@ -1709,6 +1768,8 @@ async function resolveChatAccess(userId, targetUserId) {
   const memberMatchmakerAccess = await resolveMemberMatchmakerChatAccess(userId, targetUserId);
   if (memberMatchmakerAccess) return memberMatchmakerAccess;
 
+  if (await memberRelationships.isUnmatched(userId, targetUserId)) throw createHttpError('已解除匹配，无法继续聊天', 403, 40300);
+  if (!(await hasPremiumMemberEntitlement(userId))) throw createHttpError('开通VIP后可聊天', 403, 40302);
   const memberPairAccess = await resolveMemberPairChatAccess(userId, targetUserId);
   if (memberPairAccess) return memberPairAccess;
 
@@ -1723,11 +1784,12 @@ async function getChatConversationOrThrow(userId, conversationId) {
   assertChatParticipant(conversation, userId);
   if (requiresPremiumForConversation(conversation)) {
     const peerId = chatParticipantIds(conversation).find(id => Number(id) !== Number(userId));
+    if (peerId && await memberRelationships.isUnmatched(userId, peerId)) throw createHttpError('已解除匹配，无法继续聊天', 403, 40300);
+    if (!(await hasPremiumMemberEntitlement(userId))) {
+      throw createHttpError('开通VIP后可聊天', 403, 40302);
+    }
     const formalPairAccess = peerId ? await resolveMemberPairChatAccess(userId, peerId) : null;
     if (formalPairAccess) return promoteChatConversation(conversation, formalPairAccess);
-    if (!(await hasPremiumMemberEntitlement(userId))) {
-      throw createHttpError('开通会员后可使用互选聊天', 403, 40302);
-    }
     if (!peerId || !(await areMutualFavorites(userId, peerId))) {
       throw createHttpError('互选已取消，暂不能继续聊天', 403, 40300);
     }
@@ -1742,7 +1804,7 @@ function conversationMetadataPatch(existing, metadata = {}) {
   if (metadata.matchmakerUserId && !existing.matchmakerUserId) patch.matchmakerUserId = metadata.matchmakerUserId;
   if (metadata.matchRecordId) {
     if (!existing.matchRecordId) patch.matchRecordId = metadata.matchRecordId;
-    patch.chatOpenReason = null;
+    if (existing.chatOpenReason != null) patch.chatOpenReason = null;
   }
   if (metadata.chatOpenReason && !existing.chatOpenReason && !existing.matchRecordId && !metadata.matchRecordId) {
     patch.chatOpenReason = metadata.chatOpenReason;
@@ -1849,6 +1911,9 @@ async function ensureMemberMatchmakerConversation(memberRow, matchmakerRow, cont
 
 async function ensureMemberPairConversation(matchRecord, context = {}) {
   if (!matchRecord) return null;
+  const blocked = context.unmatchedPeerIds ? [matchRecord.userAId, matchRecord.userBId].some(id => context.unmatchedPeerIds.has(Number(id)))
+    : await memberRelationships.isUnmatched(matchRecord.userAId, matchRecord.userBId);
+  if (blocked) return null;
   return ensureChatConversation(
     [Number(matchRecord.userAId), Number(matchRecord.userBId)],
     'member_pair',
@@ -1929,15 +1994,23 @@ const chat = {
       if (!rowsByPair.has(key)) rowsByPair.set(key, []);
       rowsByPair.get(key).push(row);
     });
-    const mutualPeerIds = isPremiumMember ? await mutualFavoritePeerIds(userId) : new Set();
+    const relationships = await chatRelationshipPeers(userId);
+    const mutualPeerIds = isPremiumMember ? relationships.mutualPeerIds : new Set();
     await ensureDefaultChatConversationsForUser(userId, isPremiumMember, {
-      rowsByPair, mutualFavoritePeerIds: mutualPeerIds
+      rowsByPair, mutualFavoritePeerIds: mutualPeerIds, unmatchedPeerIds: relationships.unmatchedPeerIds
     });
     const candidates = (await participantConversations(userId, true))
       .filter(row => row.status === 'active')
       .filter(row => chatParticipantIds(row).includes(Number(userId)))
       .filter(row => isPremiumMember || !requiresPremiumForConversation(row));
-    const rows = candidates.filter(row => !requiresPremiumForConversation(row)
+    const formalPeers = new Set((await getAll(C.matchRecords, _.or([
+      { userAId: _.in([Number(userId), String(userId)]) }, { userBId: _.in([Number(userId), String(userId)]) }
+    ]), Infinity)).filter(row => !['rejected', 'cancelled'].includes(String(row.status || '')))
+      .map(row => Number(row.userAId) === Number(userId) ? Number(row.userBId) : Number(row.userAId)));
+    const unblocked = candidates.filter(row => row.conversationType !== 'member_pair'
+      || !relationships.unmatchedPeerIds.has(chatParticipantIds(row).find(id => Number(id) !== Number(userId))));
+    const rows = unblocked.filter(row => !requiresPremiumForConversation(row)
+      || formalPeers.has(chatParticipantIds(row).find(id => Number(id) !== Number(userId)))
       || mutualPeerIds.has(chatParticipantIds(row).find(id => Number(id) !== Number(userId))))
       .sort((a, b) => {
         const aTime = new Date(a.lastMessageAt || a.updatedAt || a.createdAt || 0).getTime();
@@ -1945,7 +2018,7 @@ const chat = {
         return bTime - aTime || Number(b.id || 0) - Number(a.id || 0);
       });
     const page = paginate(rows, filters.page, Math.min(Number(filters.pageSize) || 50, 100));
-    const context = await chatParticipantContext(page.list.flatMap(chatParticipantIds));
+    const context = { ...await chatParticipantContext(page.list.flatMap(chatParticipantIds)), canViewReadReceipts: isPremiumMember };
     return { ...page, list: await Promise.all(page.list.map(row => chatConversationView(row, userId, context))) };
   },
 
@@ -1980,10 +2053,15 @@ const chat = {
     ]);
     const selected = (window.data || []).slice(0, pageSize);
     const messageRows = selected.sort((a, b) => Number(a.id) - Number(b.id));
-    const context = await chatParticipantContext([...chatParticipantIds(conversation), ...messageRows.map(row => row.senderId)]);
+    const context = { ...await chatParticipantContext([...chatParticipantIds(conversation), ...messageRows.map(row => row.senderId)]),
+      canViewReadReceipts: await hasPremiumMemberEntitlement(userId) };
+    const receiptWindow = context.canViewReadReceipts ? await queryRead(C.chatMessages, {
+      conversationId: Number(conversation.id), senderId: _.in([Number(userId), String(userId)]), status: _.nin([0, '0'])
+    }, { order: [['id', 'desc']], limit: 100, fields: { id: true, senderId: true, receiverId: true, readBy: true } }) : { data: [] };
     const conversationView = await markChatRead(userId, conversation.id, { ...context, conversation });
     return {
       conversation: conversationView,
+      readReceipts: (receiptWindow.data || []).map(row => ({ id: row.id, readStatus: chatReadStatus(row, userId, true) })),
       messages: await Promise.all(messageRows.map(row => chatMessageView(row, userId, context))),
       total: Number(count.total || 0),
       page: pageNumber,
@@ -1995,12 +2073,18 @@ const chat = {
   },
 
   async sendMessage(userId, conversationId, data = {}) {
+    // New audio cannot be delivered until its asynchronous moderation callback
+    // is configured. Existing approved text and historical playback remain usable.
+    if (data.contentType === 'voice') throw createHttpError('语音发送暂不可用，请发送文字消息', 503, 50363);
     const contentType = String(data.contentType || 'text') === 'voice' ? 'voice' : 'text';
     const voicePayload = contentType === 'voice' ? normalizeChatVoice(data) : null;
     const content = voicePayload ? voicePayload.content : normalizeChatText(data.content);
     const conversation = await getChatConversationOrThrow(userId, conversationId);
     const receiverId = chatParticipantIds(conversation).find(id => Number(id) !== Number(userId));
     if (!receiverId) throw createHttpError('receiver not found');
+    if (contentType === 'text') await assertUserText(userId, [content], 2);
+    // Moderation can wait on the network; refresh access before delivering.
+    await getChatConversationOrThrow(userId, conversationId);
     const payload = {
       id: await nextId('chatMessage'),
       conversationId: Number(conversation.id),
@@ -2198,11 +2282,23 @@ async function getMinimumRegistrationRequirements(userId) {
 async function minimumRegistrationView(userId) {
   const [user, profile] = await Promise.all([getUserOrThrow(userId), getOne(C.profiles, { userId: Number(userId) })]);
   const status = minimumRegistrationStatus(user, profile || {});
+  const photos = registrationPhotos(user, profile || {});
+  const urls = await memberMediaURLMap(photos);
   return { completed: status.complete, missingFields: status.missingFields,
     user: { id: Number(user.id), nickname: registrationName(user, profile || {}) || user.nickname || '',
       phone: user.phone || '', avatarUrl: user.avatarUrl || '' },
-    profile: { realName: profile?.realName || '', photos: registrationPhotos(user, profile || {}) },
+    profile: { realName: profile?.realName || '', photos, photoDisplayUrls: photos.map(fileID => urls[fileID] || '') },
     phoneStatus: user.phoneSource === 'wechat' ? 'verified' : 'filled' };
+}
+
+async function ownProfileResponse(user, profile) {
+  const safeProfile = profile ? sanitizeProfileCertification(stripInternal(await readableCertificationProfile(profile))) : null;
+  if (safeProfile) {
+    const photos = normalizeMemberPhotos(safeProfile.photos);
+    const urls = await memberMediaURLMap(photos);
+    safeProfile.photoDisplayUrls = photos.map(fileID => urls[fileID] || (isCloudFileID(fileID) ? '' : fileID));
+  }
+  return { ...publicUser(user), profile: safeProfile };
 }
 
 async function validateRegistrationPhotos(photos) {
@@ -2218,7 +2314,7 @@ async function saveMinimumRegistration(userId, data = {}) {
   const user = await getUserOrThrow(userId);
   const phone = normalizeMainlandPhone(data.phone);
   const nickname = registrationName({ nickname: data.nickname });
-  const photos = normalizeMemberPhotos(data.photos);
+  let photos = normalizeMemberPhotos(data.photos);
   const missingFields = [];
   if (!phone) missingFields.push('phone');
   if (!nickname) missingFields.push('nickname');
@@ -2231,6 +2327,8 @@ async function saveMinimumRegistration(userId, data = {}) {
   const owner = await uniqueActiveUser({ phone }, '该手机号对应多个账号，请联系平台核验');
   if (owner && Number(owner.id) !== Number(user.id)) throw createHttpError('该手机号已被其他账号使用，请联系平台核验', 409, 40920);
   await validateRegistrationPhotos(photos);
+  await assertUserText(user, [nickname]);
+  photos = await contentSecurity.assertImages({ images: data.photos });
   const profile = await getOne(C.profiles, { userId: Number(userId) });
   await Promise.all([ensureCollection(C.profiles), ensureCollection(C.counters)]);
   await db.runTransaction(async transaction => {
@@ -2263,6 +2361,23 @@ async function getUserOrThrow(userId) {
     throw createHttpError('user not found', 404, 40400);
   }
   return user;
+}
+
+// The subject is always the authenticated submitter, including when a
+// matchmaker edits somebody else's profile. Never accept an OpenID from data.
+async function assertUserText(userOrId, values, scene = 1) {
+  const parts = values.filter(value => value !== undefined && value !== null && value !== '');
+  if (parts.some(value => typeof value !== 'string')) {
+    throw createHttpError('请填写有效的文字内容', 400, 40001);
+  }
+  const content = parts.join('\n').trim();
+  if (!content) return;
+  const user = typeof userOrId === 'object' ? userOrId : await getUserOrThrow(userOrId);
+  const openid = typeof user?.openid === 'string' ? user.openid.trim() : '';
+  if (!openid || /^(manual_|mock_|merged_)/i.test(openid)) {
+    throw createHttpError('内容安全检测暂不可用，请通过微信登录后重试', 503, 50301);
+  }
+  await contentSecurity.assertText({ openid, scene, content });
 }
 
 async function getMatchmakerByUserIdOrThrow(userId) {
@@ -2494,6 +2609,7 @@ async function acceptMemberMatchmakerInvite(userId, data = {}, options = {}) {
     throw createHttpError('member already has another matchmaker', 409, 40901);
   }
 
+  await assertUserText(inviteUser, [data.message], 2);
   const existingRows = (await getAll(C.memberRequests, { userId: Number(userId), matchmakerId: Number(matchmaker.id) }))
     .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
   let request = existingRows.find(row => row.status === 'pending') || existingRows[0] || null;
@@ -2559,6 +2675,7 @@ async function rejectMemberMatchmakerRequest(matchmakerUserId, requestId, remark
     throw createHttpError('request not found', 404, 40400);
   }
   if (request.status !== 'pending') throw createHttpError('request is not pending');
+  await assertUserText(matchmakerUserId, [remark], 2);
   const reviewed = await updateRow(C.memberRequests, request, {
     status: 'rejected',
     reviewRemark: remark || '',
@@ -3160,6 +3277,27 @@ async function confirmMemberIdentityClaim(sourceUserId, token, phoneCode) {
   };
 }
 
+async function withMemberDistances(page, userId) {
+  const ids = [Number(userId), ...(page.list || []).map(row => Number(row.userId))];
+  const profiles = await getFirstRowsByNumericField(C.profiles, 'userId', ids, [], {
+    complete: true, fields: { userId: true, privateLocation: true }
+  });
+  const own = profiles.get(Number(userId))?.privateLocation;
+  return { ...page, list: (page.list || []).map(row => ({ ...row,
+    distanceText: memberDistanceText(own, profiles.get(Number(row.userId))?.privateLocation) })) };
+}
+
+const memberRelationships = createMemberRelationshipService({ collections: C, command: _, getAll, getOne, getById,
+  addRow, updateRow, nextId, nowIso, createHttpError, upsertMemberInteraction, activeInteraction,
+  areMutualFavorites, resolveMemberPairChatAccess });
+
+async function saveOwnProfileFields(userId, patch) {
+  const profile = await getOne(C.profiles, { userId: Number(userId) });
+  return profile ? updateRow(C.profiles, profile, patch) : addRow(C.profiles, {
+    id: await nextId('profile'), userId: Number(userId), displayEnabled: false, ...patch
+  });
+}
+
 const auth = {
   async wxLogin(payload = {}) {
     const wxContext = cloud.getWXContext();
@@ -3174,6 +3312,8 @@ const auth = {
     } catch (err) {
       throw createHttpError('微信登录上下文缺失，请通过小程序云环境重试', 401, 40103);
     }
+    await assertUserText({ openid }, [nickname]);
+    const checkedAvatar = avatarUrl ? (await contentSecurity.assertImages({ images: [avatarUrl] }))[0] : '';
     let user = await uniqueActiveUser({ openid }, '同一微信身份存在重复账号，请联系平台处理');
 
     if (!user) {
@@ -3183,7 +3323,7 @@ const auth = {
         openid,
         phone: '',
         nickname: nickname || `用户${String(id).padStart(4, '0')}`,
-        avatarUrl: avatarUrl || '',
+        avatarUrl: checkedAvatar,
         gender: 0,
         currentRole: role === 'matchmaker' ? 'matchmaker' : 'user',
         isVerified: 0,
@@ -3197,7 +3337,7 @@ const auth = {
         currentRole: role === 'matchmaker' ? 'matchmaker' : user.currentRole || 'user'
       };
       if (registrationName({ nickname })) patch.nickname = String(nickname).trim();
-      if (avatarUrl) patch.avatarUrl = avatarUrl;
+      if (checkedAvatar) patch.avatarUrl = checkedAvatar;
       user = await updateRow(C.users, user, patch);
     }
 
@@ -4894,6 +5034,7 @@ const membership = {
 const matchmaker = {
   async apply(userId, data = {}) {
     const user = await getUserOrThrow(userId);
+    await assertUserText(user, [data.certificationRemark]);
     let row = await getOne(C.matchmakers, { userId: user.id });
     if (!row) {
       const id = await nextId('matchmaker');
@@ -5101,6 +5242,23 @@ const PROFILE_MUTABLE_FIELDS = [
   'selfIntro',
   'partnerRequirement'
 ];
+
+const PROFILE_TEXT_FIELDS = PROFILE_MUTABLE_FIELDS.filter(field => !['age', 'height'].includes(field));
+
+function profileTextValues(data = {}) {
+  for (const field of ['age', 'height']) {
+    const value = data[field];
+    if (value === undefined || value === null || value === '') continue;
+    const decimal = typeof value === 'string' ? value.trim() : '';
+    if (typeof value === 'string' && !decimal) continue;
+    const valid = typeof value === 'number'
+      ? Number.isFinite(value) && value >= 0
+      : typeof value === 'string' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(decimal)
+        && Number.isFinite(Number(decimal)) && Number(decimal) >= 0;
+    if (!valid) throw createHttpError('年龄和身高须填写有效数字', 400, 40001);
+  }
+  return [...PROFILE_TEXT_FIELDS, 'nickname'].map(field => data[field]);
+}
 
 function editableProfilePatch(data = {}, options = {}) {
   const patch = {};
@@ -5322,6 +5480,13 @@ const member = {
       data = intake;
     }
 
+    await assertUserText(principalUser, requireCompleteIntake
+      ? profileTextValues(intakeProfilePatch(intake))
+      : [...profileTextValues(data), data.remark, data.serviceLevel]);
+    if (!requireCompleteIntake && Object.prototype.hasOwnProperty.call(data, 'photos')) {
+      data = { ...data, photos: await contentSecurity.assertImages({ images: data.photos }) };
+    }
+
     const media = withMemberMedia(requireCompleteIntake
       ? { realName: data.realName, gender: data.gender, photos: [] }
       : data);
@@ -5486,7 +5651,7 @@ const member = {
     const memberUserIds = new Set(rows.map(row => Number(row.userId)));
     const profiles = await getAll(C.profiles, null, Infinity);
     const profileRows = profiles
-      .filter(row => isTrue(row.displayEnabled))
+      .filter(row => row.relationshipStatus !== 'coupled' && isTrue(row.displayEnabled))
         .filter(row => !memberUserIds.has(Number(row.userId)))
         .filter(row => Number(row.userId) !== Number(matchmakerUserId));
     const context = await memberReadContext([...rows, ...profileRows], matchRecords, profiles);
@@ -5518,7 +5683,7 @@ const member = {
       memberFavoriteQuota(userId)
     ]);
     return {
-      ...await withVipBadges(page),
+      ...await withMemberDistances(await withVipBadges(page), userId),
       category: normalizeShowcaseCategory(filters.category),
       favoriteQuota
     };
@@ -5547,7 +5712,7 @@ const member = {
     }
     const page = await resolveMemberMediaPage({ list: [{ ...target,
       viewerState: { isFavorite: !!state.favorite, isHidden: false, chatAccess } }] });
-    return (await withVipBadges(page)).list[0];
+    return (await withMemberDistances(await withVipBadges(page), userId)).list[0];
   },
 
   async hidden(userId, filters = {}) {
@@ -5706,6 +5871,7 @@ const member = {
       throw createHttpError('cannot interact with yourself');
     }
 
+    if (actionType === 'favorite' && active && await memberRelationships.isUnmatched(userId, target.userId)) throw createHttpError('已解除匹配，无法再次发起互动', 403, 40300);
     if (actionType === 'favorite') {
       const existingFavorite = await latestMemberInteraction(userId, target.userId, 'favorite');
       const wasFavoriteActive = isActiveInteraction(existingFavorite);
@@ -5757,6 +5923,7 @@ const member = {
       throw createHttpError('cannot send gift to yourself');
     }
 
+    if (await memberRelationships.isUnmatched(userId, target.userId)) throw createHttpError('已解除匹配，无法发送礼物', 403, 40300);
     const record = await addRow(C.giftRecords, {
       id: await nextId('giftRecord'),
       senderId: Number(userId),
@@ -5802,8 +5969,17 @@ const member = {
     if (!row || row.matchmakerId !== mm.id) {
       throw createHttpError('member not found', 404, 40400);
     }
-    await vipMembership.ensureIndependentEntitlement(row.userId);
     let user = await getById(C.users, row.userId);
+    const profile = await getOne(C.profiles, { userId: row.userId });
+    const checkedProfile = isTrue(data.displayEnabled)
+      ? { ...(profile || {}), nickname: user?.nickname, ...data } : data;
+    await assertUserText(matchmakerUserId, [...profileTextValues(checkedProfile), data.remark, data.serviceLevel]);
+    const hasNewPhotos = Object.prototype.hasOwnProperty.call(data, 'photos');
+    if (hasNewPhotos || isTrue(data.displayEnabled)) {
+      const images = hasNewPhotos ? data.photos : (profile?.photos?.length ? profile.photos : (user?.avatarUrl ? [user.avatarUrl] : []));
+      data = { ...data, photos: await contentSecurity.assertImages({ images, skipSystem: !hasNewPhotos }) };
+    }
+    await vipMembership.ensureIndependentEntitlement(row.userId);
     let normalizedPhone = null;
     if (Object.prototype.hasOwnProperty.call(data, 'phone')) {
       if (!user || !isManualIdentity(user.openid)) {
@@ -5830,6 +6006,7 @@ const member = {
       if (data.realName || data.nickname) userPatch.nickname = data.realName || data.nickname;
       if (data.gender !== undefined) userPatch.gender = Number(data.gender);
       if (normalizedPhone) userPatch.phone = normalizedPhone;
+      if (Object.prototype.hasOwnProperty.call(data, 'photos')) userPatch.avatarUrl = data.photos[0] || '';
       if (Object.keys(userPatch).length) user = await updateRow(C.users, user, userPatch);
     }
     if (normalizedPhone) {
@@ -5840,7 +6017,6 @@ const member = {
         });
       }
     }
-    const profile = await getOne(C.profiles, { userId: row.userId });
     const profilePatch = editableProfilePatch(data, { allowAssetPreferences: false });
     if (profile && Object.keys(profilePatch).length) await updateRow(C.profiles, profile, profilePatch);
     else if (!profile) await addRow(C.profiles, { id: await nextId('profile'), userId: row.userId, displayEnabled: false, ...profilePatch });
@@ -5867,6 +6043,7 @@ const member = {
     if (!own || Number(own.matchmakerId) !== Number(mm.id) || Number(own.status) !== 1) {
       throw createHttpError('own member not found');
     }
+    await assertUserText(matchmakerUserId, [data.note], 2);
     if (data.mode === 'internal') {
       const target = await getById(C.members, data.targetMemberId);
       if (!target || Number(target.matchmakerId) !== Number(mm.id) || Number(target.status) !== 1) {
@@ -6212,10 +6389,12 @@ const salon = {
     const maxParticipants = Number(data.maxParticipants || 0);
     const price = Number(data.price || 0);
     if (!Number.isSafeInteger(maxParticipants) || maxParticipants < 0 || !Number.isFinite(price) || price < 0) throw createHttpError('活动名额和价格无效', 422, 42240);
+    await assertUserText(creator.user, [data.title, data.description, data.location], 3);
+    const checkedCover = await contentSecurity.assertImages({ images: data.coverImage ? [data.coverImage] : [] });
     return saveSalonPublication(creator, {
       title: data.title,
       description: data.description || '',
-      coverImage: data.coverImage || '',
+      coverImage: checkedCover[0] || '',
       location: data.location || '',
       eventDate: eventDate.toISOString(),
       maxParticipants,
@@ -6425,6 +6604,11 @@ const salon = {
       patch.status = 'upcoming';
       patch.reviewRemark = '';
     }
+    await assertUserText(creator.user, ['title', 'description', 'location'].map(key =>
+      patch[key] === undefined ? event[key] : patch[key]), 3);
+    const cover = patch.coverImage === undefined ? event.coverImage : patch.coverImage;
+    const checkedCover = await contentSecurity.assertImages({ images: cover ? [cover] : [] });
+    patch.coverImage = checkedCover[0] || '';
     return saveSalonPublication(creator, patch, event);
   },
 
@@ -7071,10 +7255,17 @@ exports.main = async (event = {}, context = {}) => {
   try {
     const method = String(event.method || 'GET').toUpperCase();
     const path = String(event.path || '/');
-    const data = event.data || {};
+    let data = event.data || {};
     const apiToken = event.token || '';
 
     if (method === 'GET' && path === '/health') return ok({ status: 'ok' });
+
+    // Guests can browse published content without creating an account or
+    // initializing collections/seed data. All existing business routes below
+    // retain their original authentication and authorization requirements.
+    if (path === '/public' || path.startsWith('/public/')) {
+      return ok(await publicBrowse.handle(method, path, data));
+    }
 
     // These read-only routes bypass collection/seed initialization entirely.
     if (path === '/member/orders' || path.startsWith('/member/orders/')) {
@@ -7173,6 +7364,9 @@ exports.main = async (event = {}, context = {}) => {
       return { code: 0, message: 'success', data: result.data, requestId: result.requestId };
     }
     if (path.startsWith('/member/vip/') || path.startsWith('/member/matchmaking/')) {
+      if (method === 'POST' && path === '/member/matchmaking/requests') {
+        await assertUserText(session.userId, [data.note], 2);
+      }
       const result = await vipMembership.handleRoute(session.userId, method, path, data);
       if (result !== undefined) return ok(result);
     }
@@ -7183,10 +7377,30 @@ exports.main = async (event = {}, context = {}) => {
     if (method === 'POST' && path === '/auth/member-claim/confirm') {
       return ok(await auth.confirmMemberIdentityClaim(session.userId, data.token, data.code));
     }
+    if (path === '/user/location' && ['GET', 'PUT'].includes(method)) {
+      const profile = method === 'PUT' ? await saveOwnProfileFields(session.userId, { privateLocation: normalizeMemberLocation(data) })
+        : await getOne(C.profiles, { userId: Number(session.userId) });
+      return ok({ enabled: currentLocation(profile?.privateLocation), updatedAt: profile?.privateLocation?.updatedAt || null });
+    }
+    if (path === '/user/matching-preferences' && ['GET', 'PUT'].includes(method)) {
+      let profile = await getOne(C.profiles, { userId: Number(session.userId) });
+      if (method === 'PUT') {
+        const preferences = normalizeMatchingPreferences(data.preferences);
+        await assertUserText(session.userId, [preferences.city], 2);
+        profile = await saveOwnProfileFields(session.userId, { matchingPreferences: preferences, matchingPreferencesUpdatedAt: nowIso() });
+      }
+      return ok({ preferences: normalizeMatchingPreferences(profile?.matchingPreferences || {}), updatedAt: profile?.matchingPreferencesUpdatedAt || null });
+    }
+    if (method === 'GET' && path === '/member/relationship-status') return ok(await memberRelationships.overview(session.userId));
+    if (method === 'POST' && path === '/member/relationship-status') return ok(await memberRelationships.setStatus(session.userId, data));
+    if (method === 'POST' && path === '/member/relationship-invitations') return ok(await memberRelationships.invite(session.userId, data));
+    const coupleInvitationMatch = path.match(/^\/member\/relationship-invitations\/(\d+)\/respond$/);
+    if (method === 'POST' && coupleInvitationMatch) return ok(await memberRelationships.respond(session.userId, coupleInvitationMatch[1], data));
+    if (method === 'POST' && path === '/member/unmatch') return ok(await memberRelationships.unmatch(session.userId, data));
     if (method === 'GET' && path === '/user/profile') {
       const user = await getUserOrThrow(session.userId);
       const profile = await getOne(C.profiles, { userId: Number(session.userId) });
-      return ok({ ...publicUser(user), profile: profile ? sanitizeProfileCertification(stripInternal(await readableCertificationProfile(profile))) : null });
+      return ok(await ownProfileResponse(user, profile));
     }
     if (method === 'GET' && path === '/user/certifications') return ok(await certifications.overview(session.userId));
     if (method === 'POST' && path === '/user/certification-requests') return ok(await certifications.request(session.userId, data));
@@ -7199,18 +7413,28 @@ exports.main = async (event = {}, context = {}) => {
     if (method === 'PUT' && path === '/user/minimum-registration') return ok(await saveMinimumRegistration(session.userId, data));
     if (method === 'PUT' && path === '/user/profile') {
       const user = await getUserOrThrow(session.userId);
+      let profile = await getOne(C.profiles, { userId: Number(session.userId) });
+      const checkedProfile = isTrue(data.displayEnabled)
+        ? { ...(profile || {}), nickname: user.nickname, ...data } : data;
+      await assertUserText(user, profileTextValues(checkedProfile));
+      const hasNewPhotos = Object.prototype.hasOwnProperty.call(data, 'photos');
+      if (hasNewPhotos || isTrue(data.displayEnabled)) {
+        const images = hasNewPhotos ? data.photos : (profile?.photos?.length ? profile.photos : (user.avatarUrl ? [user.avatarUrl] : []));
+        data = { ...data, photos: await contentSecurity.assertImages({ images, skipSystem: !hasNewPhotos }) };
+      }
       const userPatch = {};
       if (data.realName || data.nickname) userPatch.nickname = data.realName || data.nickname;
       if (data.gender !== undefined) userPatch.gender = Number(data.gender);
+      if (Object.prototype.hasOwnProperty.call(data, 'photos')) userPatch.avatarUrl = data.photos[0] || '';
       const updatedUser = Object.keys(userPatch).length ? await updateRow(C.users, user, userPatch) : user;
-      let profile = await getOne(C.profiles, { userId: Number(session.userId) });
       const profilePatch = editableProfilePatch(data);
+      if (profile?.relationshipStatus === 'coupled') profilePatch.displayEnabled = false;
       if (!profile && data.displayEnabled === undefined) {
         profilePatch.displayEnabled = false;
       }
       if (profile) profile = await updateRow(C.profiles, profile, profilePatch);
       else profile = await addRow(C.profiles, { id: await nextId('profile'), userId: Number(session.userId), ...profilePatch });
-      return ok({ ...publicUser(updatedUser), profile: sanitizeProfileCertification(stripInternal(await readableCertificationProfile(profile))) });
+      return ok(await ownProfileResponse(updatedUser, profile));
     }
 
     if (method === 'GET' && path === '/matchmaker/activation') return ok(await paidMatchmakerOverview(session.userId));
@@ -7322,6 +7546,12 @@ exports.main = async (event = {}, context = {}) => {
       const requestId = crypto.randomUUID();
       console.warn('native_admin_request_failed', { code: nativeCode, requestId });
       return { code: nativeCode, message, requestId };
+    }
+    if (failedPath === '/public' || failedPath.startsWith('/public/')) {
+      const safeError = [40001, 40400, 40500, 50301].includes(err?.code)
+        ? err : createHttpError('公开内容暂时无法加载，请稍后重试', 503, 50301);
+      console.error('public browse request failed', safeError.code);
+      return fail(safeError);
     }
     if (failedPath === '/user/admin-entry') {
       const safeError = err?.status === 401 && err?.code === 40100

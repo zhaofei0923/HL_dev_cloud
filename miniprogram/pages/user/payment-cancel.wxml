@@ -1,0 +1,25 @@
+<view class="page safe-bottom payment-cancel-page">
+  <view class="payment-cancel-intro">
+    <text class="eyebrow">会员服务 · 支付结果</text>
+    <text class="title">{{order.status === 'paid' ? '原订单已支付' : order.status === 'refunded' ? '原订单已退款' : '已退出本次支付'}}</text>
+    <text class="subtitle">{{order.status === 'paid' ? order.resultText : '你已关闭微信支付窗口。付款和权益状态以原订单的核验结果为准。'}}</text>
+  </view>
+  <view class="card payment-cancel-order">
+    <text class="section-title">原订单状态</text>
+    <text wx:if="{{loading}}" class="item-desc">正在读取订单…</text>
+    <block wx:elif="{{order}}">
+      <view class="payment-cancel-summary"><text>{{order.planTitle}}</text><text>{{order.amountText}}</text></view>
+      <text class="payment-cancel-status">{{order.statusText}}</text>
+      <text class="item-desc">{{order.resultText}}</text>
+      <text class="payment-cancel-number">订单号 {{order.outTradeNo}}</text>
+    </block>
+    <text wx:else class="item-desc">{{errorText}}</text>
+    <text wx:if="{{!order || order.status === 'pending' || order.status === 'confirming'}}" class="payment-cancel-hint">如已扣款，请勿重复付款。可返回会员页查询微信支付结果。</text>
+    <button class="btn ghost" bindtap="refresh" loading="{{loading}}" disabled="{{loading}}">刷新订单状态</button>
+  </view>
+  <view class="payment-cancel-actions">
+    <button class="btn gold" bindtap="openOrder">查看原订单</button>
+    <button class="btn ghost" bindtap="returnToMembership">返回会员页</button>
+    <button class="payment-cancel-browse" bindtap="continueBrowsing">继续浏览资料</button>
+  </view>
+</view>

@@ -23,6 +23,12 @@ function installWx({ paths = [], uploadFile, deleteFile }) {
     hideLoading() {
       calls.hidden += 1;
     },
+    getImageInfo(options) {
+      options.success({ width: 400, height: 600, type: 'jpeg', path: options.src });
+    },
+    getFileSystemManager() {
+      return { getFileInfo: options => options.success({ size: 1000 }) };
+    },
     cloud: {
       uploadFile,
       deleteFile

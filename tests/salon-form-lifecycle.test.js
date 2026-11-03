@@ -184,3 +184,24 @@ test('current failure allows retry while obsolete failure cannot mutate a newer 
   await second;
   assert.equal(calls.backs, 1);
 });
+
+for (const code of [40061, 40062, 50361]) {
+  test(`rejected salon publication ${code} retains the draft and confirms success only after a later accepted retry`, async () => {
+    let attempt = 0;
+    const { page, calls } = runtime(() => ++attempt === 1
+      ? Promise.reject(Object.assign(new Error('内容暂不可提交'), { code }))
+      : Promise.resolve({ id: 8 }));
+    fill(page, '保留的活动标题');
+    page.onInput({ currentTarget: { dataset: { field: 'description' } }, detail: { value: '保留的活动详情' } });
+    await page.save();
+    assert.equal(page.data.saving, false);
+    assert.equal(page.data.form.title, '保留的活动标题');
+    assert.equal(page.data.form.description, '保留的活动详情');
+    assert.equal(calls.backs, 0);
+    assert.equal(calls.toasts.includes('活动已发布'), false);
+    await page.save();
+    assert.equal(calls.writes.length, 2);
+    assert.equal(calls.backs, 1);
+    assert.equal(calls.toasts.at(-1), '活动已发布');
+  });
+}

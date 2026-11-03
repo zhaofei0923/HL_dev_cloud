@@ -6,6 +6,10 @@ import { salonAvailability } from '../../utils/salon-availability'
 type Action = { type: 'register' | 'cancel' | 'complete' | 'disabled'; text: string; className: string; disabled: boolean; note: string }
 const CONSENT_NOTE = '报名后称呼和照片显示在名单，资料仅本场已报名者及活动组织者可查看，手机号不会公开。'
 
+function salonContext() {
+  return `${getApp<IAppOption>().globalData.env || ''}|${pageSessionScope() || 'guest'}`
+}
+
 function formatDate(value: string) {
   const date = new Date(value)
   if (!Number.isFinite(date.getTime())) return '时间待确认'
@@ -24,6 +28,8 @@ function normalizeEvent(event: SalonEvent) {
     primaryAction = { type: 'cancel', text: '取消报名', className: 'danger', disabled: false, note: '取消报名后，将不能继续查看本场报名人的资料。' }
   } else if (availability.full) {
     primaryAction = { type: 'disabled', text: '席位已满', className: 'secondary', disabled: true, note: '该活动名额已满，请选择其他活动。' }
+  } else if (event.requiresLogin) {
+    primaryAction = { type: 'complete', text: '登录后报名', className: 'gold', disabled: false, note: '活动详情无需登录即可浏览。决定报名后，再自愿登录并填写活动联系资料。' }
   } else if (event.registrationRequirements?.complete === false) {
     primaryAction = { type: 'complete', text: '完善资料后报名', className: 'gold', disabled: false, note: `先填写手机号、称呼并上传照片。${CONSENT_NOTE}` }
   }
@@ -33,6 +39,7 @@ function normalizeEvent(event: SalonEvent) {
     maxParticipants: max, currentParticipants: count, price,
     isRegistered: registered, isOrganizer: event.isOrganizer === true,
     registrationRequirements: event.registrationRequirements,
+    requiresLogin: event.requiresLogin === true,
     isExpired: availability.expired, isFull: availability.full, canRegister: availability.canRegister,
     registrationBlockedReason: availability.blockedReason,
     eventDateText: formatDate(event.eventDate || ''), locationText: event.location || '地点待定',
@@ -45,9 +52,10 @@ function normalizeEvent(event: SalonEvent) {
 }
 
 Page({
-  _generation: 0, _actionGeneration: 0, _session: '', _visible: false,
+  _generation: 0, _actionGeneration: 0, _session: '', _context: '', _visible: false,
   _expiryTimer: null as ReturnType<typeof setTimeout> | null,
   data: {
+    loggedIn: false,
     id: '', event: null as ReturnType<typeof normalizeEvent> | null,
     shareCard: { canShare: false, title: '', sharePath: '' },
     participants: [] as SalonParticipant[], participantPage: 0, participantTotal: 0,
@@ -62,27 +70,30 @@ Page({
   clearExpiryTimer() { if (this._expiryTimer !== null) clearTimeout(this._expiryTimer); this._expiryTimer = null },
   ensureSession() {
     const scope = pageSessionScope()
-    if (scope !== this._session) {
+    const context = salonContext()
+    this.setData({ loggedIn: !!scope })
+    if (scope !== this._session || context !== this._context) {
       this._session = scope; this._generation += 1; this._actionGeneration += 1
+      this._context = context
       this.setData({ event: null, participants: [], participantPage: 0, participantTotal: 0, participantsError: '', shareCard: { canShare: false, title: '', sharePath: '' }, actionLoading: false })
     }
-    if (!scope) this.completeRegistration()
     return scope
   },
-  isCurrent(generation: number, scope: string) { return this._visible && generation === this._generation && pageSessionScope() === scope },
+  isCurrent(generation: number, scope: string) { return this._visible && generation === this._generation && pageSessionScope() === scope && this._context === salonContext() },
   async load() {
     const scope = this.ensureSession()
-    if (!scope || !this.data.id) return
+    if (!this.data.id) return
     const generation = ++this._generation
     this.clearExpiryTimer()
     this.setData({ loading: true, error: '', event: null, participants: [], participantPage: 0 })
-    const participants = this.loadParticipants(1, generation, scope)
+    const participants = scope ? this.loadParticipants(1, generation, scope) : Promise.resolve()
     try {
-      const event = await salonApi.detail(this.data.id)
+      const event = scope ? await salonApi.detail(this.data.id)
+        : { ...await salonApi.publicDetail(this.data.id), requiresLogin: true }
       if (!this.isCurrent(generation, scope)) return
       this.setData({ event: normalizeEvent(event), loading: false })
       this.scheduleExpiry(generation, scope)
-      if ((event.isRegistered || event.isOrganizer) && salonAvailability(event).canRegister) void this.loadShareCard(generation, scope)
+      if (scope && (event.isRegistered || event.isOrganizer) && salonAvailability(event).canRegister) void this.loadShareCard(generation, scope)
       else this.setData({ shareCard: { canShare: false, title: '', sharePath: '' } })
     } catch (error) {
       if (this.isCurrent(generation, scope)) this.setData({ event: null, error: '活动暂时无法读取，请重试。' })
@@ -132,6 +143,7 @@ Page({
   async loadShareCard(generation?: number, scope?: string) {
     const requestGeneration = generation ?? this._generation
     const requestScope = scope ?? this._session
+    if (!requestScope || requestScope !== pageSessionScope() || !this._visible) return
     this.setData({ shareLoading: true })
     try {
       const card = await salonApi.shareCard(this.data.id, false)

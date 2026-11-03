@@ -93,7 +93,8 @@ function fixture(settings = {}) {
       }
       throw new Error('transaction retries exceeded');
     } };
-  const cloud = { init() {}, database: () => db, DYNAMIC_CURRENT_ENV: 'test-env' };
+  const cloud = { init() {}, database: () => db, DYNAMIC_CURRENT_ENV: 'test-env',
+    openapi: { security: { async msgSecCheck() { return { errCode: 0, result: { suggest: 'pass', label: 100 } }; } } } };
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(process.env.HL_API_TEST_PATH || apiPath, 'utf8') + '\nexports.hooks={member,approveMemberMatchmakerRequest,acceptMemberMatchmakerInvite,memberAssignments};', {
     module, exports: module.exports, require(name) {

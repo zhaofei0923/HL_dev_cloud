@@ -1,0 +1,10 @@
+.relationship-page .status-action { margin-top: 24rpx; }
+.relationship-picker { display: flex; justify-content: space-between; gap: 20rpx; margin-top: 24rpx; padding: 22rpx 0; border-bottom: 1rpx solid #e7dacf; color: #2f2924; font-size: 28rpx; }
+.picker-arrow { color: #a45d43; }
+.invitation-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; padding-top: 24rpx; margin-top: 12rpx; border-top: 1rpx solid #eee4d8; }
+.invitation-copy { flex: 1; min-width: 0; }
+.invitation-actions { display: flex; gap: 12rpx; }
+.invitation-actions .btn { padding: 12rpx 20rpx; min-height: 60rpx; font-size: 24rpx; }
+.feedback-card { color: #5f7048; }
+.error-card { color: #a45d43; }
+.empty-note { margin-top: 22rpx; }

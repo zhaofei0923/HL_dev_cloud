@@ -1,6 +1,27 @@
 'use strict';
 
 const PREMIUM_MEMBER_TYPES = new Set(['paid', 'vip']);
+const UNMATCH_REASONS = Object.freeze([
+  '说话不礼貌、骚扰', '发广告、色情信息', '消息不回复', '接触后发现不合适'
+]);
+
+function isCoupledProfile(profile = {}) {
+  return profile.relationshipStatus === 'coupled';
+}
+
+function relationshipStatusPatch(status, timestamp) {
+  if (status !== 'single' && status !== 'coupled') return null;
+  return {
+    relationshipStatus: status,
+    coupledAt: status === 'coupled' ? timestamp : null,
+    displayEnabled: false,
+    displayUpdatedAt: timestamp
+  };
+}
+
+function normalizeUnmatchReason(value) {
+  return UNMATCH_REASONS.includes(value) ? value : null;
+}
 
 function isActiveInteraction(row) {
   return !!row && row.active !== false && String(row.status || 'active') !== 'inactive';
@@ -94,9 +115,7 @@ function isPremiumMembership(row = {}, now = new Date()) {
 }
 
 function requiresPremiumForConversation(conversation = {}) {
-  return String(conversation.conversationType || '') === 'member_pair'
-    && String(conversation.chatOpenReason || '') === 'mutual_favorite'
-    && !conversation.matchRecordId;
+  return String(conversation.conversationType || '') === 'member_pair';
 }
 
 function createLockedRelationshipPreview({ kind = 'incoming', index = 0 } = {}) {
@@ -156,6 +175,10 @@ function relationshipNotificationView({ row = {}, sender = null, conversationId 
 }
 
 module.exports = {
+  UNMATCH_REASONS,
+  isCoupledProfile,
+  relationshipStatusPatch,
+  normalizeUnmatchReason,
   createLockedRelationshipPreview,
   isPremiumMembership,
   isPremiumMemberType,

@@ -80,7 +80,9 @@ test('VIP plans stay independent from principal readiness and preserve exact pri
   assert.deepEqual(Array.from(r.page.data.plans, p => [p.amountFen, p.durationDays]),
     [[6160, 7], [19800, 30], [39800, 90], [69800, 365]]);
   assert.equal(r.page.data.plans[0].dailyPriceText, '约 8.8 元/天');
-  assert.equal(r.page.data.benefits.length, 11);
+  assert.equal(r.page.data.benefits.length, 11)
+  assert.equal(r.page.data.benefits.some(item => item.key === 'specialZones'), false);
+  assert.equal(r.page.data.benefits.find(p => p.key === 'readReceipts').title, '消息已读');
   assert.equal(r.page.data.benefits.find(p => p.key === 'onlineReminder').note.includes('站内提醒'), true);
 });
 

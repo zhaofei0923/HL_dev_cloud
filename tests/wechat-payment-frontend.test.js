@@ -647,6 +647,7 @@ test('cancellation queries before resuming and honors paid, unpaid, paying and c
     assert.equal(r.localReads(), 1);
     assert.equal(r.creates(), 1);
     assert.equal(r.http.filter(call => call.path.endsWith('/query')).length, 1);
+    assert.equal(r.calls.navigation.at(-1).url, '/pages/user/payment-cancel?outTradeNo=server-order-1');
   }
 });
 
@@ -722,6 +723,7 @@ test('account replacement or unload during the cancel query discards its late un
     assert.equal(r.localReads(), 0);
     assert.equal(r.calls.updates.length, updates);
     assert.equal(r.modals.length, 0);
+    assert.ok(r.calls.navigation.every(call => !call.url.includes('/payment-cancel')));
     if (ending === 'account') assert.equal(r.page.data.lastOrderId, '');
   }
 });
@@ -1004,6 +1006,7 @@ test('a replacement account or page unload discards a late restored order query 
     assert.equal(r.creates(), 0);
     assert.equal(r.requests.length, 0);
     assert.equal(r.modals.length, 0);
+    assert.ok(r.calls.navigation.every(call => !call.url.includes('/payment-cancel')));
     if (ending === 'account') assert.equal(r.page.data.lastOrderId, '');
   }
 });

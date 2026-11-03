@@ -10,7 +10,7 @@ const PUBLIC_FIELDS = [
     'isVerified', 'memberType', 'identityStatus', 'identityStatusText',
     'profileCompletion', 'displayStatus', 'lastRecommendStatus',
     'identityVerified', 'educationVerified', 'verifiedEducation', 'vehicleVerified', 'propertyVerified',
-    'assetVerified', 'financialAssetRange', 'vipBadge', 'membershipTier'
+    'assetVerified', 'financialAssetRange', 'vipBadge', 'membershipTier', 'distanceText'
 ];
 const snapshots = new Map();
 const pendingReads = new Map();

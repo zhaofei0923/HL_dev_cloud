@@ -7,6 +7,7 @@
         <text class="section-note">{{conversation.conversationType === 'member_pair' ? '配对沟通' : '会员服务'}}</text>
       </view>
     </view>
+    <button wx:if="{{conversation.conversationType === 'member_pair'}}" class="chat-relationship-action" bindtap="openRelationship">解除匹配 / 邀请脱单</button>
   </view>
 
   <scroll-view class="chat-scroll" scroll-y scroll-into-view="{{scrollIntoView}}" scroll-with-animation bindscrolltoupper="loadOlder">
@@ -15,6 +16,7 @@
       <button class="chat-small-action" bindtap="refreshNewMessages" loading="{{refreshing}}" disabled="{{refreshing || loading}}">刷新</button>
     </view>
     <text wx:if="{{errorNote}}" class="chat-error-note">{{errorNote}}</text>
+    <button wx:if="{{membershipRequired}}" class="btn gold" bindtap="openMembership">开通VIP继续聊天</button>
     <view wx:if="{{loading && !messages.length}}" class="empty chat-empty">
       <text class="empty-title">正在加载消息</text>
       <text class="empty-note">请稍候。</text>
@@ -42,20 +44,19 @@
             </view>
             <text wx:else class="message-text">{{item.content}}</text>
           </view>
+          <text wx:if="{{item.isMine && conversation.canViewReadReceipts && item.readStatus}}" class="message-read-state">{{item.readStatus === 'read' ? '已读' : '未读'}}</text>
         </view>
       </view>
     </block>
 
     <view wx:else class="empty chat-empty">
       <text class="empty-title">还没有消息</text>
-      <text class="empty-note">发送第一条文字或语音消息开始沟通。</text>
+      <text class="empty-note">发送第一条文字消息开始沟通。</text>
     </view>
   </scroll-view>
 
   <view class="chat-input-bar">
-    <button class="mode-button {{voiceMode ? 'active' : ''}}" disabled="{{sending || recording || loading}}" bindtap="toggleVoiceMode">{{voiceMode ? '键盘' : '语音'}}</button>
     <textarea
-      wx:if="{{!voiceMode}}"
       class="chat-input"
       value="{{inputValue}}"
       auto-height
@@ -63,15 +64,6 @@
       placeholder="输入消息"
       bindinput="onInput"
     ></textarea>
-    <button
-      wx:if="{{voiceMode}}"
-      class="voice-record-button {{recording ? 'recording' : ''}}"
-      loading="{{sending && !recording}}"
-      disabled="{{sending && !recording}}"
-      bindtouchstart="startVoice"
-      bindtouchend="finishVoice"
-      bindtouchcancel="cancelVoice"
-    >{{recording ? '松开发送' : recordingTip}}</button>
-    <button wx:else class="send-button" loading="{{sending}}" disabled="{{sending || loading || !conversation}}" bindtap="send">发送</button>
+    <button class="send-button" loading="{{sending}}" disabled="{{sending || loading || !conversation}}" bindtap="send">发送</button>
   </view>
 </view>

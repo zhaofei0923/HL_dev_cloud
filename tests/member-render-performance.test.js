@@ -47,8 +47,24 @@ test('public recommendations render while the separate VIP read is pending and d
   assert.equal(r.page.data.currentMember.id, 'profile_3');
 });
 
-test('VIP categories and advanced filters wait for permission before requesting cards', async () => {
-  for (const patch of [{ category: 'education' }, { category: 'recommend', ageMin: '28' }]) {
+test('public categories render before the separate entitlement read for free and VIP members', async () => {
+  for (const access of [free, vip]) {
+    const pendingVip = deferred();
+    const r = memberRuntime(rows(3), { vipOverview: () => pendingVip.promise });
+    r.page.setData({ category: 'education' });
+    const showing = r.page.onShow(); await flush();
+    assert.equal(r.reads.showcase.length, 1);
+    assert.equal(r.reads.showcase[0].category, 'education');
+    assert.equal(r.page.data.currentMember.id, 'profile_2');
+    pendingVip.resolve(access); await showing;
+    assert.equal(r.page.data.category, 'education');
+    assert.equal(r.reads.showcase.length, 1);
+    assert.equal(r.calls.navigation.length, 0);
+  }
+});
+
+test('advanced filters in every category wait for permission before requesting cards', async () => {
+  for (const patch of [{ category: 'education', ageMin: '28' }, { category: 'recommend', ageMin: '28' }]) {
     for (const access of [free, vip]) {
       const pendingVip = deferred();
       const r = memberRuntime(rows(3), { vipOverview: () => pendingVip.promise });
@@ -60,7 +76,7 @@ test('VIP categories and advanced filters wait for permission before requesting 
       await showing;
       assert.equal(r.reads.showcase.length, 1);
       const query = r.reads.showcase[0];
-      assert.equal(query.category, access.isPremiumMember ? patch.category : 'recommend');
+      assert.equal(query.category, patch.category);
       assert.equal(query.ageMin, access.isPremiumMember ? patch.ageMin : undefined);
     }
   }
@@ -112,7 +128,7 @@ test('a returning page starts a fresh VIP check instead of accepting an older hi
 test('an old protected-page show cannot request cards while the returning page still awaits VIP permission', async () => {
   const first = deferred(), second = deferred();
   const r = memberRuntime(rows(3), { vipOverview: read => read === 1 ? first.promise : second.promise });
-  r.page.setData({ category: 'education', isVip: true, membershipKnown: true });
+  r.page.setData({ category: 'education', ageMin: '28', isVip: true, membershipKnown: true });
   const oldShow = r.page.onShow(); await flush();
   r.page.onHide();
   const newShow = r.page.onShow(); await flush();
@@ -121,15 +137,32 @@ test('an old protected-page show cannot request cards while the returning page s
   second.resolve(vip); await newShow;
   assert.equal(r.reads.showcase.length, 1);
   assert.equal(r.reads.showcase[0].category, 'education');
+  assert.equal(r.reads.showcase[0].ageMin, '28');
 });
 
-test('category and advanced search permission continuations cannot navigate or update a hidden or replaced page', async () => {
-  for (const action of ['category', 'search']) for (const transition of ['hide', 'account']) {
+test('free category reads cannot render late responses in a hidden or replaced page', async () => {
+  for (const transition of ['hide', 'account']) {
+    const pendingCards = deferred();
+    const r = memberRuntime(rows(3), { showcase: () => pendingCards.promise });
+    const pending = r.page.switchCategory({ currentTarget: { dataset: { category: 'education' } } });
+    await flush();
+    assert.equal(r.reads.showcase.length, 1);
+    if (transition === 'hide') r.page.onHide();
+    else { r.session.token = 'replacement-session'; r.session.user = { id: 44 }; }
+    const updates = r.calls.updates.length;
+    pendingCards.resolve(result(rows(3))); await pending;
+    assert.equal(r.calls.updates.length, updates);
+    assert.equal(r.calls.navigation.length, 0);
+    assert.equal(r.page.data.currentMember, null);
+  }
+});
+
+test('advanced search permission continuations cannot navigate or update a hidden or replaced page', async () => {
+  for (const transition of ['hide', 'account']) {
     const pendingVip = deferred();
     const r = memberRuntime(rows(3), { vipOverview: () => pendingVip.promise });
-    if (action === 'search') r.page.setData({ draftAgeMin: '28' });
-    const pending = action === 'category'
-      ? r.page.switchCategory({ currentTarget: { dataset: { category: 'education' } } }) : r.page.search();
+    r.page.setData({ draftAgeMin: '28' });
+    const pending = r.page.search();
     await flush();
     if (transition === 'hide') r.page.onHide();
     else { r.session.token = 'replacement-session'; r.session.user = { id: 44 }; }
@@ -196,16 +229,17 @@ test('a late mutation recovery waits for the returning protected page current VI
     const pendingMutation = deferred(), pendingVip = deferred();
     const r = memberRuntime(rows(3), { vipOverview: read => read === 1 ? Promise.resolve(vip) : pendingVip.promise,
       interact: () => pendingMutation.promise });
-    r.page.setData({ category: 'education' }); await r.page.onShow();
+    r.page.setData({ category: 'education', ageMin: '28' }); await r.page.onShow();
     const acting = r.page.toggleFavorite(); await flush();
     r.page.onHide(); r.page._vipLoadedAt = 0;
     const returning = r.page.onShow(); await flush();
     const reads = r.reads.showcase.length;
     pendingMutation.resolve({ viewerState: { isFavorite: true } }); await acting; await flush();
-    assert.equal(r.reads.showcase.length, reads, 'the returning VIP read is still pending for the protected category');
+    assert.equal(r.reads.showcase.length, reads, 'the returning VIP read is still pending for advanced filters');
     pendingVip.resolve(access); await returning; await flush();
     assert.ok(r.reads.showcase.slice(reads).length > 0);
-    assert.ok(r.reads.showcase.slice(reads).every(query => query.category === (access.isPremiumMember ? 'education' : 'recommend')));
+    assert.ok(r.reads.showcase.slice(reads).every(query => query.category === 'education'
+      && query.ageMin === (access.isPremiumMember ? '28' : undefined)));
   }
 });
 

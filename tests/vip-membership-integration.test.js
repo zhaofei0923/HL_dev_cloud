@@ -118,6 +118,7 @@ function runtime(options = {}) {
     console: { log() {}, warn() {}, error() {} },
     require(name) {
       if (name === 'wx-server-sdk') return { init() {}, database: () => db, getWXContext: () => ({ OPENID: 'fixture-openid-1' }),
+        openapi: options.openapi,
         callFunction() { throw new Error('network calls forbidden in VIP integration tests'); } };
       if (name === './auth-policy') {
         const actual = requireFromApi(name);
@@ -640,4 +641,34 @@ test('all six actual checkout snapshots retain approved terms despite valid-look
     assert.equal(actual.serviceCount || 0, approved.serviceCount, approved.planCode);
     assert.equal(actual.productType, approved.productType, approved.planCode);
   }
+});
+
+test('matching preference API saves all 15 dimensions for the authenticated free member and isolates other profiles', async () => {
+  const checked = [];
+  const r = runtime({ openapi: { security: { msgSecCheck: async payload => {
+    checked.push(payload); return { errCode: 0, result: { suggest: 'pass' } };
+  } } } });
+  const preferences = { ageMin: 25, ageMax: 34, heightMin: 180, occupations: ['医生', 'AI行业'], education: '本科', city: '上海',
+    marriageTimeline: '两年内', hasChildren: '无', wantsChildren: '想要', weightMin: 50, weightMax: 75,
+    zodiac: '兔', constellation: '双子座', smoking: '不吸烟', drinking: '偶尔喝酒', pets: '养宠物', maritalStatus: '未婚' };
+  const beforeOther = structuredClone(r.rows.hl_profiles.find(row => row.userId === 2));
+  const originalText = r.rows.hl_profiles.find(row => row.userId === 1).partnerRequirement;
+  const saved = await r.call('/user/matching-preferences', 'PUT', { preferences, userId: 2 });
+  assert.equal(saved.code, 0, saved.message);
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.data.preferences)), preferences);
+  assert.equal(checked[0].openid, 'fixture-openid-1'); assert.equal(checked[0].content, '上海');
+  assert.deepEqual(r.rows.hl_profiles.find(row => row.userId === 2), beforeOther);
+  assert.equal(r.rows.hl_profiles.find(row => row.userId === 1).partnerRequirement, originalText);
+  const reloaded = await r.call('/user/matching-preferences');
+  assert.deepEqual(JSON.parse(JSON.stringify(reloaded.data.preferences)), preferences);
+  const other = await r.call('/user/matching-preferences', 'GET', {}, 2);
+  assert.equal(other.data.preferences.ageMin, null); assert.equal(other.data.preferences.city, '');
+  const snapshot = structuredClone(r.rows.hl_profiles);
+  const invalid = await r.call('/user/matching-preferences', 'PUT', { preferences: { ageMin: 40, ageMax: 30 } });
+  assert.equal(invalid.code, 40001); assert.deepEqual(r.rows.hl_profiles, snapshot);
+  const anonymous = await r.call('/user/matching-preferences', 'PUT', { preferences }, null);
+  assert.notEqual(anonymous.code, 0); assert.deepEqual(r.rows.hl_profiles, snapshot);
+  const reset = await r.call('/user/matching-preferences', 'PUT', { preferences: {} });
+  assert.equal(reset.code, 0, reset.message); assert.equal(reset.data.preferences.heightMin, null);
+  assert.equal(reset.data.preferences.occupations.length, 0);
 });

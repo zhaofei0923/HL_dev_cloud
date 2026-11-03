@@ -1,4 +1,13 @@
 <view class="page recommend-page safe-bottom with-bottom-nav {{membershipKnown && !isVip ? 'with-vip-guide' : ''}}">
+  <view wx:if="{{guest}}" class="card">
+    <text class="eyebrow">认识 IF.U</text>
+    <text class="title">找到适合自己的相遇方式</text>
+    <text class="subtitle">推荐页提供会员资料浏览、条件筛选与表达喜欢。为保护会员资料，请在你愿意时登录后使用。</text>
+    <text class="section-note">你也可以先浏览公开活动，了解活动安排与报名规则。</text>
+    <button class="btn" bindtap="goGuestLogin">登录后使用</button>
+    <button class="btn ghost" bindtap="browseActivities">浏览活动</button>
+  </view>
+  <block wx:else>
   <view class="recommend-topbar">
     <view class="recommend-heading">
       <view class="recommend-categories" role="tablist" aria-label="会员分类">
@@ -7,7 +16,6 @@
           role="tab" aria-selected="{{category === item.id}}"
           data-category="{{item.id}}" bindtap="switchCategory">
           <text>{{item.label}}</text>
-          <text wx:if="{{item.id !== 'recommend' && !isVip}}" class="category-vip-lock">VIP</text>
           <view wx:if="{{category === item.id}}" class="category-underline"></view>
         </view>
       </view>
@@ -28,12 +36,17 @@
   </view>
 
   <view wx:if="{{membershipKnown && !isVip}}" class="special-zone-vip-guide" bindtap="goMembership"
-    aria-role="button" aria-label="开通VIP即可查看颜值、学历和资产专区">
+    aria-role="button" aria-label="资料免费查看，开通VIP后可聊天">
     <view class="special-zone-vip-copy">
-      <text class="special-zone-vip-title">颜值 / 学历 / 资产专区</text>
-      <text class="special-zone-vip-note">开通 VIP 即可查看</text>
+      <text class="special-zone-vip-title">先了解，再相遇</text>
+      <text class="special-zone-vip-note">资料免费查看，想聊天再开通 VIP</text>
     </view>
     <text class="special-zone-vip-action">开通 VIP ›</text>
+  </view>
+
+  <view class="distance-controls">
+    <text class="section-note">{{locationEnabled ? '已开启大致距离，位置7天后过期' : '开启定位，了解彼此的大致距离'}}</text>
+    <button class="distance-toggle" loading="{{locationBusy}}" disabled="{{locationBusy}}" bindtap="toggleLocation">{{locationEnabled ? '关闭定位' : '开启定位'}}</button>
   </view>
 
   <view wx:if="{{filterChips.length}}" class="applied-filters">
@@ -128,6 +141,7 @@
             <text wx:if="{{currentMember.vipBadge}}" class="member-vip-badge">VIP</text>
           </view>
           <text class="recommend-meta">{{currentMember.primaryMeta}}</text>
+          <text wx:if="{{currentMember.distanceText}}" class="recommend-meta">{{currentMember.distanceText}}</text>
           <text class="recommend-work">{{currentMember.ageText}}{{currentMember.profileLine ? ' · ' + currentMember.profileLine : ''}}</text>
           <view wx:if="{{currentMember.cardTags.length}}" class="card-tag-row">
             <text wx:for="{{currentMember.cardTags}}" wx:key="*this" class="card-tag">{{item}}</text>
@@ -219,4 +233,5 @@
     </scroll-view>
   </view>
 
+  </block>
 </view>

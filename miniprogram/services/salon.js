@@ -6,6 +6,12 @@ function activitySessionReturn(id) {
     return `/pages/index/index?register=1&eventId=${encodeURIComponent(String(id))}`;
 }
 exports.salonApi = {
+    publicList(data) {
+        return (0, api_1.request)('/public/salon/events', { data, auth: false, preserveSessionOnUnauthorized: true, showError: false });
+    },
+    publicDetail(id) {
+        return (0, api_1.request)(`/public/salon/events/${id}`, { auth: false, preserveSessionOnUnauthorized: true, showError: false });
+    },
     list(data) {
         return (0, api_1.request)('/salon/events', { data });
     },

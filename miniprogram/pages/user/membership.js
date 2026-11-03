@@ -7,6 +7,7 @@ const payment_response_1 = require("../../utils/payment-response");
 const member_1 = require("../../services/member");
 const MEMBERSHIP_BENEFITS = [
     { key: 'chat', title: '无限畅聊', note: '互相喜欢或正式牵线后畅聊' },
+    { key: 'readReceipts', title: '消息已读', note: '查看自己发送的消息是否已读' },
     { key: 'exchangeWechat', title: '交换微信', note: '双方同意后交换微信号' },
     { key: 'unlimitedSwipe', title: '无限划卡', note: '随心浏览推荐会员' },
     { key: 'advancedFilter', title: '高级筛选', note: '按择偶条件查找合适的人' },
@@ -15,8 +16,7 @@ const MEMBERSHIP_BENEFITS = [
     { key: 'memberBadge', title: '专属会员标识', note: '展示你的 VIP 身份' },
     { key: 'likedMe', title: '谁喜欢我', note: '查看身份并回应喜欢' },
     { key: 'visitors', title: '查看来访', note: '了解谁看过你的资料' },
-    { key: 'invisibleVisit', title: '隐身访问', note: '开启后不留下可见来访记录' },
-    { key: 'specialZones', title: '查看专区', note: '浏览颜值、学历和资产专区' }
+    { key: 'invisibleVisit', title: '隐身访问', note: '开启后不留下可见来访记录' }
 ];
 function isPaymentHTTPCloud(value) {
     return (0, payment_response_1.paymentRecord)(value) && typeof value.callHTTPFunction === 'function';
@@ -993,6 +993,9 @@ Page({
                     this.setData({ orderStatus: 'confirming', orderTitle: '订单状态暂未确认', orderCanResume: false,
                         orderNote: '暂时无法查询原订单，请稍后查询订单状态。确认结果前请勿重复付款。' });
                     console.warn('query cancelled membership order failed', queryError);
+                }
+                if (this.isMembershipSessionCurrent(scope) && this.data.lastOrderId === outTradeNo) {
+                    wx.navigateTo({ url: `/pages/user/payment-cancel?outTradeNo=${encodeURIComponent(outTradeNo)}` });
                 }
             }
             else {

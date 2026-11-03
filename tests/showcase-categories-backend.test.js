@@ -121,7 +121,8 @@ function runtime(input, beforeRead = () => {}) {
   vm.runInNewContext(fs.readFileSync(apiPath, 'utf8') + '\nexports.__test={member,admin,tokenService,editableProfilePatch,publicShowcasePage,publicShowcaseRows,memberRequestView};', {
     module, exports: module.exports,
     require(name) {
-      if (name === 'wx-server-sdk') return { init() {}, database: () => db, DYNAMIC_CURRENT_ENV: 'fixture' };
+      if (name === 'wx-server-sdk') return { init() {}, database: () => db, DYNAMIC_CURRENT_ENV: 'fixture',
+        openapi: { security: { async msgSecCheck() { return { errCode: 0, result: { suggest: 'pass', label: 100 } }; } } } };
       if (name === './auth-policy') {
         const actual = requireFromApi(name);
         return { ...actual, createTokenService: () => actual.createTokenService({ secret: 'showcase-category-test-secret-32-characters' }) };
@@ -484,4 +485,34 @@ test('public detail API resolves both id formats and rechecks current visibility
   r.fixtures.hl_profiles[1].displayEnabled = true;
   r.fixtures.hl_users[1].status = 0;
   assert.equal((await r.call('/member/showcase/202', 'GET', {}, token)).code, 40400);
+});
+
+test('location API is owner scoped, rounds stored coordinates and returns distances without positions', async () => {
+  const r = runtime(fixture());
+  const first = await r.call('/user/location', 'PUT', { enabled: true, latitude: 31.23456, longitude: 121.47382, userId: 2 }, r.accessToken(1));
+  assert.equal(first.code, 0);
+  assert.equal(r.fixtures.hl_profiles[0].privateLocation.latitude, 31.23);
+  assert.equal(r.fixtures.hl_profiles[1].privateLocation, undefined);
+  await r.call('/user/location', 'PUT', { enabled: true, latitude: 31.24, longitude: 121.47 }, r.accessToken(2));
+  const detail = await r.hooks.member.showcaseDetail(1, 'profile_102');
+  assert.equal(detail.distanceText, '距你约3公里内');
+  assert.doesNotMatch(JSON.stringify(detail), /latitude|longitude|privateLocation/);
+  const malformed = await r.call('/user/location', 'PUT', { enabled: true, latitude: 99, longitude: 121 }, r.accessToken(1));
+  assert.equal(malformed.code, 40001);
+  await r.call('/user/location', 'PUT', { enabled: false }, r.accessToken(1));
+  assert.equal(r.fixtures.hl_profiles[0].privateLocation, null);
+  assert.equal((await r.hooks.member.showcaseDetail(1, 'profile_102')).distanceText, '');
+});
+
+test('ordinary members can browse every eligible category without buying VIP', async () => {
+  const f = fixture();
+  f.hl_vip_entitlements = [];
+  const r = runtime(f);
+  for (const category of ['recommend', 'education', 'assets', 'popularity']) {
+    const result = await r.call('/member/showcase', 'GET', { category }, r.accessToken(1));
+    assert.equal(result.code, 0, category);
+    assert.equal(result.data.category, category);
+  }
+  const advanced = await r.call('/member/showcase', 'GET', { ageMin: 25 }, r.accessToken(1));
+  assert.equal(advanced.code, 40302);
 });

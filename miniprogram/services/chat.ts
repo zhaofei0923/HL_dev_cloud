@@ -17,6 +17,7 @@ export type ChatConversation = {
   lastMessageContent: string
   lastMessageAt: string
   updatedAt: string
+  canViewReadReceipts?: boolean
 }
 
 export type ChatConversationPage = {
@@ -40,6 +41,7 @@ export type ChatMessage = {
   voiceFormat?: string
   voiceFileSize?: number
   isMine: boolean
+  readStatus?: 'read' | 'unread'
   sender: ChatParticipant
   createdAt: string
 }
@@ -53,6 +55,7 @@ export type ChatMessagePage = {
   hasMore: boolean
   beforeId: number
   latestId: number
+  readReceipts?: Array<{ id: number; readStatus: 'read' | 'unread' }>
 }
 
 type ConversationQuery = {

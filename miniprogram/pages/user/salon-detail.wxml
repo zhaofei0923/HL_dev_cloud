@@ -59,7 +59,7 @@
       <button class="btn gold share-btn" open-type="share" loading="{{shareLoading}}" disabled="{{shareLoading}}">分享给微信好友</button>
     </view>
 
-    <view class="card participants-card">
+    <view wx:if="{{loggedIn}}" class="card participants-card">
       <view class="row">
         <text class="section-title">已报名的人</text>
         <text class="tag">{{participantTotal}} 人</text>
@@ -82,6 +82,10 @@
         <button class="btn ghost" bindtap="retryParticipants">重试名单</button>
       </view>
       <button wx:if="{{participants.length < participantTotal && !participantsError}}" class="btn ghost" loading="{{participantsLoading}}" disabled="{{participantsLoading}}" bindtap="loadMoreParticipants">查看更多报名人</button>
+    </view>
+    <view wx:else class="card participants-card">
+      <text class="section-title">报名名单</text>
+      <text class="section-note">游客可直接了解活动安排。报名人的资料受保护，登录并报名后可按本场权限查看。</text>
     </view>
   </block>
 

@@ -29,10 +29,19 @@
     "pages/matchmaker/chat",
     "pages/matchmaker/salon",
     "pages/matchmaker/mine",
-    "pages/matchmaker/salon-form"
+    "pages/matchmaker/salon-form",
+    "pages/user/payment-cancel",
+    "pages/user/preferences",
+    "pages/user/relationship-status"
   ],
   "subPackages": [
-    { "root": "admin-console", "pages": ["workspace/index", "detail/index"] }
+    {
+      "root": "admin-console",
+      "pages": [
+        "workspace/index",
+        "detail/index"
+      ]
+    }
   ],
   "window": {
     "navigationBarTextStyle": "black",
@@ -46,18 +55,36 @@
     "selectedColor": "#a35d45",
     "backgroundColor": "#fffdf9",
     "list": [
-      { "pagePath": "pages/user/members", "text": "推荐" },
-      { "pagePath": "pages/user/salon", "text": "活动" },
-      { "pagePath": "pages/user/messages", "text": "消息" },
-      { "pagePath": "pages/user/profile", "text": "我的" }
+      {
+        "pagePath": "pages/user/members",
+        "text": "推荐"
+      },
+      {
+        "pagePath": "pages/user/salon",
+        "text": "活动"
+      },
+      {
+        "pagePath": "pages/user/messages",
+        "text": "消息"
+      },
+      {
+        "pagePath": "pages/user/profile",
+        "text": "我的"
+      }
     ]
   },
   "permission": {
     "scope.record": {
       "desc": "用于在聊天中录制并发送语音消息"
+    },
+    "scope.userLocation": {
+      "desc": "用于在你主动开启后展示与其他会员的大致距离"
     }
   },
   "style": "v2",
   "sitemapLocation": "sitemap.json",
-  "lazyCodeLoading": "requiredComponents"
+  "lazyCodeLoading": "requiredComponents",
+  "requiredPrivateInfos": [
+    "getLocation"
+  ]
 }

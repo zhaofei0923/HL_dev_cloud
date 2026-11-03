@@ -72,6 +72,9 @@ function runtime(pageName, overrides = {}) {
       if (name.endsWith('/utils/page-session')) return { pageSessionScope: scope };
       if (name.endsWith('/utils/local-image')) return localImage;
       if (name.endsWith('/services/member')) return { memberApi };
+      if (name.endsWith('/services/public-browse')) return { publicBrowseApi: {
+        salons: async () => ({ list: [] }), plans: async () => ({ plans: [] })
+      } };
       if (name.endsWith('/services/salon')) return { salonApi: { register: async id => calls.registration.push(id) } };
       if (name.endsWith('/utils/invite')) return require('../miniprogram/utils/invite');
       throw new Error(`Unmocked import ${name}`);
@@ -119,6 +122,23 @@ function fill(page) {
   page.onRegistrationName(input('小陈'));
   page.setData({ photoFileId: photo, photoDisplayUrl: displayPhoto });
 }
+
+test('an existing reviewed registration image uses its signed preview and resubmits its file ID', async () => {
+  const accepted = 'cloud://fixture/hl_moderated/images/' + 'a'.repeat(64) + '.jpg';
+  const signed = 'https://private.example/accepted.jpg?signature=preview';
+  const instance = runtime('index', { request: (_path, options) => options.method === 'PUT'
+    ? minimum(true, { nickname: options.data.nickname, phone: options.data.phone, avatarUrl: signed })
+    : { ...minimum(false, { nickname: '小陈', phone: '13800138000', avatarUrl: signed }),
+      profile: { realName: '小陈', photos: [accepted], photoDisplayUrls: [signed] } } });
+  await indexEntry(instance);
+  assert.equal(instance.page.data.photoFileId, accepted);
+  assert.equal(instance.page.data.photoDisplayUrl, signed);
+  await instance.page.saveRegistration();
+  const writes = instance.calls.requests.filter(row => row.options.method === 'PUT');
+  assert.equal(writes.length, 1);
+  assert.deepEqual(structuredClone(writes[0].options.data.photos), [accepted]);
+  assert.equal(instance.calls.navigation.at(-1).url, '/pages/user/salon-detail?id=301&registrationReady=1');
+});
 
 test('shared salon signup uses the real login entry, saves all minimum fields and returns for explicit registration', async () => {
   const instance = runtime('index', { loggedOut: true, request: (_path, options) => options.method === 'PUT'
@@ -289,78 +309,44 @@ test('invalid activity targets cannot trigger login, a registration write or a m
   }
 });
 
-test('legacy salon invitations redirect incomplete or logged-out users to the same activity registration entry', async () => {
+test('legacy salon invitations let incomplete and logged-out users browse the activity before registration', async () => {
   for (const loggedOut of [false, true]) {
     const instance = runtime('matchmaker-invite', { loggedOut });
     await instance.page.onLoad({ code: 'HLABCD', source: 'salonShare', eventId: '301', autoRegister: '1' });
-    assert.equal(instance.calls.navigation[0].url, '/pages/index/index?register=1&eventId=301');
+    assert.equal(instance.calls.navigation[0].url, '/pages/user/salon-detail?id=301');
     assert.equal(instance.calls.logins.length, 0);
     assert.equal(instance.calls.member.length, 0);
     assert.equal(instance.calls.registration.length, 0);
+    assert.equal(instance.calls.requests.length, 0);
   }
 });
 
-test('legacy salon invitations for complete users only return to explicit confirmation and never rebind any account', async () => {
+test('legacy salon invitations for complete users also browse detail without reading registration data or rebinding', async () => {
   for (const assigned of [true, false]) {
     const instance = runtime('matchmaker-invite', { request: () => minimum(true) });
     if (!assigned) delete instance.session.user.matchmakerId;
     const before = structuredClone(instance.session.user);
     await instance.page.onLoad({ code: 'HLABCD', source: 'salonShare', eventId: '301', autoRegister: '1' });
-    assert.equal(instance.calls.navigation[0].url, '/pages/user/salon-detail?id=301&registrationReady=1');
+    assert.equal(instance.calls.navigation[0].url, '/pages/user/salon-detail?id=301');
     assert.deepEqual(instance.session.user, before);
     assert.equal(instance.calls.member.length, 0);
     assert.equal(instance.calls.registration.length, 0);
-    assert.equal(instance.calls.requests.length, 1);
+    assert.equal(instance.calls.requests.length, 0);
   }
 });
 
-test('legacy activity profile reads deduplicate, retry after failure and ignore late changed-session responses', async () => {
-  const pending = deferred();
-  let reads = 0;
-  const instance = runtime('matchmaker-invite', { request: () => {
-    reads += 1;
-    return reads === 1 ? Promise.reject(new Error('network failed')) : pending.promise;
-  } });
+test('activity invitations do not request personal data even when the session changes', async () => {
+  const instance = runtime('matchmaker-invite', { loggedOut: true, request: () => { throw new Error('should not read personal data'); } });
   await instance.page.onLoad({ eventId: '301', source: 'salonShare' });
-  assert.ok(instance.page.data.errorText);
-  const retry = instance.page.loadInvite();
-  const duplicate = instance.page.loadInvite();
-  await flush();
-  assert.equal(reads, 2);
-  instance.session.token = 'new-fixture-token';
-  instance.session.user = { id: 2 };
-  pending.resolve(minimum(true));
-  await Promise.all([retry, duplicate]);
-  assert.equal(instance.calls.navigation.length, 0);
-  assert.equal(instance.calls.member.length, 0);
-  assert.equal(instance.calls.registration.length, 0);
+  instance.page.onHide();
+  instance.session.token = 'new-fixture-token'; instance.session.user = { id: 2 };
+  await instance.page.onShow();
+  assert.equal(instance.calls.requests.length, 0);
+  assert.equal(instance.calls.logins.length, 0);
+  assert.ok(instance.calls.navigation.every(row => row.url === '/pages/user/salon-detail?id=301'));
 });
 
-test('returning to an activity invite in a new session supersedes an older status read', async () => {
-  const old = deferred();
-  const latest = deferred();
-  let reads = 0;
-  const instance = runtime('matchmaker-invite', { request: () => {
-    reads += 1;
-    return reads === 1 ? old.promise : latest.promise;
-  } });
-  const loading = instance.page.onLoad({ eventId: '301', source: 'salonShare' });
-  await flush();
-  instance.session.token = 'new-fixture-token';
-  instance.session.user = { id: 2 };
-  const returned = instance.page.onShow();
-  await flush();
-  assert.equal(reads, 2);
-  latest.resolve(minimum(false, { id: 2 }));
-  await returned;
-  old.resolve(minimum(true));
-  await loading;
-  assert.deepEqual(instance.calls.navigation, [{ method: 'redirectTo', url: '/pages/index/index?register=1&eventId=301' }]);
-  assert.equal(instance.page.data.loading, false);
-  assert.equal(instance.calls.member.length, 0);
-});
-
-test('ordinary login and non-activity matchmaker sharing retain their existing behavior', async () => {
+test('ordinary login remains available and non-activity sharing requires an explicit invitation confirmation', async () => {
   const loggedIn = runtime('index');
   loggedIn.page.onLoad({});
   await loggedIn.page.onShow();
@@ -373,6 +359,8 @@ test('ordinary login and non-activity matchmaker sharing retain their existing b
   assert.equal(loggedOut.calls.navigation[0].url, '/pages/user/members');
   const invite = runtime('matchmaker-invite');
   await invite.page.onLoad({ code: 'HLABCD', source: 'matchmakerShare' });
+  assert.deepEqual(invite.calls.member.map(row => row.action), ['resolve']);
+  await invite.page.confirmInvite();
   assert.deepEqual(invite.calls.member.map(row => row.action), ['resolve', 'accept']);
   assert.equal(invite.calls.requests.length, 0);
   invite.runTimers();
@@ -385,15 +373,11 @@ function unauthorized(callback) {
 }
 
 test('real API 401 callbacks clear the expired token and preserve activity entry on minimum-profile reads and saves', async () => {
-  for (const operation of ['read', 'save', 'invite']) {
-    const instance = runtime(operation === 'invite' ? 'matchmaker-invite' : 'index', { realApi: true });
+  for (const operation of ['read', 'save']) {
+    const instance = runtime('index', { realApi: true });
     let pending;
-    if (operation === 'invite') {
-      pending = instance.page.onLoad({ source: 'salonShare', eventId: '301' });
-    } else {
-      instance.page.onLoad({ register: '1', eventId: '301' });
-      pending = instance.page.onShow();
-    }
+    instance.page.onLoad({ register: '1', eventId: '301' });
+    pending = instance.page.onShow();
     await flush();
     if (operation === 'save') {
       instance.calls.functions[0].success({ result: { code: 0, data: minimum() } });
@@ -474,10 +458,12 @@ test('real API late 401 callbacks with an activity redirect cannot clear or navi
   }
 });
 
-test('sharing an activity invite without a matchmaker code retains the activity even after a read failure', async () => {
+test('sharing an activity invite without a matchmaker code retains a publicly browsable activity', async () => {
   const instance = runtime('matchmaker-invite', { request: () => { throw new Error('network failed'); } });
   await instance.page.onLoad({ eventId: '7', source: 'salonShare' });
-  assert.ok(instance.page.data.errorText);
+  assert.equal(instance.page.data.errorText, '');
+  assert.equal(instance.calls.requests.length, 0);
+  assert.equal(instance.calls.navigation[0].url, '/pages/user/salon-detail?id=7');
   assert.equal(instance.page.data.code, '');
   const card = instance.page.onShareAppMessage();
   assert.equal(card.path, '/pages/user/salon-detail?id=7&source=salonShare');

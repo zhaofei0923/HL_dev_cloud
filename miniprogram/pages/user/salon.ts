@@ -7,6 +7,10 @@ type SalonTab = 'all' | 'past' | 'mine'
 type SalonSnapshot = { list: any[]; loadedAt: number }
 const SALON_TTL_MS = 30 * 1000
 
+function salonContext() {
+  return `${getApp<IAppOption>().globalData.env || ''}|${pageSessionScope() || 'guest'}`
+}
+
 function pad(value: number) {
   return value < 10 ? `0${value}` : String(value)
 }
@@ -58,12 +62,14 @@ function visibleSalons(rows: ReturnType<typeof normalizeSalonRow>[], active: Sal
 
 Page({
   _sessionScope: '',
+  _salonContext: '',
   _salonGeneration: 0,
   _salonSnapshots: {} as Partial<Record<SalonTab, SalonSnapshot>>,
   _salonPending: null as { key: SalonTab; promise: Promise<void> } | null,
   _refreshOnShow: false,
 
   data: {
+    loggedIn: false,
     active: 'all' as SalonTab,
     list: [] as any[],
     loading: false,
@@ -72,7 +78,7 @@ Page({
   },
 
   onShow() {
-    if (!this.synchronizeSession()) return
+    this.synchronizeSession()
     syncUserTabBar(this, 'salon')
     const force = this._refreshOnShow
     this._refreshOnShow = false
@@ -81,16 +87,17 @@ Page({
 
   synchronizeSession() {
     const scope = pageSessionScope()
-    if (scope !== this._sessionScope) {
+    const context = salonContext()
+    this.setData({ loggedIn: !!scope })
+    if (scope !== this._sessionScope || context !== this._salonContext) {
       this._sessionScope = scope
+      this._salonContext = context
       this._salonGeneration += 1
       this._salonSnapshots = {}
       this._salonPending = null
       this.setData({ active: 'all', list: [], loading: false, listTitle: '即将开始', listNote: '点击活动卡片查看详情和报名。' })
     }
-    if (scope) return scope
-    wx.redirectTo({ url: '/pages/index/index' })
-    return ''
+    return scope
   },
 
   loadAll() {
@@ -98,6 +105,13 @@ Page({
   },
 
   loadMine() {
+    if (!this.synchronizeSession()) {
+      wx.showModal({ title: '登录后查看我的报名', content: '近期与往期活动可继续直接浏览。查看自己的报名记录时，需要你自愿登录。',
+        confirmText: '去登录', cancelText: '继续浏览', success: result => {
+          if (result.confirm && !pageSessionScope()) wx.navigateTo({ url: '/pages/index/index?login=1&returnTo=salon' })
+        } })
+      return Promise.resolve()
+    }
     return this.loadSalons('mine', true)
   },
 
@@ -107,24 +121,26 @@ Page({
 
   loadSalons(active: SalonTab, force = false): Promise<void> {
     const scope = this.synchronizeSession()
-    if (!scope) return Promise.resolve()
+    if (!scope && active === 'mine') return this.loadMine()
     if (!force && this._salonPending && this._salonPending.key === active && this.data.active === active) {
       return this._salonPending.promise
     }
     this._salonPending = null
     const generation = ++this._salonGeneration
+    const context = this._salonContext
     const cached = this._salonSnapshots[active]
     const listTitle = active === 'mine' ? '我的报名' : active === 'past' ? '往期活动' : '即将开始'
     const listNote = active === 'mine' ? '已报名活动会显示在这里。' : active === 'past' ? '查看已结束或取消的活动。' : '点击活动卡片查看详情和报名。'
     const cachedList = cached ? cached.list.map((row: { raw: Record<string, unknown>; registered?: boolean }) => normalizeSalonRow({ event: row.raw, registered: row.registered })) : []
     this.setData({ active, list: visibleSalons(cachedList, active), listTitle, listNote, loading: !cached })
-    const isCurrent = () => this._salonGeneration === generation && pageSessionScope() === scope
+    const isCurrent = () => this._salonGeneration === generation && pageSessionScope() === scope && salonContext() === context
     if (cached && !force && Date.now() - cached.loadedAt < SALON_TTL_MS) return Promise.resolve()
     const promise = Promise.resolve().then(async () => {
       try {
+        const query = { page: 1, pageSize: scope ? 30 : 20, period: active === 'past' ? 'past' : 'upcoming' }
         const result: any = active === 'mine'
           ? await salonApi.myRegistrations({ page: 1, pageSize: 30 })
-          : await salonApi.list({ page: 1, pageSize: 30, period: active === 'past' ? 'past' : 'upcoming' })
+          : scope ? await salonApi.list(query) : await salonApi.publicList(query)
         if (!isCurrent()) return
         const list = (result.list || []).map((row: any) => normalizeSalonRow(row))
         this._salonSnapshots[active] = { list, loadedAt: Date.now() }

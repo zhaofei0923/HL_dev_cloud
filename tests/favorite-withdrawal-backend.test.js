@@ -98,7 +98,7 @@ function runtime(input) {
     async runTransaction(callback) { return callback({ collection }); }
   };
   const module = { exports: {} };
-  vm.runInNewContext(source + '\nexports.__test={member,chat,memberInteractionStateMap,areMutualFavorites,favoriteRelationshipGroups,getChatConversationOrThrow};', {
+  vm.runInNewContext(source + '\nexports.__test={member,chat,memberRelationships,issueUserSession,contentSecurity,main:exports.main,memberInteractionStateMap,areMutualFavorites,favoriteRelationshipGroups,getChatConversationOrThrow};', {
     module, exports: module.exports,
     require(name) {
       if (name === 'wx-server-sdk') return { init() {}, database: () => db, DYNAMIC_CURRENT_ENV: 'fixture' };
@@ -178,7 +178,7 @@ test('detail action state uses the same mutual, membership, formal pair and serv
     }
     const r = runtime(f);
     const detail = await r.hooks.member.showcaseDetail(1, 202);
-    assert.equal(detail.viewerState.chatAccess, mode === 'free_mutual' ? 'membership_required' : mode === 'none' ? 'unavailable' : 'allowed', mode);
+    assert.equal(detail.viewerState.chatAccess, ['free_mutual', 'formal_pair', 'none'].includes(mode) ? 'membership_required' : 'allowed', mode);
     assert.equal(r.writes.length, 0, 'viewing details must not create a conversation or notification');
   }
 });
@@ -304,7 +304,10 @@ test('formal pair and matchmaker service conversations remain accessible after w
   for (const type of ['member_pair', 'member_matchmaker']) {
     const f = fixture();
     const conversation = f.hl_conversations[0];
-    if (type === 'member_pair') conversation.matchRecordId = 88;
+    if (type === 'member_pair') {
+      conversation.matchRecordId = 88;
+      f.hl_match_records.push({ _id: 'formal-match', id: 88, userAId: 1, userBId: 2, status: 'pending' });
+    }
     else Object.assign(conversation, { conversationType: type, matchmakerId: 7, matchmakerUserId: 2 });
     const r = runtime(f);
     await withdraw(r);
@@ -347,4 +350,67 @@ test('conversation lists resolve current mutual hearts in one scoped batch rathe
     assert.equal(heartReads[0].returned, peerCount * 2);
     assert.equal(r.writes.length, 0);
   }
+});
+
+test('coupled status route scopes ownership, hides public detail, and profile PUT cannot publish it', async () => {
+  const f = fixture();
+  f.hl_users[0].openid = 'wechat-test-user-1';
+  const r = runtime(f);
+  r.hooks.contentSecurity.assertText = async () => undefined;
+  r.hooks.contentSecurity.assertImages = async ({ images }) => images;
+  const token = r.hooks.issueUserSession(f.hl_users[0]).token;
+  const changed = await r.hooks.main({ path: '/member/relationship-status', method: 'POST', token, data: { userId: 2, status: 'coupled' } });
+  assert.equal(changed.code, 0);
+  assert.equal(r.fixtures.hl_profiles[0].relationshipStatus, 'coupled');
+  assert.equal(r.fixtures.hl_profiles[0].displayEnabled, false);
+  assert.equal(r.fixtures.hl_profiles[1].displayEnabled, true);
+  await assert.rejects(r.hooks.member.showcaseDetail(2, 201), error => error.status === 404);
+  const republish = await r.hooks.main({ path: '/user/profile', method: 'PUT', token, data: { displayEnabled: true, relationshipStatus: 'single' } });
+  assert.equal(republish.code, 0);
+  assert.equal(r.fixtures.hl_profiles[0].relationshipStatus, 'coupled', 'generic profile editing cannot bypass the dedicated status transition');
+  assert.equal(r.fixtures.hl_profiles[0].displayEnabled, false);
+  const visible = await r.hooks.member.showcase(2);
+  assert.ok(visible.list.every(row => Number(row.userId) !== 1 && Number(row.id) !== 201));
+});
+
+test('unmatch endpoint cancels formal/mutual access and prevents reheart, conversation recreation, or message sending', async () => {
+  const f = fixture();
+  f.hl_match_records.push({ _id: 'formal-pair', id: 90, userAId: 1, userBId: 2, status: 'accepted' });
+  f.hl_counters.push({ _id: 'memberInteraction', key: 'memberInteraction', value: 100 });
+  const r = runtime(f);
+  const token = r.hooks.issueUserSession(f.hl_users[0]).token;
+  const request = { path: '/member/unmatch', method: 'POST', token, data: { targetUserId: 2, reason: '消息不回复' } };
+  assert.equal((await r.hooks.main(request)).code, 0);
+  assert.equal(await r.hooks.areMutualFavorites(1, 2), false);
+  assert.equal(r.fixtures.hl_match_records[0].status, 'cancelled');
+  assert.equal(r.fixtures.hl_conversations[0].status, 0);
+  assert.equal((await r.hooks.main(request)).code, 0, 'cleanup retries remain safe');
+  for (const [userId, peerId] of [[1, 2], [2, 1]]) {
+    await assert.rejects(r.hooks.member.interact(userId, { actionType: 'favorite', targetUserId: peerId, active: true }), error => error.status === 403);
+    await assert.rejects(r.hooks.getChatConversationOrThrow(userId, 10), error => [403, 404].includes(error.status));
+    await assert.rejects(r.hooks.chat.sendMessage(userId, 10, { content: '不能再发出的消息' }), error => [403, 404].includes(error.status));
+    assert.equal((await r.hooks.chat.listConversations(userId)).total, 0);
+    const states = await r.hooks.memberInteractionStateMap(userId, [peerId]);
+    assert.equal(states[String(peerId)].hide, true);
+  }
+  assert.equal(r.fixtures.hl_chat_messages.length, 0);
+  assert.equal(r.fixtures.hl_conversations.length, 1, 'listing does not recreate a closed pair');
+});
+
+test('couple invitation endpoints require recipient consent and forbid another account response', async () => {
+  const f = fixture();
+  f.hl_counters.push({ _id: 'memberInteraction', key: 'memberInteraction', value: 100 });
+  const r = runtime(f);
+  const tokens = f.hl_users.map(user => r.hooks.issueUserSession(user).token);
+  const sent = await r.hooks.main({ path: '/member/relationship-invitations', method: 'POST', token: tokens[0], data: { targetUserId: 2 } });
+  assert.equal(sent.code, 0);
+  assert.equal(r.fixtures.hl_profiles[0].relationshipStatus, 'coupled');
+  assert.notEqual(r.fixtures.hl_profiles[1].relationshipStatus, 'coupled');
+  const path = `/member/relationship-invitations/${sent.data.invitation.id}/respond`;
+  const denied = await r.hooks.main({ path, method: 'POST', token: tokens[2], data: { accept: true } });
+  assert.equal(denied.code, 40400);
+  const accepted = await r.hooks.main({ path, method: 'POST', token: tokens[1], data: { accept: true } });
+  assert.equal(accepted.code, 0);
+  assert.equal(r.fixtures.hl_profiles[1].relationshipStatus, 'coupled');
+  assert.equal(r.fixtures.hl_profiles[1].displayEnabled, false);
 });

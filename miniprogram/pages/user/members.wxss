@@ -1121,3 +1121,6 @@
 .advanced-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12rpx; margin-top: 12rpx; }
 .advanced-age, .advanced-picker { box-sizing: border-box; height: 72rpx; padding: 14rpx 16rpx; border: 1rpx solid rgba(151, 119, 82, .18); border-radius: 10rpx; background: #fffdf8; color: #4f4944; font-size: 24rpx; line-height: 42rpx; }
 .advanced-income { grid-column: 1 / -1; }
+
+.distance-controls { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin: 12rpx 0 20rpx; }
+.distance-toggle { flex-shrink: 0; margin: 0; padding: 8rpx 18rpx; border-radius: 24rpx; font-size: 22rpx; line-height: 1.6; color: #a35d45; background: #fffdf9; }

@@ -1,0 +1,70 @@
+<view class="page safe-bottom preferences-page">
+  <view class="preferences-heading">
+    <text class="eyebrow">匹配偏好</text>
+    <text class="title">我心仪的Ta</text>
+    <text class="subtitle">写下你的期待，也为相遇留一些可能。每项都可选“不限”，修改后记得保存。</text>
+  </view>
+  <view wx:if="{{loading}}" class="card"><text class="section-note">正在读取匹配偏好…</text></view>
+  <view wx:if="{{error}}" class="preference-error" aria-live="polite">
+    <text>{{error}}</text>
+    <button wx:if="{{!ready}}" class="btn secondary" bindtap="loadPreferences" disabled="{{loading}}">重试</button>
+  </view>
+  <block wx:if="{{ready}}">
+    <view class="card preferences-section">
+      <text class="section-title">基本条件</text>
+      <view class="preference-field">
+        <text class="preference-label">年龄阶段</text>
+        <view class="preference-chips">
+          <button wx:for="{{ageStages}}" wx:key="label" class="preference-chip {{item.selected ? 'selected' : ''}}" data-index="{{index}}" bindtap="onAgeStage" disabled="{{saving}}">{{item.label}}</button>
+        </view>
+        <view class="preference-range">
+          <input type="number" maxlength="3" value="{{form.ageMin}}" placeholder="最低年龄" data-field="ageMin" bindinput="onInput" disabled="{{saving}}" aria-label="最低年龄" />
+          <text>至</text>
+          <input type="number" maxlength="3" value="{{form.ageMax}}" placeholder="最高年龄" data-field="ageMax" bindinput="onInput" disabled="{{saving}}" aria-label="最高年龄" />
+          <text>岁</text>
+        </view>
+      </view>
+      <picker range="{{heightOptions}}" value="{{heightIndex}}" bindchange="onHeight" disabled="{{saving}}">
+        <view class="preference-row"><text class="preference-label">身高</text><text class="preference-value">{{heightText}} <text class="preference-arrow">›</text></text></view>
+      </picker>
+      <view class="preference-field">
+        <text class="preference-label">职业 <text class="preference-hint">可多选</text></text>
+        <view class="preference-chips">
+          <button class="preference-chip {{!form.occupations.length ? 'selected' : ''}}" data-value="" bindtap="onOccupation" disabled="{{saving}}">不限</button>
+          <button wx:for="{{occupations}}" wx:key="value" class="preference-chip {{item.selected ? 'selected' : ''}}" data-value="{{item.value}}" bindtap="onOccupation" disabled="{{saving}}">{{item.value}}</button>
+        </view>
+      </view>
+      <picker wx:for="{{educationRows}}" wx:key="key" range="{{item.options}}" value="{{item.index}}" data-field="{{item.key}}" bindchange="onSelect" disabled="{{saving}}">
+        <view class="preference-row"><text class="preference-label">{{item.label}}</text><text class="preference-value">{{item.value}} <text class="preference-arrow">›</text></text></view>
+      </picker>
+      <view class="preference-row"><text class="preference-label">现居住地</text><input class="preference-city" value="{{form.city}}" maxlength="60" placeholder="不限 / 输入城市" data-field="city" bindinput="onInput" disabled="{{saving}}" aria-label="希望对方现居住地" /></view>
+      <view class="preference-field">
+        <text class="preference-label">体重 <text class="preference-hint">留空表示不限</text></text>
+        <view class="preference-range">
+          <input type="number" maxlength="3" value="{{form.weightMin}}" placeholder="最低体重" data-field="weightMin" bindinput="onInput" disabled="{{saving}}" aria-label="最低体重" />
+          <text>至</text>
+          <input type="number" maxlength="3" value="{{form.weightMax}}" placeholder="最高体重" data-field="weightMax" bindinput="onInput" disabled="{{saving}}" aria-label="最高体重" />
+          <text>kg</text>
+        </view>
+      </view>
+    </view>
+    <view class="card preferences-section">
+      <text class="section-title">婚育期待</text>
+      <picker wx:for="{{familyRows}}" wx:key="key" range="{{item.options}}" value="{{item.index}}" data-field="{{item.key}}" bindchange="onSelect" disabled="{{saving}}">
+        <view class="preference-row"><text class="preference-label">{{item.label}}</text><text class="preference-value">{{item.value}} <text class="preference-arrow">›</text></text></view>
+      </picker>
+    </view>
+    <view class="card preferences-section">
+      <text class="section-title">生活习惯与其他</text>
+      <picker wx:for="{{habitRows}}" wx:key="key" range="{{item.options}}" value="{{item.index}}" data-field="{{item.key}}" bindchange="onSelect" disabled="{{saving}}">
+        <view class="preference-row"><text class="preference-label">{{item.label}}</text><text class="preference-value">{{item.value}} <text class="preference-arrow">›</text></text></view>
+      </picker>
+    </view>
+    <text wx:if="{{saveMessage}}" class="preference-saved" aria-live="polite">{{saveMessage}}</text>
+    <text wx:elif="{{dirty}}" class="section-note">修改尚未保存</text>
+    <view class="preference-actions">
+      <button class="btn secondary" bindtap="resetPreferences" disabled="{{saving}}">全部不限</button>
+      <button class="btn" bindtap="savePreferences" disabled="{{saving || !dirty}}" loading="{{saving}}">{{saving ? '保存中' : '保存偏好'}}</button>
+    </view>
+  </block>
+</view>

@@ -14,16 +14,16 @@ const progress = extra => ({ status: 'needs_profile', purchased: true, profileCo
   matchmakerConfirmed: false, matchmakerId: null, matchmakerUserId: null, matchmakerName: '', requestedAt: '2026-10-06T00:00:00Z',
   remainingCount: 2, earliestExpireAt: '2026-11-06T00:00:00Z', ...extra });
 
-test('ordinary viewers keep free filters and are guided to membership before entering a special zone', async () => {
+test('ordinary viewers can browse categories and free filters, while advanced search still requires VIP', async () => {
   const reads = [];
   const { page, calls } = runtime('pages/user/members.js', { source: true, memberApi: {
     showcase: async query => { reads.push({ ...query }); return { list: [{ id: 11, userId: 2 }], total: 1 }; }
   } });
   await page.onShow();
   await page.switchCategory(touch({ category: 'education' }));
-  assert.equal(page.data.category, 'recommend');
-  assert.equal(reads.length, 1);
-  assert.equal(calls.navigation.at(-1).url, '/pages/user/membership');
+  assert.equal(page.data.category, 'education');
+  assert.equal(reads.length, 2);
+  assert.equal(calls.navigation.length, 0);
   page.toggleFilter();
   page.onKeyword({ detail: { value: '工程师' } });
   page.onCity({ detail: { value: '上海' } });
@@ -33,6 +33,13 @@ test('ordinary viewers keep free filters and are guided to membership before ent
   assert.equal(reads.at(-1).city, '上海');
   assert.equal(reads.at(-1).gender, '2');
   assert.equal(reads.at(-1).education, undefined);
+  const readCount = reads.length;
+  page.setData({ draftAgeMin: '28' });
+  await page.search();
+  assert.equal(calls.navigation.at(-1).url, '/pages/user/membership');
+  assert.equal(reads.length, readCount);
+  assert.equal(page.data.ageMin, '');
+  assert.equal(page.data.category, 'education');
 });
 
 test('VIP advanced criteria use separate cache keys and the badge survives sanitized showcase caches', async () => {
@@ -56,7 +63,7 @@ test('VIP advanced criteria use separate cache keys and the badge survives sanit
   assert.notEqual(cache.showcaseQueryKey(query), cache.showcaseQueryKey({ ...query, ageMin: '29' }));
 });
 
-test('an entitlement expiry clears warm special-zone and advanced-filter UI before displaying the free query', async () => {
+test('an entitlement expiry clears advanced filters while preserving the public category', async () => {
   let active = true;
   const expiry = new Date(Date.UTC(2026, 9, 6) + 500).toISOString();
   const { page, advance } = runtime('pages/user/members.js', { source: true, memberApi: {
@@ -71,12 +78,12 @@ test('an entitlement expiry clears warm special-zone and advanced-filter UI befo
   advance(600);
   await page.onShow();
   assert.equal(page.data.isVip, false);
-  assert.equal(page.data.category, 'recommend');
+  assert.equal(page.data.category, 'assets');
   assert.equal(page.data.ageMin, '');
   assert.equal(page.data.draftAgeMin, '');
 });
 
-test('an unavailable entitlement refresh also removes previously unlocked special-zone UI', async () => {
+test('an unavailable entitlement refresh preserves public categories and removes advanced filters', async () => {
   let unavailable = false;
   const { page, advance } = runtime('pages/user/members.js', { source: true, memberApi: {
     vipOverview: async () => { if (unavailable) throw new Error('unavailable'); return vip(); },
@@ -84,11 +91,14 @@ test('an unavailable entitlement refresh also removes previously unlocked specia
   } });
   await page.onShow();
   await page.switchCategory(touch({ category: 'education' }));
+  page.setData({ ageMin: '30', draftAgeMin: '30' });
   unavailable = true;
   advance(45001);
   await page.onShow();
-  assert.equal(page.data.category, 'recommend');
+  assert.equal(page.data.category, 'education');
   assert.equal(page.data.isVip, false);
+  assert.equal(page.data.ageMin, '');
+  assert.equal(page.data.draftAgeMin, '');
 });
 
 test('a non-VIP recipient can consent to an incoming exchange but cannot initiate one or reveal pending contacts', async () => {

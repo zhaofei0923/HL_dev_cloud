@@ -17,6 +17,61 @@ const CLOUD_FOLDER_PATHS: Record<CloudFolder, string> = {
   'member-private': 'member-private'
 }
 
+const PHOTO_MAX_WIDTH = 750
+const PHOTO_MAX_HEIGHT = 1334
+const PHOTO_TARGET_BYTES = 900000
+
+function imageInfo(src: string) {
+  return new Promise<WechatMiniprogram.GetImageInfoSuccessCallbackResult>((resolve, reject) => {
+    wx.getImageInfo({ src, success: resolve, fail: reject })
+  })
+}
+
+function imageFileSize(filePath: string) {
+  return new Promise<number>((resolve, reject) => wx.getFileSystemManager().getFileInfo({
+    filePath, success: result => resolve(result.size), fail: reject
+  }))
+}
+
+function validImageDimensions(info: { width: number; height: number }) {
+  return Number.isInteger(info.width) && Number.isInteger(info.height) && info.width > 0 && info.height > 0
+}
+
+function readyToUpload(info: WechatMiniprogram.GetImageInfoSuccessCallbackResult, size: number) {
+  return validImageDimensions(info) && info.width <= PHOTO_MAX_WIDTH && info.height <= PHOTO_MAX_HEIGHT
+    && /^(?:jpe?g|png)$/i.test(info.type) && Number.isFinite(size) && size > 0 && size <= PHOTO_TARGET_BYTES
+}
+
+async function prepareImageForUpload(filePath: string) {
+  try {
+    const original = await imageInfo(filePath)
+    if (!validImageDimensions(original)) throw new Error('invalid image dimensions')
+    const size = await imageFileSize(filePath)
+    if (readyToUpload(original, size)) return filePath
+    const scale = Math.min(1, PHOTO_MAX_WIDTH / original.width, PHOTO_MAX_HEIGHT / original.height)
+    const compressedWidth = Math.max(1, Math.floor(original.width * scale))
+    const compressedHeight = Math.max(1, Math.floor(original.height * scale))
+    for (const quality of [85, 65, 45, 25]) {
+      // The bundled typings predate the 2.26.0 image dimension options.
+      const options: WechatMiniprogram.CompressImageOption & { compressedWidth: number; compressedHeight: number } = {
+        src: filePath, quality, compressedWidth, compressedHeight
+      }
+      const path = await new Promise<string>((resolve, reject) => {
+        options.success = result => resolve(result.tempFilePath)
+        options.fail = reject
+        wx.compressImage(options)
+      })
+      if (!path) throw new Error('empty compressed image')
+      const prepared = await imageInfo(path)
+      const preparedSize = await imageFileSize(path)
+      if (readyToUpload(prepared, preparedSize)) return path
+    }
+  } catch (error) {
+    console.warn('prepare image upload failed')
+  }
+  throw new Error('照片处理失败，请重新选择或缩小图片后重试')
+}
+
 type CropResult = {
   tempFilePath: string
 }
@@ -116,11 +171,12 @@ async function cropImages(paths: string[], crop?: boolean) {
 }
 
 async function uploadOrSave(tempFilePath: string, options: ChooseImageOptions): Promise<ChosenImage> {
-  const fileID = await uploadImage(tempFilePath, options)
+  const preparedPath = await prepareImageForUpload(tempFilePath)
+  const fileID = await uploadImage(preparedPath, options)
   return {
     fileID,
-    tempFilePath,
-    displayUrl: tempFilePath
+    tempFilePath: preparedPath,
+    displayUrl: preparedPath
   }
 }
 

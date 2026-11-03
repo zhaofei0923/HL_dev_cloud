@@ -399,3 +399,20 @@ test('a capped duplicate identity batch does not read unrelated full users while
   assert.ok(fullUserReads.every(read => read.rows.every(row => Number(row.id) === 3)),
     'duplicate-batch recovery must retain the thin projection for all off-page identities');
 });
+
+test('saved matching preferences rank known matches first without filtering unknown members or exposing preference data', async () => {
+  const fixtures = {
+    hl_users: [1, 2, 3].map(id => ({ _id: `u-${id}`, id, status: 1, gender: 2, nickname: `公开${id}` })),
+    hl_profiles: [profile(1, { matchingPreferences: { ageMin: 25, ageMax: 34, heightMin: 175, occupations: ['金融'] } }),
+      profile(2, { age: 29, height: 180, occupation: '金融' }), profile(3, { age: null, height: null, occupation: '' })],
+    hl_members: [], hl_match_records: [], hl_member_interactions: []
+  };
+  const r = backendRuntime(fixtures);
+  const preferred = await r.hooks.publicShowcasePage(1, { page: 1, pageSize: 10 });
+  assert.deepEqual(Array.from(preferred.list, row => row.userId), [2, 3]);
+  assert.equal(preferred.total, 2);
+  assert.ok(preferred.list.every(row => !('matchingPreferences' in row) && !('privateArchive' in row)));
+  fixtures.hl_profiles[0].matchingPreferences = {};
+  const unrestricted = await r.hooks.publicShowcasePage(1, { page: 1, pageSize: 10 });
+  assert.deepEqual(Array.from(unrestricted.list, row => row.userId), [3, 2]);
+});

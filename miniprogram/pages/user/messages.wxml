@@ -1,4 +1,13 @@
 <view class="page with-bottom-nav messages-page">
+  <view wx:if="{{guest}}" class="card">
+    <text class="eyebrow">沟通与心动</text>
+    <text class="title">消息只属于你</text>
+    <text class="subtitle">登录后可查看会话、喜欢我的人和互相喜欢的关系，并在符合服务规则时开始沟通。</text>
+    <text class="section-note">当前无需登录即可浏览公开活动，决定参与后再选择登录。</text>
+    <button class="btn" bindtap="goGuestLogin">登录后使用</button>
+    <button class="btn ghost" bindtap="browseActivities">浏览活动</button>
+  </view>
+  <block wx:else>
   <view class="messages-intro">
     <text class="messages-title">消息</text>
     <text class="messages-note">看看新的消息，也别错过对你的喜欢。</text>
@@ -178,4 +187,5 @@
     </view>
   </view>
 
+  </block>
 </view>

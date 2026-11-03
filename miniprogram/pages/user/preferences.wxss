@@ -1,0 +1,22 @@
+.preferences-heading { padding: 16rpx 4rpx 28rpx; }
+.preferences-section { padding-bottom: 8rpx; }
+.preferences-section > .section-title { padding-bottom: 10rpx; }
+.preference-field { padding: 24rpx 0; border-bottom: 1rpx solid #eee5db; }
+.preference-field:last-child { border-bottom: 0; }
+.preference-label { color: #2f2924; font-size: 27rpx; flex-shrink: 0; }
+.preference-hint { margin-left: 12rpx; color: #8b7868; font-size: 22rpx; }
+.preference-row { min-height: 94rpx; display: flex; align-items: center; justify-content: space-between; gap: 18rpx; border-bottom: 1rpx solid #eee5db; }
+.preference-value { color: #736256; font-size: 26rpx; text-align: right; }
+.preference-arrow { margin-left: 12rpx; color: #a79280; }
+.preference-chips { display: flex; flex-wrap: wrap; gap: 14rpx; margin-top: 18rpx; }
+.preference-chip { margin: 0; padding: 10rpx 20rpx; min-height: 62rpx; line-height: 40rpx; font-size: 24rpx; color: #736256; background: #f7f3ec; border: 1rpx solid #e8ded1; border-radius: 9rpx; }
+.preference-chip::after { border: 0; }
+.preference-chip.selected { color: #8c4933; border-color: #a45d43; background: #f5e9df; }
+.preference-range { display: flex; align-items: center; gap: 16rpx; margin-top: 18rpx; color: #736256; font-size: 24rpx; }
+.preference-range input { width: 0; min-width: 0; flex: 1; height: 74rpx; box-sizing: border-box; padding: 0 16rpx; background: #f7f3ec; border-radius: 8rpx; font-size: 26rpx; }
+.preference-city { flex: 1; min-width: 0; text-align: right; color: #736256; font-size: 26rpx; }
+.preference-actions { display: flex; gap: 16rpx; margin-top: 24rpx; }
+.preference-actions .btn { flex: 1; margin: 0; }
+.preference-error { display: block; margin-bottom: 20rpx; padding: 20rpx; color: #9c3f32; background: #fff3e9; border-radius: 10rpx; font-size: 25rpx; }
+.preference-error .btn { margin-top: 18rpx; }
+.preference-saved { display: block; color: #526d45; font-size: 25rpx; }

@@ -1,0 +1,54 @@
+<view class="page safe-bottom relationship-page">
+  <view class="card status-card">
+    <text class="eyebrow">相遇之后</text>
+    <text class="title">{{relationshipStatus === 'coupled' ? '已脱单' : '成功脱单'}}</text>
+    <text class="subtitle">{{relationshipStatus === 'coupled' ? '恭喜相遇。你的资料已隐藏，不再进入公开推荐。' : '确认已脱单后，自动隐藏资料，让相处回到生活。'}}</text>
+    <button wx:if="{{relationshipStatus !== 'coupled'}}" class="btn status-action" disabled="{{!ready || busy}}" loading="{{busy}}" bindtap="declareSuccess">我已成功脱单</button>
+    <button wx:else class="btn secondary status-action" disabled="{{!ready || busy}}" bindtap="restoreSingle">恢复单身状态</button>
+  </view>
+
+  <view wx:if="{{loading}}" class="section-note">正在读取状态…</view>
+  <view wx:if="{{error}}" class="card error-card">
+    <text>{{error}}</text>
+    <button wx:if="{{!ready}}" class="btn secondary" disabled="{{loading || busy}}" bindtap="load">重新读取</button>
+  </view>
+  <view wx:if="{{feedback}}" class="card feedback-card" aria-live="polite">{{feedback}}</view>
+
+  <view wx:if="{{incomingInvitations.length}}" class="card">
+    <text class="section-title">收到的脱单邀请</text>
+    <view wx:for="{{incomingInvitations}}" wx:key="id" class="invitation-row">
+      <view class="invitation-copy"><text class="item-title">{{item.peerName}}</text><text class="section-note">{{item.statusText}}</text></view>
+      <view wx:if="{{item.status === 'pending'}}" class="invitation-actions">
+        <button class="btn secondary" data-id="{{item.id}}" data-accept="false" disabled="{{!ready || busy}}" bindtap="respondInvitation">婉拒</button>
+        <button class="btn" data-id="{{item.id}}" data-accept="true" disabled="{{!ready || busy}}" bindtap="respondInvitation">接受</button>
+      </view>
+    </view>
+  </view>
+
+  <view class="card">
+    <text class="section-title">邀请脱单</text>
+    <text class="section-note">选择已匹配的人发出邀请；对方接受后，双方均为已脱单并隐藏资料。</text>
+    <text wx:if="{{targetUnavailable}}" class="section-note">当前对象已不在有效匹配中，请选择其他匹配对象。</text>
+    <picker wx:if="{{candidates.length}}" mode="selector" range="{{candidates}}" range-key="displayName" value="{{selectedIndex < 0 ? 0 : selectedIndex}}" disabled="{{!ready || busy}}" bindchange="onCandidateChange">
+      <view class="relationship-picker">{{selectedName || '请选择匹配对象'}}<text class="picker-arrow">›</text></view>
+    </picker>
+    <text wx:else class="section-note empty-note">暂无有效匹配对象，你仍可单独确认自己的脱单状态。</text>
+    <button class="btn status-action" disabled="{{!ready || busy || selectedIndex < 0}}" bindtap="invitePartner">邀请 Ta 一起脱单</button>
+  </view>
+
+  <view wx:if="{{outgoingInvitations.length}}" class="card">
+    <text class="section-title">已发出的邀请</text>
+    <view wx:for="{{outgoingInvitations}}" wx:key="id" class="invitation-row">
+      <text class="item-title">{{item.peerName}}</text><text class="section-note">{{item.statusText}}</text>
+    </view>
+  </view>
+
+  <view wx:if="{{selectedIndex >= 0}}" class="card">
+    <text class="section-title">解除与 {{selectedName}} 的匹配</text>
+    <text class="section-note">解除后取消双方心动并停止聊天。请选择原因：</text>
+    <picker mode="selector" range="{{reasonOptions}}" value="{{reasonIndex < 0 ? 0 : reasonIndex}}" disabled="{{!ready || busy}}" bindchange="onReasonChange">
+      <view class="relationship-picker">{{reasonIndex < 0 ? '请选择解除原因' : reasonOptions[reasonIndex]}}<text class="picker-arrow">›</text></view>
+    </picker>
+    <button class="btn secondary status-action" disabled="{{!ready || busy || reasonIndex < 0}}" bindtap="unmatch">解除匹配</button>
+  </view>
+</view>

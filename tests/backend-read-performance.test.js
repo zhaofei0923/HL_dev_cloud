@@ -207,6 +207,8 @@ function fixture(count = 25) {
 
 function chatFixture(count) {
   const f = fixture(2);
+  f.hl_vip_entitlements = [{ _id: 'vip_user_1', userId: 1, legacyLifetime: true, grants: [] }];
+  f.hl_match_records = [{ _id: 'pair-7', id: 7, userAId: 1, userBId: 2, status: 'pending' }];
   f.hl_conversations = [{ _id: 'chat-1', id: 1, status: 'active', participantIds: [1, 2], participantKey: '1:2', conversationType: 'member_pair', matchRecordId: 7, unreadBy: { 1: 3 } }];
   f.hl_chat_messages = Array.from({ length: count }, (_, index) => ({ _id: `message-${index + 1}`, id: index + 1, conversationId: 1, senderId: index % 2 + 1, receiverId: index % 2 ? 1 : 2, status: 'active', readBy: [1, 2], content: `消息${index + 1}`, createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, index)).toISOString() }));
   return f;
@@ -226,7 +228,7 @@ test('latest chat window includes message 81; history and incremental cursors ar
   for (const filters of [{ beforeId: 0 }, { afterId: -1 }, { afterId: 'bad' }, { beforeId: 2, afterId: 0 }]) await assert.rejects(r.hooks.chat.listMessages(1, 1, filters), /游标/);
 });
 
-test('large chat history fetches one body window and only unread metadata; participant reads are batched', async () => {
+test('large chat history fetches one body window with bounded receipt metadata and batched participants', async () => {
   const f = chatFixture(1105);
   f.hl_chat_messages[1103].readBy = [2];
   const r = runtime(f);
@@ -235,8 +237,17 @@ test('large chat history fetches one body window and only unread metadata; parti
   const bodyReads = r.reads.filter(row => row.name === 'hl_chat_messages' && row.kind === 'get' && !row.fields);
   assert.equal(bodyReads.length, 1); assert.equal(bodyReads[0].returned, 81);
   const metadata = r.reads.filter(row => row.name === 'hl_chat_messages' && row.fields);
-  assert.equal(metadata.length, 1); assert.equal(metadata[0].returned, 1);
-  assert.ok(r.reads.filter(row => ['hl_users', 'hl_profiles'].includes(row.name)).length <= 2);
+  const unreadMetadata = metadata.filter(row => row.query.receiverId);
+  assert.equal(unreadMetadata.length, 1); assert.equal(unreadMetadata[0].returned, 1);
+  const receipts = metadata.filter(row => row.query.senderId?.kind === 'in'
+    && row.query.senderId.values.includes(1) && row.query.senderId.values.includes('1'));
+  assert.equal(receipts.length, 1); assert.equal(receipts[0].returned, 100);
+  assert.ok(metadata.every(row => !row.fields.content && !row.fields.voiceFileID));
+  const participantReads = r.reads.filter(row => ['hl_users', 'hl_profiles'].includes(row.name));
+  assert.equal(participantReads.filter(row => row.fields).length, 2, 'participant projections stay batched');
+  const entitlementUsers = participantReads.filter(row => !row.fields);
+  assert.ok(entitlementUsers.length <= 2, 'authorization and receipt entitlement checks are bounded per request');
+  assert.ok(entitlementUsers.every(row => row.name === 'hl_users' && row.query.id === 1 && row.returned === 1));
   assert.ok(r.fixtures.hl_chat_messages[1103].readBy.includes(1));
   assert.equal(result.conversation.unreadCount, 0);
   assert.equal(r.writes.filter(row => row.name === 'hl_chat_messages').length, 1);
@@ -262,6 +273,8 @@ test('message sequence and cursors use stable IDs even when creation timestamps 
 test('participant query finds own conversation beyond 1000 unrelated rows, including string participant IDs', async () => {
   const f = fixture(0);
   f.hl_matchmakers[0].certificationStatus = 0;
+  f.hl_vip_entitlements = [{ _id: 'vip_user_1', userId: 1, legacyLifetime: true, grants: [] }];
+  f.hl_match_records = [{ _id: 'pair-7', id: 7, userAId: 1, userBId: 2, status: 'pending' }];
   f.hl_conversations = Array.from({ length: 1000 }, (_, index) => ({ id: index + 1, status: 'active', participantIds: [index + 100, index + 200], participantKey: `${index + 100}:${index + 200}`, conversationType: 'member_pair' }));
   f.hl_conversations.push({ id: 1001, status: 'active', participantIds: ['1', '2'], participantKey: '1:2', conversationType: 'member_pair', matchRecordId: 7 });
   const r = runtime(f);
@@ -276,7 +289,7 @@ test('free-member premium chat guards remain enforced after scoped conversation 
   f.hl_conversations = [{ _id: 'premium-chat', id: 1, status: 'active', participantIds: [1, 2], participantKey: '1:2', conversationType: 'member_pair', chatOpenReason: 'mutual_favorite' }];
   const r = runtime(f);
   assert.equal((await r.hooks.chat.listConversations(1)).total, 0);
-  await assert.rejects(r.hooks.chat.listMessages(1, 1), /开通会员/);
+  await assert.rejects(r.hooks.chat.listMessages(1, 1), error => error.code === 40302);
   assert.equal(r.writes.length, 0);
 });
 

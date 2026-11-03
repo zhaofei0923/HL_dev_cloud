@@ -1,11 +1,8 @@
-import { chatApi, ChatConversation, ChatMessage } from '../services/chat'
+import { chatApi, ChatConversation, ChatMessage, ChatMessagePage } from '../services/chat'
 import { pageSessionScope } from './page-session'
 import {
   cancelChatVoiceRecording,
   resolveChatVoiceUrls,
-  startChatVoiceRecording,
-  stopChatVoiceRecording,
-  uploadChatVoice,
   voiceDurationText
 } from './chat-voice'
 
@@ -39,16 +36,6 @@ function normalizeMessage(row: ChatMessage): MessageItem {
   }
 }
 
-function errorText(err: unknown) {
-  if (!err) return ''
-  if (typeof err === 'string') return err
-  if (typeof err === 'object') {
-    const value = err as { errMsg?: unknown; message?: unknown }
-    return String(value.errMsg || value.message || '')
-  }
-  return String(err)
-}
-
 function permissionDenied(err: unknown) {
   const code = err && typeof err === 'object' ? Number((err as { code?: unknown }).code) : 0
   return code === 401 || code === 403 || Math.floor(code / 100) === 401 || Math.floor(code / 100) === 403
@@ -60,11 +47,21 @@ function mergeMessages(existing: MessageItem[], incoming: MessageItem[]) {
   return Array.from(byId.values()).sort((a, b) => Number(a.id) - Number(b.id))
 }
 
+function applyReadReceipts(messages: MessageItem[], result: ChatMessagePage) {
+  const allowed = result.conversation?.canViewReadReceipts === true
+  const receipts = new Map((result.readReceipts || []).map(row => [Number(row.id), row.readStatus]))
+  return messages.map(message => {
+    const { readStatus, ...rest } = message
+    const next = receipts.get(Number(message.id)) || readStatus
+    return allowed && message.isMine && (next === 'read' || next === 'unread')
+      ? { ...rest, readStatus: next } : rest
+  })
+}
+
 function defineChatPage<TData extends WechatMiniprogram.Page.DataOption, TCustom extends WechatMiniprogram.Page.CustomOption>(definition: WechatMiniprogram.Page.Options<TData, TCustom> & { data: TData }) { return definition }
 
 export function createChatPageDefinition() {
   let audioContext: WechatMiniprogram.InnerAudioContext | null = null
-  let voicePressing = false
 
   function stopAudio(page?: { setData(data: Record<string, unknown>): void }) {
     if (audioContext) {
@@ -100,7 +97,8 @@ export function createChatPageDefinition() {
       historyLoading: false,
       hasMoreHistory: false,
       refreshing: false,
-      errorNote: ''
+      errorNote: '',
+      membershipRequired: false
     },
 
     onLoad(options: Record<string, string | undefined>) {
@@ -116,7 +114,6 @@ export function createChatPageDefinition() {
     },
 
     onHide() {
-      voicePressing = false
       stopAudio(this)
       cancelChatVoiceRecording()
       this.setData({ recording: false, recordingTip: '按住说话' })
@@ -128,7 +125,6 @@ export function createChatPageDefinition() {
       this._loadPromise = null
       this._historyPromise = null
       this._newMessagesPromise = null
-      voicePressing = false
       stopAudio(this)
       cancelChatVoiceRecording()
     },
@@ -136,7 +132,6 @@ export function createChatPageDefinition() {
     synchronizeChatSession() {
       const scope = pageSessionScope()
       if (scope !== this._chatScope) {
-        voicePressing = false
         stopAudio(this)
         cancelChatVoiceRecording()
         this._chatScope = scope
@@ -148,7 +143,7 @@ export function createChatPageDefinition() {
         this._newMessagesPromise = null
         this.setData({ conversation: null, messages: [], inputValue: '', scrollIntoView: '',
           hasMoreHistory: false, historyLoading: false, loading: false, refreshing: false,
-          sending: false, recording: false, errorNote: '' })
+          sending: false, recording: false, errorNote: '', membershipRequired: false })
       }
       if (!scope && !this._chatUnloaded) wx.redirectTo({ url: '/pages/index/index' })
       return scope
@@ -160,7 +155,7 @@ export function createChatPageDefinition() {
 
     chatReadError(err: unknown) {
       if (permissionDenied(err)) {
-        voicePressing = false
+        const membershipRequired = Number((err as { code?: number }).code) === 40302
         cancelChatVoiceRecording()
         this._chatLoaded = false
         this._latestReadId = 0
@@ -172,7 +167,8 @@ export function createChatPageDefinition() {
         this.setData({ conversation: null, messages: [], hasMoreHistory: false,
           loading: false, historyLoading: false, refreshing: false, sending: false,
           recording: false, recordingTip: '按住说话', inputValue: '',
-          errorNote: '会话权限已变化，请返回消息页重新进入。' })
+          membershipRequired,
+          errorNote: membershipRequired ? '开通VIP后可继续聊天，并查看对方是否已读。' : '会话权限已变化，请返回消息页重新进入。' })
       } else this.setData({ errorNote: '消息暂未更新，请点击刷新重试。' })
     },
 
@@ -192,7 +188,7 @@ export function createChatPageDefinition() {
           const last = messages[messages.length - 1]
           this._chatLoaded = true
           this._latestReadId = Number(result.latestId || last?.id || 0)
-          this.setData({ conversation: result.conversation, messages,
+          this.setData({ conversation: result.conversation, membershipRequired: false, messages: applyReadReceipts(messages, result),
             hasMoreHistory: result.hasMore === true, scrollIntoView: last ? last.anchorId : '' })
           if (result.conversation && result.conversation.title) {
             wx.setNavigationBarTitle({ title: result.conversation.title.slice(0, 12) })
@@ -221,7 +217,7 @@ export function createChatPageDefinition() {
           const result = await chatApi.listMessages(this.data.id, { beforeId: Number(first.id), pageSize: 80 })
           const incoming = await resolveChatVoiceUrls((result.messages || []).map(normalizeMessage))
           if (!this.chatRequestCurrent(scope, generation)) return
-          this.setData({ messages: mergeMessages(this.data.messages, incoming),
+          this.setData({ conversation: result.conversation, messages: applyReadReceipts(mergeMessages(this.data.messages, incoming), result),
             hasMoreHistory: result.hasMore === true, scrollIntoView: first.anchorId })
         } catch (err) {
           if (this.chatRequestCurrent(scope, generation)) this.chatReadError(err)
@@ -253,7 +249,8 @@ export function createChatPageDefinition() {
             const nextCursor = Number(last?.id || 0)
             if (nextCursor > cursor) this._latestReadId = nextCursor
             this.setData({ conversation: result.conversation,
-              ...(incoming.length ? { messages: mergeMessages(this.data.messages, incoming), scrollIntoView: last.anchorId } : {}) })
+              messages: applyReadReceipts(mergeMessages(this.data.messages, incoming), result),
+              ...(incoming.length ? { scrollIntoView: last.anchorId } : {}) })
             hasMore = result.hasMore === true && nextCursor > cursor
             cursor = nextCursor || cursor
           }
@@ -278,13 +275,23 @@ export function createChatPageDefinition() {
       this.setData({ messages: mergeMessages(this.data.messages, incoming), scrollIntoView: incoming[0].anchorId })
     },
 
+    openRelationship() {
+      const peerId = this.data.conversation?.peer?.id
+      if (this.data.conversation?.conversationType !== 'member_pair' || !peerId) return
+      wx.navigateTo({ url: `/pages/user/relationship-status?targetUserId=${peerId}` })
+    },
+
+    openMembership() {
+      wx.navigateTo({ url: '/pages/user/membership' })
+    },
+
     onInput(e: WechatMiniprogram.Input) {
       this.setData({ inputValue: e.detail.value })
     },
 
     toggleVoiceMode() {
-      if (this.data.sending || this.data.recording) return
-      this.setData({ voiceMode: !this.data.voiceMode })
+      this.setData({ voiceMode: false, recording: false })
+      wx.showToast({ title: '语音发送暂不可用，请发送文字消息', icon: 'none' })
     },
 
     async send() {
@@ -313,56 +320,14 @@ export function createChatPageDefinition() {
     },
 
     async startVoice() {
-      const scope = this.synchronizeChatSession()
-      const generation = this._chatGeneration
-      if (!scope || !this._chatLoaded || this.data.loading || this.data.sending || this.data.recording) return
-      voicePressing = true
-      try {
-        await startChatVoiceRecording()
-        if (!voicePressing || !this.chatRequestCurrent(scope, generation)) {
-          cancelChatVoiceRecording()
-          return
-        }
-        this.setData({ recording: true, recordingTip: '松开发送' })
-      } catch (err) {
-        if (!/permission denied/.test(errorText(err))) {
-          wx.showToast({ title: '录音启动失败', icon: 'none' })
-        }
-      }
+      this.toggleVoiceMode()
     },
 
     async finishVoice() {
-      const scope = this.synchronizeChatSession()
-      const generation = this._chatGeneration
-      voicePressing = false
-      if (!scope || !this.data.recording || this.data.sending) return
-      this.setData({ recording: false, recordingTip: '正在发送', sending: true })
-      wx.showLoading({ title: '发送中' })
-      try {
-        const record = await stopChatVoiceRecording()
-        if (!this.chatRequestCurrent(scope, generation)) return
-        const voiceFileID = await uploadChatVoice(record.tempFilePath)
-        if (!this.chatRequestCurrent(scope, generation)) return
-        const message = await chatApi.sendVoiceMessage(this.data.id, {
-          voiceFileID,
-          voiceDuration: record.durationSeconds,
-          voiceFormat: record.format,
-          voiceFileSize: record.fileSize
-        })
-        await this.appendSentMessage(message, scope, generation)
-      } catch (err) {
-        const text = errorText(err)
-        if (!/cancel/i.test(text)) {
-          wx.showToast({ title: /too short|not recording/i.test(text) ? '录音时间太短' : '语音发送失败', icon: 'none' })
-        }
-      } finally {
-        wx.hideLoading()
-        if (this.chatRequestCurrent(scope, generation)) this.setData({ sending: false, recordingTip: '按住说话' })
-      }
+      this.toggleVoiceMode()
     },
 
     cancelVoice() {
-      voicePressing = false
       if (!this.data.recording) return
       cancelChatVoiceRecording()
       this.setData({ recording: false, recordingTip: '按住说话' })

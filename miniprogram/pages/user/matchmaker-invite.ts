@@ -1,6 +1,5 @@
 import { loginByWechat } from '../../services/auth'
 import { memberApi } from '../../services/member'
-import { apiErrorMessage, request } from '../../services/api'
 import { extractInviteCode, invitePath, normalizeInviteCode } from '../../utils/invite'
 import { pageSessionScope } from '../../utils/page-session'
 
@@ -61,10 +60,11 @@ Page({
   _ordinaryScope: '',
   _inviteNeedsReload: false,
   _inviteTimer: null as ReturnType<typeof setTimeout> | null,
-  _activityScope: '',
-  _activityPending: null as Promise<void> | null,
+  _confirmingInvite: false,
 
   data: {
+    loggedIn: false,
+    loginLoading: false,
     code: '',
     source: 'share',
     sourceText: '微信链接',
@@ -92,7 +92,7 @@ Page({
       activityInvite: !!parsed.eventId || parsed.invalidEvent,
       sourceText: sourceText(parsed.source),
       autoMode: isAutoInviteSource(parsed.source),
-      actionText: isAutoInviteSource(parsed.source) ? '正在处理邀请' : '确认加入',
+      actionText: '确认加入',
       sharePath: parsed.code ? invitePath(parsed.code, parsed.source, {
         eventId: parsed.eventId,
         autoRegister: parsed.autoRegister
@@ -108,7 +108,6 @@ Page({
   onUnload() {
     this.onHide()
     this._inviteUnloaded = true
-    this._activityPending = null
   },
 
   onHide() {
@@ -117,7 +116,6 @@ Page({
     if (this._inviteTimer !== null) clearTimeout(this._inviteTimer)
     this._inviteTimer = null
     this._inviteNeedsReload = true
-    this._activityPending = null
     this.setData({ loading: false, submitting: false })
   },
 
@@ -125,10 +123,11 @@ Page({
     this._inviteVisible = true
     const reload = this._inviteNeedsReload
     this._inviteNeedsReload = false
-    if (this.data.eventId && (reload || (this._activityScope && this._activityScope !== pageSessionScope()))) {
+    if (this.data.eventId && reload) {
       return this.loadActivityInvite()
     }
-    if (!this.data.eventId && (reload || (this._ordinaryScope && this._ordinaryScope !== pageSessionScope()))) {
+    if (!this.data.eventId && (reload || this.data.loggedIn !== !!pageSessionScope()
+      || (this._ordinaryScope && this._ordinaryScope !== pageSessionScope()))) {
       this.setData({ invite: null, canSubmit: false, autoDone: false, autoMessage: '', errorText: '' })
       return this.loadInvite()
     }
@@ -137,59 +136,39 @@ Page({
 
   loadActivityInvite(): Promise<void> {
     if (!this.data.eventId || this._inviteUnloaded) return Promise.resolve()
-    const scope = pageSessionScope()
-    if (this._activityPending && this._activityScope === scope) return this._activityPending
-    if (this._activityScope !== scope) {
-      this._inviteGeneration += 1
-      this._activityPending = null
-      this._activityScope = scope
-      this.setData({ loading: false, activityReady: false, errorText: '' })
-    }
-    if (!scope) {
-      this.goRegistration()
-      return Promise.resolve()
-    }
-    const generation = ++this._inviteGeneration
-    this._activityScope = scope
-    const isCurrent = () => this._inviteVisible && !this._inviteUnloaded && generation === this._inviteGeneration
-      && pageSessionScope() === scope
-    this.setData({ loading: true, errorText: '', activityReady: false,
-      actionText: '查看活动并确认报名', autoMessage: '' })
-    const promise = Promise.resolve().then(async () => {
-      try {
-        const status = await request<{ completed: boolean }>('/user/minimum-registration', {
-          showError: false,
-          unauthorizedRedirect: `/pages/index/index?register=1&eventId=${encodeURIComponent(this.data.eventId)}`
-        })
-        if (!isCurrent()) return
-        if (!status.completed) {
-          this.goRegistration()
-          return
-        }
-        this.setData({ activityReady: true })
-        this.goSalonDetail()
-      } catch (err) {
-        if (!isCurrent()) {
-          return
-        }
-        this.setData({ errorText: apiErrorMessage(err) || '报名资料暂时无法读取，请重试。' })
-      } finally {
-        if (isCurrent()) this.setData({ loading: false })
-        if (this._activityPending === promise) this._activityPending = null
-      }
-    })
-    this._activityPending = promise
-    return promise
-  },
-
-  goRegistration() {
-    if (!this.data.eventId || this._inviteUnloaded) return
-    wx.redirectTo({ url: `/pages/index/index?register=1&eventId=${encodeURIComponent(this.data.eventId)}` })
+    this.setData({ loading: false, activityReady: false, errorText: '', actionText: '查看活动详情', autoMessage: '' })
+    this.goSalonDetail()
+    return Promise.resolve()
   },
 
   async ensureLogin() {
-    if (wx.getStorageSync('token')) return
+    if (pageSessionScope()) return
     await loginByWechat('user')
+  },
+
+  async confirmInvite() {
+    if (this._confirmingInvite || this.data.loading || this.data.submitting || this._inviteUnloaded
+      || !this._inviteVisible || !this.data.code || this.data.invalidEvent || this.data.eventId) return
+    this._confirmingInvite = true
+    const generation = this._inviteGeneration
+    const startingScope = pageSessionScope()
+    this.setData({ loginLoading: true, errorText: '' })
+    try {
+      await this.ensureLogin()
+      if (!this._inviteVisible || this._inviteUnloaded || generation !== this._inviteGeneration
+        || (startingScope && startingScope !== pageSessionScope()) || !pageSessionScope()) return
+      if (!this.data.invite || this._ordinaryScope !== pageSessionScope()) await this.loadInvite()
+      if (!this._inviteVisible || this._inviteUnloaded || !this.data.canSubmit) return
+      if (this.data.autoMode) await this.acceptShareInvite()
+      else await this.submitRequest()
+    } catch (err) {
+      if (this._inviteVisible && !this._inviteUnloaded && generation === this._inviteGeneration) {
+        this.setData({ errorText: errorMessage(err) })
+      }
+    } finally {
+      this._confirmingInvite = false
+      if (!this._inviteUnloaded) this.setData({ loginLoading: false })
+    }
   },
 
   isOrdinaryCurrent(scope: string, generation: number) {
@@ -220,8 +199,14 @@ Page({
     this.setData({ loading: true, errorText: '' })
     const generation = ++this._inviteGeneration
     const startingScope = pageSessionScope()
+    this.setData({ loggedIn: !!startingScope })
+    if (!startingScope) {
+      this._ordinaryScope = ''
+      this.setData({ loading: false, invite: null, canSubmit: true, autoDone: false, autoMessage: '',
+        actionText: '微信登录并确认加入' })
+      return
+    }
     try {
-      await this.ensureLogin()
       if (!this._inviteVisible || this._inviteUnloaded || generation !== this._inviteGeneration
         || (startingScope && startingScope !== pageSessionScope())) return
       const scope = pageSessionScope()
@@ -236,10 +221,9 @@ Page({
       this.setData({
         invite,
         autoMode,
-        canSubmit: !autoMode && !(invite && invite.alreadyAssigned),
-        actionText: autoMode ? '正在处理邀请' : '确认加入'
+        canSubmit: autoMode || !(invite && invite.alreadyAssigned),
+        actionText: '确认加入'
       })
-      if (autoMode) await this.acceptShareInvite()
     } catch (err: any) {
       if (!this._inviteVisible || this._inviteUnloaded || generation !== this._inviteGeneration
         || (startingScope && startingScope !== pageSessionScope())) return
@@ -282,7 +266,7 @@ Page({
         invite,
         canSubmit: false,
         autoDone: true,
-        actionText: '已自动注册',
+        actionText: '已加入',
         autoMessage: '已成为该主理人名下免费会员。'
       })
       wx.showToast({ title: result && result.alreadyAssigned ? '已是名下会员' : '注册成功', icon: 'success' })
@@ -342,10 +326,13 @@ Page({
     wx.switchTab({ url: '/pages/user/profile' })
   },
 
+  goBrowseActivities() {
+    wx.switchTab({ url: '/pages/user/salon' })
+  },
+
   goSalonDetail() {
     if (!this.data.eventId) return
-    const ready = this.data.activityReady && this._activityScope === pageSessionScope()
-    wx.redirectTo({ url: `/pages/user/salon-detail?id=${encodeURIComponent(this.data.eventId)}${ready ? '&registrationReady=1' : ''}` })
+    wx.redirectTo({ url: `/pages/user/salon-detail?id=${encodeURIComponent(this.data.eventId)}` })
   },
 
   onShareAppMessage() {

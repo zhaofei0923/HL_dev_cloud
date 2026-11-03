@@ -143,7 +143,7 @@ test('old resource reads and append results cannot repopulate another account or
 test('a delayed ordinary invite resolution cannot accept for another account or after leaving', async () => {
   for (const transition of ['account', 'hide', 'unload']) {
     const pending = deferred(); const accepted = [];
-    const instance = runtime('pages/user/matchmaker-invite.js', { memberApi: {
+    const instance = runtime('pages/user/matchmaker-invite.js', { source: true, memberApi: {
       resolveMatchmakerInvite: () => pending.promise, acceptMatchmakerInvite: async data => { accepted.push(data); return {}; }
     } });
     const loading = instance.page.onLoad({ code: 'MM001', source: 'matchmakerShare' }); await flush();
@@ -157,12 +157,12 @@ test('ordinary invite acceptance and manual application discard old completions 
   for (const source of ['matchmakerShare', 'scan']) {
     for (const transition of ['account', 'hide', 'unload']) {
       const pending = deferred();
-      const instance = runtime('pages/user/matchmaker-invite.js', { memberApi: {
+      const instance = runtime('pages/user/matchmaker-invite.js', { source: true, memberApi: {
         resolveMatchmakerInvite: async () => ({ alreadyAssigned: false }),
         acceptMatchmakerInvite: () => pending.promise, requestMatchmaker: () => pending.promise
       } });
-      let action = instance.page.onLoad({ code: 'MM001', source }); await flush();
-      if (source === 'scan') { await action; action = instance.page.submitRequest(); await flush(); }
+      await instance.page.onLoad({ code: 'MM001', source });
+      const action = instance.page.confirmInvite(); await flush();
       if (transition === 'account') switchAccount(instance); else instance.page[transition === 'hide' ? 'onHide' : 'onUnload']();
       pending.resolve({ invite: {}, status: 'pending' }); await action; instance.advance(1000);
       assert.equal(instance.calls.navigation.length, 0); assert.equal(instance.calls.toasts.length, 0);
@@ -172,10 +172,11 @@ test('ordinary invite acceptance and manual application discard old completions 
 
 test('the ordinary invite return timer rechecks account and is cancelled by hiding the page', async () => {
   for (const transition of ['account', 'hide', 'current']) {
-    const instance = runtime('pages/user/matchmaker-invite.js', { memberApi: {
+    const instance = runtime('pages/user/matchmaker-invite.js', { source: true, memberApi: {
       resolveMatchmakerInvite: async () => ({ alreadyAssigned: false }), acceptMatchmakerInvite: async () => ({ invite: {} })
     } });
     await instance.page.onLoad({ code: 'MM001', source: 'matchmakerShare' });
+    await instance.page.confirmInvite();
     if (transition === 'account') switchAccount(instance); else if (transition === 'hide') instance.page.onHide();
     instance.advance(1000);
     assert.equal(instance.calls.navigation.length, transition === 'current' ? 1 : 0);

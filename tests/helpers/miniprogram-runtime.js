@@ -156,6 +156,10 @@ function runtime(relativePath, overrides = {}) {
     const require = name => {
       const service = name.match(/(?:^|\/)services\/([^/]+)$/);
       if (service && services[service[1]]) return services[service[1]];
+      // Observe the new guest reader's sibling API import without changing the
+      // established boundaries of unrelated service regression fixtures.
+      if (name === './api' && path.dirname(modulePath) === path.join(miniprogramRoot, 'services')
+        && /^(?:public-browse|relationship|member-location)\.(?:ts|js)$/.test(path.basename(modulePath))) return services.api;
       if (name.endsWith('/utils/local-image')) return {
         resolveImageUrls: async values => values,
         chooseLocalImages: async () => [],

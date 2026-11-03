@@ -10,7 +10,7 @@ function registrationName(user = {}, profile = {}) {
 
 function isPublicRegistrationPhoto(value) {
   return typeof value === 'string'
-    && /^cloud:\/\/[^/]+\/hl_uploads\/profile\/[^?#]+\.(?:jpe?g|png|webp|gif|heic)$/i.test(value.trim());
+    && /^cloud:\/\/[^/]+\/(?:hl_uploads\/profile\/[^?#]+\.(?:jpe?g|png|webp|gif|heic)|hl_moderated\/images\/[a-f0-9]{64}\.(?:jpg|png))$/i.test(value.trim());
 }
 
 function registrationPhotos(user = {}, profile = {}) {

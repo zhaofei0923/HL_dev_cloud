@@ -4,11 +4,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
+const crypto = require('node:crypto');
 const apiPath = path.resolve(process.env.HL_API_TEST_PATH || path.join(__dirname, '..', 'cloudfunctions', 'hlApi', 'index.js'));
 const requireFromApi = createRequire(apiPath);
 const { activeAttendance, minimumRegistrationStatus, salonAvailability } = requireFromApi('./salon-policy');
 const plain = value => JSON.parse(JSON.stringify(value));
 const photo = id => `cloud://test-env.bucket/hl_uploads/profile/20261008/user-${id}.jpg`;
+const imageBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+const copiedPhoto = `cloud://test-env.bucket/hl_moderated/images/${crypto.createHash('sha256').update(imageBytes).digest('hex')}.png`;
 
 function fixture(count = 6) {
   return {
@@ -31,7 +34,7 @@ function fixture(count = 6) {
 
 function runtime(input, settings = {}) {
   const fixtures = structuredClone(input);
-  const reads = [], writes = [], photoRequests = [];
+  const reads = [], writes = [], photoRequests = [], securityRequests = [], imageDownloads = [], imageChecks = [], imageCopies = [];
   const versions = new Map();
   const op = (kind, values) => ({ kind, values });
   const keyFor = (name, id) => `${name}/${id}`;
@@ -137,8 +140,32 @@ function runtime(input, settings = {}) {
     }
   };
   const cloud = { init() {}, database: () => db, DYNAMIC_CURRENT_ENV: 'test-env',
-    getWXContext: () => ({ OPENID: settings.openid || 'wx-3', APPID: 'test-app' }),
-    openapi: { phonenumber: { async getPhoneNumber() { return { phoneInfo: { purePhoneNumber: settings.phone || '13500000003' } }; } } },
+    getWXContext: () => ({ OPENID: settings.openid || 'wx-3', APPID: 'test-app', ENV: 'test-env' }),
+    async downloadFile({ fileID }) {
+      imageDownloads.push(fileID);
+      if (settings.imageDownloadError) throw settings.imageDownloadError;
+      return { fileContent: Buffer.from(imageBytes), statusCode: 200 };
+    },
+    async uploadFile({ cloudPath, fileContent }) {
+      imageCopies.push({ cloudPath, fileContent: Buffer.from(fileContent) });
+      if (settings.imageCopyError) throw settings.imageCopyError;
+      return { fileID: `cloud://test-env.bucket/${cloudPath}` };
+    },
+    openapi: {
+      phonenumber: { async getPhoneNumber() { return { phoneInfo: { purePhoneNumber: settings.phone || '13500000003' } }; } },
+      security: { async msgSecCheck(request) {
+        securityRequests.push(structuredClone(request));
+        if (settings.contentSecurityError) throw settings.contentSecurityError;
+        return structuredClone(settings.contentSecurityResult === undefined
+          ? { errCode: 0, result: { suggest: 'pass', label: 100 }, traceId: 'fixture-security-pass' }
+          : settings.contentSecurityResult);
+      }, async imgSecCheck(request) {
+        imageChecks.push({ media: { contentType: request.media.contentType, value: Buffer.from(request.media.value) } });
+        if (settings.onImageCheck) settings.onImageCheck(fixtures, request, imageChecks.length);
+        if (settings.imageSecurityError) throw settings.imageSecurityError;
+        return structuredClone(settings.imageSecurityResult === undefined ? { errCode: 0 } : settings.imageSecurityResult);
+      } }
+    },
     async getTempFileURL({ fileList }) {
       photoRequests.push([...fileList]);
       if (settings.onPhotoResolution) settings.onPhotoResolution(fixtures);
@@ -148,7 +175,7 @@ function runtime(input, settings = {}) {
     }
   };
   const module = { exports: {} };
-  vm.runInNewContext(fs.readFileSync(process.env.HL_API_TEST_PATH || apiPath, 'utf8') + '\nexports.__test={salon,auth,admin,member,matchmaker,tokenService,minimumRegistrationView,saveMinimumRegistration,acceptMemberMatchmakerInvite,ensureChatConversation,createMemberIdentityClaimInvite,confirmMemberIdentityClaim};', {
+  vm.runInNewContext(fs.readFileSync(process.env.HL_API_TEST_PATH || apiPath, 'utf8') + '\nexports.__test={salon,auth,admin,member,matchmaker,chat,tokenService,minimumRegistrationView,saveMinimumRegistration,acceptMemberMatchmakerInvite,ensureChatConversation,createMemberIdentityClaimInvite,confirmMemberIdentityClaim};', {
     module, exports: module.exports,
     require(name) {
       if (name === 'wx-server-sdk') return cloud;
@@ -162,7 +189,8 @@ function runtime(input, settings = {}) {
     Buffer, setTimeout, clearTimeout,
     console: { log() {}, error() {}, warn() {} }
   }, { filename: apiPath });
-  return { hooks: module.exports.__test, main: module.exports.main, fixtures, reads, writes, photoRequests,
+  return { hooks: module.exports.__test, main: module.exports.main, fixtures, reads, writes, photoRequests, securityRequests,
+    imageDownloads, imageChecks, imageCopies,
     metrics: () => ({ conflicts, transactionCount }),
     token(userId) { return module.exports.__test.tokenService.sign({ userId, authVersion: 1, currentRole: 'user' }, { type: 'access' }); } };
 }
@@ -181,6 +209,300 @@ function claimFixture() {
   input.hl_members.push({ _id: 'member-200', id: 200, userId: 3, matchmakerId: 1, status: 1, memberNo: 'HL200' });
   return input;
 }
+
+function imageSubmissionFixture() {
+  const input = fixture();
+  Object.assign(input.hl_matchmakers[0], { matchmakerNo: 'MM000001', inviteCode: 'PRINCIPAL1',
+    inviteCodeStatus: 'active', inviteCodeUpdatedAt: '2026-01-01T00:00:00.000Z' });
+  input.hl_members.push({ _id: 'member-200', id: 200, userId: 3, matchmakerId: 1, status: 1 });
+  return input;
+}
+
+function imageSubmissionOperations() {
+  return [
+    { label: 'new login avatar', path: '/auth/wx-login', method: 'POST', openid: 'wx-new', data: { nickname: '新用户称呼', avatarUrl: photo(3) },
+      persisted(r) { return [r.fixtures.hl_users.find(row => row.openid === 'wx-new').avatarUrl]; } },
+    { label: 'existing login avatar', path: '/auth/wx-login', method: 'POST', userId: 3, data: { avatarUrl: photo(3) },
+      persisted(r) { return [r.fixtures.hl_users.find(row => row.id === 3).avatarUrl]; } },
+    { label: 'new profile photos', path: '/user/profile', method: 'PUT', userId: 3, data: { photos: [photo(3)] },
+      setup(input) { input.hl_profiles = input.hl_profiles.filter(row => row.userId !== 3); },
+      persisted(r) { return [r.fixtures.hl_users.find(row => row.id === 3).avatarUrl, ...r.fixtures.hl_profiles.find(row => row.userId === 3).photos]; } },
+    { label: 'existing profile photos', path: '/user/profile', method: 'PUT', userId: 3, data: { photos: [photo(3)] },
+      persisted(r) { return [r.fixtures.hl_users.find(row => row.id === 3).avatarUrl, ...r.fixtures.hl_profiles.find(row => row.userId === 3).photos]; } },
+    { label: 'minimum registration photos', path: '/user/minimum-registration', method: 'PUT', userId: 3,
+      data: { phone: '13812345678', nickname: '新的称呼', photos: [photo(3)] },
+      persisted(r) { return [r.fixtures.hl_users.find(row => row.id === 3).avatarUrl, ...r.fixtures.hl_profiles.find(row => row.userId === 3).photos]; } },
+    { label: 'manual member photo intake', userId: 1, hook: true,
+      data: { realName: '称呼3', phone: '13500000003', photos: [photo(3)] },
+      persisted(r) { return [r.fixtures.hl_users.find(row => row.id === 3).avatarUrl, ...r.fixtures.hl_profiles.find(row => row.userId === 3).photos]; } },
+    { label: 'principal member edit photos', path: '/member/200', method: 'PUT', userId: 1, data: { photos: [photo(3)] },
+      persisted(r) { return [r.fixtures.hl_users.find(row => row.id === 3).avatarUrl, ...r.fixtures.hl_profiles.find(row => row.userId === 3).photos]; } },
+    { label: 'salon create cover', path: '/salon/events', method: 'POST', userId: 1,
+      data: { title: '即将发布的活动', eventDate: '2099-02-01', coverImage: photo(3) },
+      persisted(r) { return [r.fixtures.hl_salon_events.find(row => row.id !== 1).coverImage]; } },
+    { label: 'salon edit cover', path: '/salon/events/1', method: 'PUT', userId: 1, data: { coverImage: photo(3) },
+      persisted(r) { return [r.fixtures.hl_salon_events[0].coverImage]; } },
+    { label: 'profile publication rechecks inherited photos', path: '/user/profile', method: 'PUT', userId: 3, data: { displayEnabled: true },
+      persisted(r) { return [r.fixtures.hl_users.find(row => row.id === 3).avatarUrl, ...r.fixtures.hl_profiles.find(row => row.userId === 3).photos]; } },
+    { label: 'principal publication rechecks inherited photos', path: '/member/200', method: 'PUT', userId: 1, data: { displayEnabled: true },
+      persisted(r) { return [r.fixtures.hl_users.find(row => row.id === 3).avatarUrl, ...r.fixtures.hl_profiles.find(row => row.userId === 3).photos]; } },
+    { label: 'salon republish rechecks inherited cover', path: '/salon/events/1', method: 'PUT', userId: 1, data: { title: '重新发布活动' },
+      setup(input) { Object.assign(input.hl_salon_events[0], { status: 'pending', coverImage: photo(3) }); },
+      persisted(r) { return [r.fixtures.hl_salon_events[0].coverImage]; } }
+  ];
+}
+
+async function submitImages(r, operation, extra = {}) {
+  const data = { ...operation.data, contentSecurityPassed: true, imageSecurityPassed: true, moderationStatus: 'passed', ...extra };
+  if (operation.hook) {
+    try { return { code: 0, data: await r.hooks.member.addManual(1, data) }; }
+    catch (error) { return { code: error.code, message: error.message }; }
+  }
+  return r.main({ method: operation.method, path: operation.path, token: operation.userId ? r.token(operation.userId) : '', data });
+}
+
+test('every avatar, profile, member and activity publication path rejects risky images or unavailable checking before business writes', async t => {
+  for (const outcome of [
+    { name: 'risky image', options: { imageSecurityResult: { errCode: 87014, errMsg: 'PRIVATE provider label' } }, code: 40061 },
+    { name: 'detector unavailable', options: { imageSecurityError: new Error('PRIVATE detector error') }, code: 50361 },
+    { name: 'storage copy unavailable', options: { imageCopyError: new Error('PRIVATE copy error') }, code: 50361 }
+  ]) for (const operation of imageSubmissionOperations()) await t.test(`${operation.label}: ${outcome.name}`, async () => {
+    const input = imageSubmissionFixture(); operation.setup?.(input);
+    const r = runtime(input, { ...outcome.options, ...(operation.openid ? { openid: operation.openid } : {}) });
+    const result = await submitImages(r, operation);
+    assert.equal(result.code, outcome.code);
+    assert.ok(r.imageChecks.length > 0, 'a client-supplied passed flag cannot bypass server detection');
+    assert.equal(r.writes.length, 0, 'a failed image gate must precede profiles, users, events, counters, entitlements and relationship writes');
+    assert.deepEqual(r.fixtures, input);
+    if (outcome.code === 40061) assert.equal(result.message, '内容含有违规信息，请修改后重试');
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE|provider label/);
+    if (outcome.name !== 'storage copy unavailable') assert.equal(r.imageCopies.length, 0);
+  });
+});
+
+test('all image publication paths persist the checked server copy rather than the writable original', async t => {
+  for (const operation of imageSubmissionOperations()) await t.test(operation.label, async () => {
+    const input = imageSubmissionFixture(); operation.setup?.(input);
+    const r = runtime(input, operation.openid ? { openid: operation.openid } : {});
+    const result = await submitImages(r, operation);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    assert.ok(r.imageChecks.length > 0);
+    assert.ok(r.imageCopies.length > 0);
+    const persisted = operation.persisted(r);
+    assert.ok(persisted.length > 0);
+    assert.ok(persisted.every(value => value === copiedPhoto), JSON.stringify(persisted));
+    assert.ok(r.imageCopies.every(row => row.cloudPath.startsWith('hl_moderated/images/') && row.fileContent.equals(imageBytes)));
+    assert.ok(r.imageChecks.every(row => row.media.contentType === 'image/png' && row.media.value.equals(imageBytes)));
+  });
+});
+
+test('profile and principal publication also recheck the old avatar when no profile photo remains', async () => {
+  for (const target of ['profile', 'member']) {
+    const input = imageSubmissionFixture(); input.hl_profiles[2].photos = [];
+    const r = runtime(input, { imageSecurityResult: { errCode: 87014 } });
+    const result = await r.main({ method: 'PUT', path: target === 'profile' ? '/user/profile' : '/member/200',
+      token: r.token(target === 'profile' ? 3 : 1), data: { displayEnabled: true, imageSecurityPassed: true } });
+    assert.equal(result.code, 40061);
+    assert.deepEqual(r.imageDownloads, [photo(3)]);
+    assert.equal(r.writes.length, 0);
+    assert.deepEqual(r.fixtures, input);
+  }
+});
+
+test('new image submissions cannot claim the system asset exemption or publish external URLs', async () => {
+  for (const photos of [['/assets/members/avatar-female-1.png'], ['https://untrusted.example/avatar.png']]) {
+    const input = imageSubmissionFixture();
+    const r = runtime(input);
+    const result = await r.main({ method: 'PUT', path: '/user/profile', token: r.token(3),
+      data: { photos, skipSystem: true, contentSecurityPassed: true, imageSecurityPassed: true } });
+    assert.equal(result.code, 40062);
+    assert.equal(r.imageChecks.length, 0);
+    assert.equal(r.writes.length, 0);
+    assert.deepEqual(r.fixtures, input);
+  }
+});
+
+test('profile and minimum form responses separate persistent approved photo IDs from temporary display URLs', async () => {
+  const r = runtime(imageSubmissionFixture());
+  const saved = await r.main({ method: 'PUT', path: '/user/profile', token: r.token(3), data: { photos: [photo(3)] } });
+  assert.equal(saved.code, 0);
+  const display = `https://public.test/${encodeURIComponent(copiedPhoto)}`;
+  assert.deepEqual(plain(saved.data.profile.photos), [copiedPhoto]);
+  assert.deepEqual(plain(saved.data.profile.photoDisplayUrls), [display]);
+  assert.equal(saved.data.avatarUrl, display);
+  const loaded = await r.main({ method: 'GET', path: '/user/profile', token: r.token(3) });
+  assert.equal(loaded.code, 0);
+  assert.deepEqual(plain(loaded.data.profile.photos), [copiedPhoto]);
+  assert.deepEqual(plain(loaded.data.profile.photoDisplayUrls), [display]);
+  const minimum = await r.main({ method: 'GET', path: '/user/minimum-registration', token: r.token(3) });
+  assert.equal(minimum.code, 0);
+  assert.equal(minimum.data.completed, true);
+  assert.deepEqual(plain(minimum.data.profile.photos), [copiedPhoto]);
+  assert.deepEqual(plain(minimum.data.profile.photoDisplayUrls), [display]);
+  assert.equal(r.fixtures.hl_users[2].avatarUrl, copiedPhoto);
+  assert.deepEqual(r.fixtures.hl_profiles[2].photos, [copiedPhoto]);
+  assert.ok(!JSON.stringify(r.fixtures).includes('https://public.test/'), 'temporary URLs must never replace stored image identities');
+});
+
+test('fresh voice sends remain closed until media moderation is configured and cannot update chat or unread counts', async () => {
+  const input = imageSubmissionFixture();
+  input.hl_conversations.push({ _id: 'c-10', id: 10, conversationType: 'member_matchmaker', participantIds: [1, 3],
+    status: 'active', unreadBy: { 1: 0, 3: 0 }, lastMessageContent: '' });
+  const r = runtime(input);
+  const result = await r.main({ method: 'POST', path: '/chat/conversations/10/messages', token: r.token(3),
+    data: { contentType: 'voice', content: 'cloud://test-env.bucket/hl_uploads/chat_voice/private.mp3',
+      voiceDuration: 2, contentSecurityPassed: true, mediaCheckPassed: true } });
+  assert.equal(result.code, 50363);
+  assert.equal(r.writes.length, 0);
+  assert.equal(r.securityRequests.length, 0);
+  assert.equal(r.imageChecks.length, 0);
+  assert.deepEqual(r.fixtures, input);
+});
+
+test('profile and member edits reject text or objects in numeric fields before any write or safety call', async () => {
+  for (const field of ['age', 'height']) {
+    for (const value of ['unreviewed content', { text: 'unreviewed content' }, ['30'], true, -1, '0x20', '1e2', 'Infinity']) {
+      for (const target of ['profile', 'member']) {
+        const input = fixture();
+        Object.assign(input.hl_matchmakers[0], { matchmakerNo: 'MM000001', inviteCode: 'PRINCIPAL1',
+          inviteCodeStatus: 'active', inviteCodeUpdatedAt: '2026-01-01T00:00:00.000Z' });
+        input.hl_members.push({ _id: 'm-3', id: 3, userId: 3, matchmakerId: 1, status: 1 });
+        const r = runtime(input);
+        const response = await r.main({ method: 'PUT', path: target === 'profile' ? '/user/profile' : '/member/3',
+          token: r.token(target === 'profile' ? 3 : 1), data: { [field]: value } });
+        assert.equal(response.code, 40001, `${target} ${field}: ${JSON.stringify(value)}`);
+        assert.deepEqual(r.fixtures, input);
+        assert.equal(r.writes.length, 0);
+        assert.equal(r.securityRequests.length, 0);
+      }
+    }
+  }
+});
+
+test('numeric profile fields preserve supported numbers, decimal strings, and empty values', async () => {
+  for (const field of ['age', 'height']) {
+    for (const value of [0, 30, 170.5, '30', ' 170.5 ', '+1.5', '.5', '0.0', null, '']) {
+      const r = runtime(fixture());
+      const response = await r.main({ method: 'PUT', path: '/user/profile', token: r.token(3), data: { [field]: value } });
+      assert.equal(response.code, 0, `${field}: ${JSON.stringify(value)}`);
+      assert.equal(r.fixtures.hl_profiles.find(row => row.userId === 3)[field], value);
+    }
+  }
+});
+
+test('recommendation notes are checked against the authenticated matchmaker before writes in either mode', async () => {
+  for (const mode of ['internal', 'external']) {
+    const input = fixture();
+    Object.assign(input.hl_matchmakers[0], { matchmakerNo: 'MM000001', inviteCode: 'PRINCIPAL1',
+      inviteCodeStatus: 'active', inviteCodeUpdatedAt: '2026-01-01T00:00:00.000Z' });
+    input.hl_members.push({ _id: 'm-3', id: 3, userId: 3, matchmakerId: 1, status: 1 });
+    const r = runtime(input, { contentSecurityResult: { errCode: 0, result: { suggest: 'risky' } } });
+    const response = await r.main({ method: 'POST', path: '/member/recommend', token: r.token(1),
+      data: { myMemberId: 3, mode, targetMemberId: 4, resourceUserId: 4, note: 'recommendation note under review' } });
+    assert.equal(response.code, 40061);
+    assert.equal(r.writes.length, 0);
+    assert.deepEqual(r.fixtures, input);
+    assert.equal(r.securityRequests.length, 1);
+    assert.equal(r.securityRequests[0].openid, 'wx-1');
+    assert.equal(r.securityRequests[0].scene, 2);
+    assert.equal(r.securityRequests[0].content, 'recommendation note under review');
+  }
+});
+
+test('flag-only profile publication checks inherited text before exposing the existing profile', async () => {
+  const input = fixture();
+  Object.assign(input.hl_profiles[2], { displayEnabled: false, selfIntro: 'previously stored introduction requiring review' });
+  const r = runtime(input, { contentSecurityResult: { errCode: 0, result: { suggest: 'review' } } });
+  const response = await r.main({ method: 'PUT', path: '/user/profile', token: r.token(3), data: { displayEnabled: true } });
+  assert.equal(response.code, 40061);
+  assert.equal(r.writes.length, 0);
+  assert.deepEqual(r.fixtures, input);
+  assert.equal(r.securityRequests.length, 1);
+  assert.ok(r.securityRequests[0].content.includes('previously stored introduction requiring review'));
+});
+
+test('unsafe, review and failed text checks prevent profile, nickname and activity writes through API routes', async t => {
+  const outcomes = [
+    ['risky', { contentSecurityResult: { errCode: 0, result: { suggest: 'risky', label: 20002 } } }, 40061],
+    ['review', { contentSecurityResult: { errCode: 0, result: { suggest: 'review', label: 20013 } } }, 40061],
+    ['unavailable', { contentSecurityError: new Error('PRIVATE_PROVIDER_PAYLOAD') }, 50361]
+  ];
+  const operations = [
+    { label: 'new login', path: '/auth/wx-login', method: 'POST', openid: 'wx-new',
+      data: { nickname: '新的用户称呼' } },
+    { label: 'existing login', path: '/auth/wx-login', method: 'POST', userId: 3,
+      data: { nickname: '新的用户称呼' } },
+    { label: 'profile create', path: '/user/profile', method: 'PUT', userId: 3,
+      data: { nickname: '新的用户称呼', selfIntro: '需要检测的自我介绍' },
+      setup(input) { input.hl_profiles = input.hl_profiles.filter(row => row.userId !== 3); } },
+    { label: 'minimum registration', path: '/user/minimum-registration', method: 'PUT', userId: 3,
+      data: { phone: '13812345678', nickname: '新的用户称呼', photos: [photo(3)] } },
+    { label: 'salon create', path: '/salon/events', method: 'POST', userId: 1,
+      data: { title: '需要检测的活动', description: '需要检测的活动介绍', eventDate: '2099-01-01' } },
+    { label: 'salon edit', path: '/salon/events/1', method: 'PUT', userId: 1,
+      data: { title: '需要检测的活动修改' } },
+    { label: 'chat send', path: '/chat/conversations/10/messages', method: 'POST', userId: 3,
+      data: { content: '需要检测的聊天内容' },
+      setup(input) { input.hl_conversations.push({ _id: 'c-10', id: 10, conversationType: 'member_matchmaker',
+        participantIds: [1, 3], status: 'active', unreadBy: { 1: 0, 3: 0 }, lastMessageContent: '' }); } }
+  ];
+  for (const [outcome, security, expectedCode] of outcomes) {
+    for (const operation of operations) await t.test(`${operation.label}: ${outcome}`, async () => {
+      const input = fixture();
+      operation.setup?.(input);
+      const r = runtime(input, { ...security, ...(operation.openid ? { openid: operation.openid } : {}) });
+      const result = await r.main({ method: operation.method, path: operation.path,
+        token: operation.userId ? r.token(operation.userId) : '',
+        data: { ...operation.data, openid: 'forged-client-openid', contentSecurityPassed: true } });
+      assert.equal(result.code, expectedCode);
+      assert.ok(r.securityRequests.length > 0, 'submission must invoke the SDK check');
+      assert.ok(r.securityRequests.every(request => request.openid === (operation.openid || `wx-${operation.userId}`)),
+        'caller-supplied OpenID cannot replace the authenticated author');
+      assert.equal(r.writes.length, 0, 'blocked submissions must not write content, counters, or conversation summaries');
+      assert.deepEqual(r.fixtures, input);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_PROVIDER_PAYLOAD|forged-client-openid/);
+    });
+  }
+});
+
+test('principal member edits and manual intake reject unsafe text before user, profile, entitlement or counter writes', async t => {
+  for (const operation of ['manual create', 'member edit']) await t.test(operation, async () => {
+    const input = fixture();
+    Object.assign(input.hl_matchmakers[0], { matchmakerNo: 'MM000001', inviteCode: 'PRINCIPAL1',
+      inviteCodeStatus: 'active', inviteCodeUpdatedAt: '2026-01-01T00:00:00.000Z' });
+    input.hl_members.push({ _id: 'member-200', id: 200, userId: 3, matchmakerId: 1, status: 1 });
+    const r = runtime(input, { contentSecurityResult: { errCode: 0, result: { suggest: 'risky', label: 20002 } } });
+    const attempt = operation === 'manual create'
+      ? r.hooks.member.addManual(1, { realName: '需要检测的称呼', phone: '13812345678', openid: 'forged-client-openid' })
+      : r.hooks.member.update(1, 200, { remark: '需要检测的会员备注', openid: 'forged-client-openid' });
+    await assert.rejects(attempt, error => error.code === 40061);
+    assert.ok(r.securityRequests.length > 0);
+    assert.ok(r.securityRequests.every(request => request.openid === 'wx-1'), 'manual changes use the principal author, not the target member');
+    assert.equal(r.writes.length, 0);
+    assert.deepEqual(r.fixtures, input);
+  });
+});
+
+test('passing checks allow a profile save and chat send using the authenticated author', async () => {
+  const input = fixture();
+  input.hl_conversations.push({ _id: 'c-10', id: 10, conversationType: 'member_matchmaker', participantIds: [1, 3],
+    status: 'active', unreadBy: { 1: 0, 3: 0 }, lastMessageContent: '' });
+  const r = runtime(input);
+  const profile = await r.main({ method: 'PUT', path: '/user/profile', token: r.token(3),
+    data: { realName: '林女士', selfIntro: '喜欢户外运动', openid: 'forged-client-openid' } });
+  assert.equal(profile.code, 0);
+  assert.equal(r.fixtures.hl_users[2].nickname, '林女士');
+  assert.equal(r.fixtures.hl_profiles[2].selfIntro, '喜欢户外运动');
+  assert.ok(r.securityRequests.some(request => request.content.includes('喜欢户外运动')));
+  const message = await r.main({ method: 'POST', path: '/chat/conversations/10/messages', token: r.token(3),
+    data: { content: '您好，很高兴认识您', openid: 'forged-client-openid' } });
+  assert.equal(message.code, 0);
+  assert.equal(r.fixtures.hl_chat_messages.length, 1);
+  assert.equal(r.fixtures.hl_chat_messages[0].content, '您好，很高兴认识您');
+  assert.equal(r.fixtures.hl_conversations[0].lastMessageContent, '您好，很高兴认识您');
+  assert.ok(r.securityRequests.every(request => request.openid === 'wx-3' && request.version === 2));
+  assert.ok(r.securityRequests.some(request => request.scene === 2 && request.content.includes('您好，很高兴认识您')));
+});
 
 test('new conversations use supported document-only transactions and concurrent creation returns one conversation', async () => {
   const r = runtime(fixture(), { strictMissingDocuments: true });

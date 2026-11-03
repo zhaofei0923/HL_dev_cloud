@@ -97,11 +97,11 @@
     </view>
 
     <view class="detail-action-dock">
-      <text class="detail-action-note">{{loading ? '正在确认当前资料与互动状态' : chatAccess === 'unknown' ? '暂未获取到互动状态，请稍后刷新' : chatAccess === 'allowed' ? '可以开始聊天，了解彼此' : chatAccess === 'membership_required' ? '已互相喜欢，开通会员后可聊天' : isFavorite ? '已表达喜欢，等待对方回应' : '送出爱心，让对方知道你的心意'}}</text>
+      <text class="detail-action-note">{{loading ? '正在确认当前资料与互动状态' : chatAccess === 'unknown' ? '暂未获取到互动状态，请稍后刷新' : chatAccess === 'allowed' ? '可以开始聊天，了解彼此' : chatAccess === 'membership_required' ? '资料免费查看，开通VIP后可聊天' : isFavorite ? '已表达喜欢，等待对方回应' : '送出爱心，让对方知道你的心意'}}</text>
       <button wx:if="{{isFavorite && !loading}}" class="detail-secondary-action" disabled="{{favoriteLoading || chatStarting}}" bindtap="toggleFavorite">撤回爱心</button>
       <button wx:else class="detail-secondary-action" bindtap="goBack">返回推荐</button>
       <button class="detail-primary-action" loading="{{chatStarting || favoriteLoading}}"
-        disabled="{{loading || chatStarting || favoriteLoading || (chatAccess === 'unavailable' && isFavorite)}}" bindtap="primaryAction">{{loading ? '确认中' : chatAccess === 'unknown' ? '刷新互动状态' : chatAccess === 'allowed' ? '发消息' : chatAccess === 'membership_required' ? '查看会员权益' : isFavorite ? '已送出爱心' : '送爱心'}}</button>
+        disabled="{{loading || chatStarting || favoriteLoading || (chatAccess === 'unavailable' && isFavorite)}}" bindtap="primaryAction">{{loading ? '确认中' : chatAccess === 'unknown' ? '刷新互动状态' : chatAccess === 'allowed' ? '发消息' : chatAccess === 'membership_required' ? '开通VIP聊天' : isFavorite ? '已送出爱心' : '送爱心'}}</button>
     </view>
   </block>
 

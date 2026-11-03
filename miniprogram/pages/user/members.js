@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+const member_location_1 = require("../../services/member-location");
 const member_1 = require("../../services/member");
 const api_1 = require("../../services/api");
 const member_format_1 = require("../../utils/member-format");
@@ -93,6 +94,7 @@ function normalizeMember(row) {
         userId: row.userId,
         ageText,
         primaryMeta,
+        distanceText: String(row.distanceText || ''),
         profileLine,
         cardTags,
         partnerPreview,
@@ -176,6 +178,9 @@ Page({
     _vipRequestGeneration: 0,
     _vipLoadPromise: null,
     data: {
+        guest: true,
+        locationEnabled: false,
+        locationBusy: false,
         category: 'recommend',
         categories: SHOWCASE_CATEGORIES,
         categoryDescription: '',
@@ -219,15 +224,43 @@ Page({
     },
     onShow() {
         this._showcaseUnloaded = false;
+        (0, user_navigation_1.syncUserTabBar)(this, 'members');
         const scope = this.sessionScope();
         if (!scope) {
-            (0, showcase_cache_1.readShowcaseCache)('', this.showcaseQuery());
-            wx.redirectTo({ url: '/pages/index/index' });
+            this.showGuestIntroduction();
             return;
         }
-        (0, user_navigation_1.syncUserTabBar)(this, 'members');
+        this.setData({ guest: false });
+        void this.loadLocation();
         const vip = this.loadVip();
         return Promise.all([vip, this.loadShowcaseWithCurrentAccess()]).then(() => undefined);
+    },
+    showGuestIntroduction() {
+        // Retained tabs must discard the previous account before showing a guest view.
+        this.onHide();
+        (0, showcase_cache_1.readShowcaseCache)('', this.showcaseQuery());
+        wx.removeStorageSync('selectedUserMember');
+        this._showcaseScope = '';
+        this._showcaseLoadedAt = 0;
+        this._showcaseQuery = null;
+        this._vipScope = '';
+        this._vipLoadedAt = 0;
+        this._vipExpireAt = 0;
+        this._advanceAfterMore = false;
+        this.setData({ guest: true, category: 'recommend', categoryDescription: '',
+            keyword: '', city: '', gender: '', draftKeyword: '', draftCity: '', draftGender: '',
+            ageMin: '', ageMax: '', education: '', maritalStatus: '', incomeRange: '',
+            draftAgeMin: '', draftAgeMax: '', draftEducation: '', draftMaritalStatus: '', draftIncomeRange: '',
+            isVip: false, membershipKnown: false, filterOpen: false, filterChips: [],
+            list: [], ...selectionState([], 0), total: 0, showcasePage: 1, hasMore: false,
+            loadingMore: false, paginationError: '', countText: '', gifts: [], giftPanelOpen: false,
+            giftLoading: false, favoriteQuota: null });
+    },
+    goGuestLogin() {
+        wx.navigateTo({ url: '/pages/index/index?login=1&returnTo=members' });
+    },
+    browseActivities() {
+        wx.switchTab({ url: '/pages/user/salon' });
     },
     onHide() {
         if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId) {
@@ -244,7 +277,7 @@ Page({
         this._vipLoadPromise = null;
         if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId)
             wx.hideLoading();
-        this.setData({ favoriteLoading: false, hideLoading: false, sendingGiftId: '',
+        this.setData({ locationBusy: false, favoriteLoading: false, hideLoading: false, sendingGiftId: '',
             actionEffect: '', actionAnimating: false, loading: false, loadingMore: false });
         this.invalidateShowcaseLoad();
         this._showcaseMorePromise = null;
@@ -268,7 +301,7 @@ Page({
         if (!isCurrent())
             return Promise.resolve();
         // Public recommendations do not depend on the separate VIP filter check.
-        if (this.data.category === 'recommend' && !this.hasAdvancedFilters())
+        if (!this.hasAdvancedFilters())
             return this.load(false, refresh);
         const reading = this.loadVip();
         const vipGeneration = this._vipRequestGeneration;
@@ -323,7 +356,7 @@ Page({
                     : new Date(overview.vipMembership?.expireAt || overview.expireAt || '').getTime() || 0;
                 this._vipLoadedAt = Date.now();
                 this.setData({ isVip, membershipKnown: true });
-                if (!isVip && (this.data.category !== 'recommend' || this.hasAdvancedFilters()))
+                if (!isVip && this.hasAdvancedFilters())
                     this.resetVipFilters();
                 return isVip;
             }
@@ -332,7 +365,7 @@ Page({
                     this._vipLoadedAt = 0;
                     this._vipExpireAt = 0;
                     this.setData({ isVip: false, membershipKnown: false });
-                    if (this.data.category !== 'recommend' || this.hasAdvancedFilters())
+                    if (this.hasAdvancedFilters())
                         this.resetVipFilters();
                     console.warn('load VIP access failed', err);
                 }
@@ -346,12 +379,70 @@ Page({
         this._vipLoadPromise = promise;
         return promise;
     },
+    async loadLocation() {
+        const scope = this.sessionScope();
+        const lifecycle = this._showcaseLifecycleGeneration;
+        try {
+            const state = await member_location_1.memberLocationApi.read();
+            if (this.isShowcasePageCurrent(scope, lifecycle))
+                this.setData({ locationEnabled: state.enabled });
+        }
+        catch (error) {
+            if (this.isShowcasePageCurrent(scope, lifecycle))
+                this.setData({ locationEnabled: false });
+            console.warn('Location state unavailable', error);
+        }
+    },
+    async toggleLocation() {
+        if (this.data.locationBusy)
+            return;
+        const scope = this.sessionScope();
+        const lifecycle = this._showcaseLifecycleGeneration;
+        if (!scope)
+            return;
+        const current = () => this.isShowcasePageCurrent(scope, lifecycle);
+        this.setData({ locationBusy: true });
+        try {
+            let state;
+            if (this.data.locationEnabled) {
+                state = await member_location_1.memberLocationApi.save({ enabled: false });
+            }
+            else {
+                const accepted = await new Promise(resolve => wx.showModal({
+                    title: '开启距离展示', content: '使用当前位置计算你与其他会员的大致距离。只保留模糊位置，展示约几公里，可随时关闭。',
+                    confirmText: '开启定位', success: result => resolve(result.confirm), fail: () => resolve(false)
+                }));
+                if (!accepted || !current())
+                    return;
+                const location = await new Promise((resolve, reject) => {
+                    wx.getLocation({ type: 'gcj02', success: resolve, fail: reject });
+                });
+                if (!current())
+                    return;
+                state = await member_location_1.memberLocationApi.save({ enabled: true, latitude: location.latitude, longitude: location.longitude });
+            }
+            if (!current())
+                return;
+            this.setData({ locationEnabled: state.enabled });
+            this.invalidateActionCache(scope);
+            this.invalidateShowcaseLoad();
+            await this.load(true);
+        }
+        catch (error) {
+            if (current())
+                wx.showToast({ title: (0, api_1.apiErrorMessage)(error) || '定位未开启，请检查微信定位授权后重试', icon: 'none' });
+        }
+        finally {
+            if (current())
+                this.setData({ locationBusy: false });
+        }
+    },
     goMembership() {
         wx.navigateTo({ url: '/pages/user/membership' });
     },
     resetVipFilters() {
         this.invalidateShowcaseLoad();
-        this.setData({ category: 'recommend', categoryDescription: '', ageMin: '', ageMax: '', education: '', maritalStatus: '', incomeRange: '',
+        this.setData({ ageMin: '', ageMax: '', education: '', maritalStatus: '', incomeRange: '',
             draftAgeMin: '', draftAgeMax: '', draftEducation: '', draftMaritalStatus: '', draftIncomeRange: '', list: [], ...selectionState([], 0) });
         this.updateFilterChips();
         void this.load(true);
@@ -615,17 +706,6 @@ Page({
         const category = SHOWCASE_CATEGORIES.find(item => item.id === e.currentTarget.dataset.category);
         if (!category || category.id === this.data.category)
             return Promise.resolve();
-        if (category.id !== 'recommend') {
-            const reading = this.loadVip();
-            const vipGeneration = this._vipRequestGeneration;
-            const allowed = await reading;
-            if (!this.isShowcasePageCurrent(scope, lifecycle) || vipGeneration !== this._vipRequestGeneration)
-                return;
-            if (!allowed) {
-                this.goMembership();
-                return;
-            }
-        }
         if (this.data.favoriteLoading || this.data.hideLoading || this.data.sendingGiftId || this.data.actionAnimating)
             return Promise.resolve();
         this.rememberSelection();

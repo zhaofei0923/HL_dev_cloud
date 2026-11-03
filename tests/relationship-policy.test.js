@@ -65,7 +65,7 @@ test('a newer inactive interaction overrides an older active duplicate', () => {
   assert.deepEqual(result.mutual, []);
 });
 
-test('only mutual-favorite-only conversations require premium access', () => {
+test('all member-pair conversations require premium while matchmaker service remains available', () => {
   assert.equal(requiresPremiumForConversation({
     conversationType: 'member_pair',
     chatOpenReason: 'mutual_favorite',
@@ -75,7 +75,7 @@ test('only mutual-favorite-only conversations require premium access', () => {
     conversationType: 'member_pair',
     chatOpenReason: 'mutual_favorite',
     matchRecordId: 88
-  }), false);
+  }), true);
   assert.equal(requiresPremiumForConversation({
     conversationType: 'member_matchmaker',
     chatOpenReason: 'mutual_favorite'
