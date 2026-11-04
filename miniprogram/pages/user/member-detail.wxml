@@ -7,7 +7,7 @@
         </swiper-item>
       </swiper>
       <view class="detail-gallery-shade"></view>
-      <text wx:if="{{!member.hasUploadedPhotos}}" class="photo-placeholder-badge detail-photo-placeholder">系统示意图 · 尚未上传本人照片</text>
+      <text wx:if="{{!member.hasUploadedPhotos}}" class="photo-placeholder-badge detail-photo-placeholder">系统示意图</text>
       <text class="photo-count">{{member.photos.length}} 张照片</text>
       <view class="detail-identity">
         <view class="detail-name-line">
@@ -20,16 +20,6 @@
           <text wx:for="{{member.profileTags}}" wx:key="*this" class="tag gold">{{item}}</text>
         </view>
       </view>
-    </view>
-
-    <view class="detail-scroll-cue">
-      <text>向下滑动查看详细资料</text>
-      <view class="detail-scroll-chevron"></view>
-    </view>
-
-    <view class="detail-content-heading">
-      <text class="detail-content-title">详细资料</text>
-      <text class="detail-content-note">了解 TA 的生活与期待</text>
     </view>
 
     <view class="card info-card detail-section">
@@ -82,13 +72,8 @@
       <text class="item-desc story-text">{{member.partnerText}}</text>
     </view>
 
-    <view class="privacy-note">
-      <text class="privacy-note-title">隐私说明</text>
-      <text class="privacy-note-copy">婚况、房产与车辆概况属于公开匹配资料；联系方式、验资材料、主理人备注和内部服务记录不会公开。</text>
-    </view>
     <view wx:if="{{member.userId}}" class="card detail-section detail-privileges">
       <text class="section-title">进一步了解TA</text>
-      <text class="item-desc">微信交换需双方同意；上线提醒由你主动开启。</text>
       <view class="detail-privilege-buttons">
         <button class="detail-privilege-button" data-section="exchanges" disabled="{{loading}}" bindtap="goPrivilege">交换微信 · VIP</button>
         <button class="detail-privilege-button" data-section="online" disabled="{{loading}}" bindtap="goPrivilege">上线提醒 · VIP</button>
@@ -97,7 +82,6 @@
     </view>
 
     <view class="detail-action-dock">
-      <text class="detail-action-note">{{loading ? '正在确认当前资料与互动状态' : chatAccess === 'unknown' ? '暂未获取到互动状态，请稍后刷新' : chatAccess === 'allowed' ? '可以开始聊天，了解彼此' : chatAccess === 'membership_required' ? '资料免费查看，开通VIP后可聊天' : isFavorite ? '已表达喜欢，等待对方回应' : '送出爱心，让对方知道你的心意'}}</text>
       <button wx:if="{{isFavorite && !loading}}" class="detail-secondary-action" disabled="{{favoriteLoading || chatStarting}}" bindtap="toggleFavorite">撤回爱心</button>
       <button wx:else class="detail-secondary-action" bindtap="goBack">返回推荐</button>
       <button class="detail-primary-action" loading="{{chatStarting || favoriteLoading}}"
@@ -107,7 +91,7 @@
 
   <view wx:else class="empty">
     <text class="empty-title">{{loading ? '正在加载档案' : unavailable ? '资料暂不可查看' : '资料加载失败'}}</text>
-    <text class="empty-note">{{loading ? '请稍候，正在整理会员资料。' : loadError}}</text>
+    <text wx:if="{{!loading && loadError}}" class="empty-note">{{loadError}}</text>
     <button wx:if="{{!loading && !unavailable}}" class="btn gold empty-btn" bindtap="load">重新加载</button>
     <button class="btn ghost empty-btn" bindtap="goBack">返回</button>
   </view>

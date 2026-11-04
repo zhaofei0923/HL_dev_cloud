@@ -1,9 +1,7 @@
 <view class="page recommend-page safe-bottom with-bottom-nav {{membershipKnown && !isVip ? 'with-vip-guide' : ''}}">
-  <view wx:if="{{guest}}" class="card">
+  <view wx:if="{{guest}}" class="card guest-entry-card">
     <text class="eyebrow">认识 IF.U</text>
     <text class="title">找到适合自己的相遇方式</text>
-    <text class="subtitle">推荐页提供会员资料浏览、条件筛选与表达喜欢。为保护会员资料，请在你愿意时登录后使用。</text>
-    <text class="section-note">你也可以先浏览公开活动，了解活动安排与报名规则。</text>
     <button class="btn" bindtap="goGuestLogin">登录后使用</button>
     <button class="btn ghost" bindtap="browseActivities">浏览活动</button>
   </view>
@@ -36,16 +34,15 @@
   </view>
 
   <view wx:if="{{membershipKnown && !isVip}}" class="special-zone-vip-guide" bindtap="goMembership"
-    aria-role="button" aria-label="资料免费查看，开通VIP后可聊天">
+    aria-role="button" aria-label="开通VIP">
     <view class="special-zone-vip-copy">
       <text class="special-zone-vip-title">先了解，再相遇</text>
-      <text class="special-zone-vip-note">资料免费查看，想聊天再开通 VIP</text>
     </view>
     <text class="special-zone-vip-action">开通 VIP ›</text>
   </view>
 
   <view class="distance-controls">
-    <text class="section-note">{{locationEnabled ? '已开启大致距离，位置7天后过期' : '开启定位，了解彼此的大致距离'}}</text>
+    <text class="distance-label">大致距离</text>
     <button class="distance-toggle" loading="{{locationBusy}}" disabled="{{locationBusy}}" bindtap="toggleLocation">{{locationEnabled ? '关闭定位' : '开启定位'}}</button>
   </view>
 
@@ -81,7 +78,7 @@
       <view class="quick-filter {{draftGender === '2' ? 'active' : ''}}" data-gender="2" bindtap="setGender">女士</view>
     </view>
     <view class="advanced-filter-heading"><text>高级筛选</text><text class="advanced-filter-note">VIP专属</text></view>
-    <view wx:if="{{!isVip}}" class="advanced-filter-lock" bindtap="goMembership">开通VIP，按年龄、学历、婚况和收入筛选 ›</view>
+    <view wx:if="{{!isVip}}" class="advanced-filter-lock" bindtap="goMembership">开通VIP解锁 ›</view>
     <view wx:else class="advanced-filter-grid">
       <input class="field-input advanced-age" type="number" maxlength="2" placeholder="最低年龄" value="{{draftAgeMin}}" data-field="draftAgeMin" bindinput="onAdvancedInput" />
       <input class="field-input advanced-age" type="number" maxlength="2" placeholder="最高年龄" value="{{draftAgeMax}}" data-field="draftAgeMax" bindinput="onAdvancedInput" />
@@ -182,7 +179,7 @@
 
     <view wx:else class="recommend-empty">
       <text class="empty-title">{{loading ? '正在加载会员' : emptyTitle}}</text>
-      <text class="empty-note">{{loading ? '请稍候，正在整理可公开展示的会员资料。' : emptyNote}}</text>
+      <text wx:if="{{!loading && emptyNote}}" class="empty-note">{{emptyNote}}</text>
       <view class="button-row empty-buttons">
         <button class="btn gold" loading="{{loading}}" disabled="{{loading}}" bindtap="load">重新加载</button>
         <button class="btn ghost" bindtap="toggleFilter">调整筛选</button>
@@ -196,7 +193,7 @@
     <view class="gift-panel-head">
       <view>
         <text class="gift-panel-title">赠送给 {{currentMember.displayName}}</text>
-        <text class="gift-panel-subtitle">免费虚拟礼物 · 点击即送出，同时表达喜欢</text>
+        <text class="gift-panel-subtitle">免费赠送，同时表达喜欢</text>
       </view>
       <view
         class="gift-close {{sendingGiftId !== '' ? 'disabled' : ''}}"

@@ -2,7 +2,6 @@
   <view class="order-intro">
     <text class="order-eyebrow">会员服务</text>
     <view class="order-heading-row"><text class="order-title">我的订单</text><text wx:if="{{initialized}}" class="order-count">共 {{total}} 笔</text></view>
-    <text class="order-subtitle">查看VIP会员与人工牵线服务的购买记录</text>
   </view>
 
   <view wx:if="{{loading && !list.length}}" class="order-empty" aria-role="status">正在读取订单…</view>
@@ -10,7 +9,7 @@
     <text>{{errorText}}</text><button class="order-text-button" bindtap="retry" disabled="{{loading || refreshing}}">重新读取</button>
   </view>
   <view wx:if="{{initialized && !list.length && !errorText && !loading}}" class="order-empty">
-    <text class="order-empty-title">暂无订单</text><text class="order-subtitle">购买会员或人工牵线服务后，可在这里查看记录。</text>
+    <text class="order-empty-title">暂无订单</text>
   </view>
 
   <view class="order-list">

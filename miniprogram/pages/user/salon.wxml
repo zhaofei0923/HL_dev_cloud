@@ -1,8 +1,6 @@
 <view class="page safe-bottom with-bottom-nav salon-page">
   <view class="salon-heading">
     <text class="salon-title">活动</text>
-    <text class="salon-note">选择合适的时间与地点，线下轻松认识彼此。</text>
-    <text wx:if="{{!loggedIn}}" class="section-note">可直接浏览活动与详情，决定报名时再自愿登录。</text>
   </view>
 
   <view class="segment">

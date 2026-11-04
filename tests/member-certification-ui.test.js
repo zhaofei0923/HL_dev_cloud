@@ -420,7 +420,7 @@ test('certification interface explains private material handling and keeps asset
   assert.ok(profile.includes('onAssetPreferenceChange'));
   assert.ok(application.includes('材料仅用于认证审核'));
   assert.ok(application.includes('每份不超过500 KB'));
-  assert.ok(profile.includes('小程序内上传材料，认证状态以后台审核结果为准'));
+  assert.ok(profile.includes('certificationsError ? \'状态未读取\' : item.state'));
   assert.ok(application.indexOf('certification-application') < application.indexOf('class="card certification-materials"'));
   assert.ok(application.includes('最高已取得学历'));
   assert.ok(application.includes('仅作为辅助材料'));

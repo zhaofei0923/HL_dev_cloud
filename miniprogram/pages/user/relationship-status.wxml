@@ -1,8 +1,7 @@
 <view class="page safe-bottom relationship-page">
   <view class="card status-card">
-    <text class="eyebrow">相遇之后</text>
     <text class="title">{{relationshipStatus === 'coupled' ? '已脱单' : '成功脱单'}}</text>
-    <text class="subtitle">{{relationshipStatus === 'coupled' ? '恭喜相遇。你的资料已隐藏，不再进入公开推荐。' : '确认已脱单后，自动隐藏资料，让相处回到生活。'}}</text>
+    <text class="subtitle">{{relationshipStatus === 'coupled' ? '资料已隐藏，不再公开推荐。' : '确认脱单后自动隐藏资料。'}}</text>
     <button wx:if="{{relationshipStatus !== 'coupled'}}" class="btn status-action" disabled="{{!ready || busy}}" loading="{{busy}}" bindtap="declareSuccess">我已成功脱单</button>
     <button wx:else class="btn secondary status-action" disabled="{{!ready || busy}}" bindtap="restoreSingle">恢复单身状态</button>
   </view>
@@ -27,12 +26,12 @@
 
   <view class="card">
     <text class="section-title">邀请脱单</text>
-    <text class="section-note">选择已匹配的人发出邀请；对方接受后，双方均为已脱单并隐藏资料。</text>
-    <text wx:if="{{targetUnavailable}}" class="section-note">当前对象已不在有效匹配中，请选择其他匹配对象。</text>
+    <text class="section-note">对方接受后，双方脱单并隐藏资料。</text>
+    <text wx:if="{{targetUnavailable}}" class="section-note">当前对象不可选，请重新选择。</text>
     <picker wx:if="{{candidates.length}}" mode="selector" range="{{candidates}}" range-key="displayName" value="{{selectedIndex < 0 ? 0 : selectedIndex}}" disabled="{{!ready || busy}}" bindchange="onCandidateChange">
       <view class="relationship-picker">{{selectedName || '请选择匹配对象'}}<text class="picker-arrow">›</text></view>
     </picker>
-    <text wx:else class="section-note empty-note">暂无有效匹配对象，你仍可单独确认自己的脱单状态。</text>
+    <text wx:else class="section-note empty-note">暂无可邀请对象</text>
     <button class="btn status-action" disabled="{{!ready || busy || selectedIndex < 0}}" bindtap="invitePartner">邀请 Ta 一起脱单</button>
   </view>
 
@@ -45,7 +44,7 @@
 
   <view wx:if="{{selectedIndex >= 0}}" class="card">
     <text class="section-title">解除与 {{selectedName}} 的匹配</text>
-    <text class="section-note">解除后取消双方心动并停止聊天。请选择原因：</text>
+    <text class="section-note">解除后取消双方心动，停止聊天。</text>
     <picker mode="selector" range="{{reasonOptions}}" value="{{reasonIndex < 0 ? 0 : reasonIndex}}" disabled="{{!ready || busy}}" bindchange="onReasonChange">
       <view class="relationship-picker">{{reasonIndex < 0 ? '请选择解除原因' : reasonOptions[reasonIndex]}}<text class="picker-arrow">›</text></view>
     </picker>

@@ -1,21 +1,22 @@
 <view class="page safe-bottom payment-cancel-page">
   <view class="payment-cancel-intro">
-    <text class="eyebrow">会员服务 · 支付结果</text>
-    <text class="title">{{order.status === 'paid' ? '原订单已支付' : order.status === 'refunded' ? '原订单已退款' : '已退出本次支付'}}</text>
-    <text class="subtitle">{{order.status === 'paid' ? order.resultText : '你已关闭微信支付窗口。付款和权益状态以原订单的核验结果为准。'}}</text>
+    <text class="title">{{order.status === 'paid' ? '原订单已支付' : order.status === 'refunded' ? '原订单已退款' : order.isCancelled ? '订单已取消' : '已退出本次支付'}}</text>
   </view>
   <view class="card payment-cancel-order">
     <text class="section-title">原订单状态</text>
     <text wx:if="{{loading}}" class="item-desc">正在读取订单…</text>
-    <block wx:elif="{{order}}">
+    <text wx:if="{{cancelling && !order}}" class="item-desc">正在处理取消请求…</text>
+    <block wx:if="{{order}}">
       <view class="payment-cancel-summary"><text>{{order.planTitle}}</text><text>{{order.amountText}}</text></view>
       <text class="payment-cancel-status">{{order.statusText}}</text>
-      <text class="item-desc">{{order.resultText}}</text>
+      <text wx:if="{{order.status !== 'closed'}}" class="item-desc">{{order.resultText}}</text>
       <text class="payment-cancel-number">订单号 {{order.outTradeNo}}</text>
     </block>
-    <text wx:else class="item-desc">{{errorText}}</text>
-    <text wx:if="{{!order || order.status === 'pending' || order.status === 'confirming'}}" class="payment-cancel-hint">如已扣款，请勿重复付款。可返回会员页查询微信支付结果。</text>
-    <button class="btn ghost" bindtap="refresh" loading="{{loading}}" disabled="{{loading}}">刷新订单状态</button>
+    <text wx:if="{{!order && !loading && !cancelling}}" class="item-desc">{{errorText}}</text>
+    <text wx:if="{{order && errorText}}" class="payment-cancel-hint" aria-role="alert">{{errorText}}</text>
+    <text wx:if="{{!order || order.status === 'pending'}}" class="payment-cancel-hint">付款未确认，请勿重复付款。</text>
+    <button class="btn ghost" bindtap="refresh" loading="{{loading}}" disabled="{{loading || cancelling}}">刷新订单状态</button>
+    <button wx:if="{{order.canCancel}}" class="btn ghost payment-order-cancel" bindtap="cancelOrder" loading="{{cancelling}}" disabled="{{loading || cancelling}}">取消订单</button>
   </view>
   <view class="payment-cancel-actions">
     <button class="btn gold" bindtap="openOrder">查看原订单</button>

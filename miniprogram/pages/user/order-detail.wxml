@@ -4,7 +4,8 @@
   </view>
   <block wx:else>
     <view wx:if="{{loading && !order}}" class="order-empty" aria-role="status">正在读取订单详情…</view>
-    <view wx:if="{{errorText}}" class="order-notice" aria-role="alert"><text>{{errorText}}</text><button class="order-text-button" bindtap="refresh" disabled="{{loading || refreshing}}">重新读取</button></view>
+    <view wx:if="{{cancelling && !order}}" class="order-empty" aria-role="status">正在处理取消请求…</view>
+    <view wx:if="{{errorText}}" class="order-notice" aria-role="alert"><text>{{errorText}}</text><button class="order-text-button" bindtap="refresh" disabled="{{loading || refreshing || cancelling}}">重新读取</button></view>
 
     <block wx:if="{{order}}">
       <view class="order-detail-hero">
@@ -18,9 +19,11 @@
         <view class="order-fact"><text class="order-fact-label">创建时间</text><text class="order-fact-value">{{order.createdText}}</text></view>
         <view class="order-fact"><text class="order-fact-label">支付时间</text><text class="order-fact-value">{{order.paidText}}</text></view>
         <view wx:if="{{order.status === 'refunded'}}" class="order-fact"><text class="order-fact-label">退款时间</text><text class="order-fact-value">{{order.refundedText}}</text></view>
+        <view wx:if="{{order.isCancelled}}" class="order-fact"><text class="order-fact-label">取消时间</text><text class="order-fact-value">{{order.cancelledText}}</text></view>
         <view class="order-fact"><text class="order-fact-label">支付方式</text><text class="order-fact-value">{{order.paymentText}}</text></view>
       </view>
-      <view class="order-detail-actions"><button class="order-primary" bindtap="openPrivileges">查看我的权益</button><button class="order-secondary" bindtap="refresh" loading="{{refreshing}}" disabled="{{loading || refreshing}}">刷新订单状态</button></view>
+      <view class="order-detail-actions"><button class="order-primary" bindtap="openPrivileges">查看我的权益</button><button class="order-secondary" bindtap="refresh" loading="{{refreshing}}" disabled="{{loading || refreshing || cancelling}}">刷新订单状态</button></view>
+      <button wx:if="{{order.canCancel}}" class="order-secondary order-cancel-action" bindtap="cancelOrder" loading="{{cancelling}}" disabled="{{loading || refreshing || cancelling}}">取消订单</button>
     </block>
   </block>
 </view>

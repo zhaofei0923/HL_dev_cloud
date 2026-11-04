@@ -1,8 +1,6 @@
 <view class="page safe-bottom preferences-page">
   <view class="preferences-heading">
-    <text class="eyebrow">匹配偏好</text>
     <text class="title">我心仪的Ta</text>
-    <text class="subtitle">写下你的期待，也为相遇留一些可能。每项都可选“不限”，修改后记得保存。</text>
   </view>
   <view wx:if="{{loading}}" class="card"><text class="section-note">正在读取匹配偏好…</text></view>
   <view wx:if="{{error}}" class="preference-error" aria-live="polite">
@@ -39,7 +37,7 @@
       </picker>
       <view class="preference-row"><text class="preference-label">现居住地</text><input class="preference-city" value="{{form.city}}" maxlength="60" placeholder="不限 / 输入城市" data-field="city" bindinput="onInput" disabled="{{saving}}" aria-label="希望对方现居住地" /></view>
       <view class="preference-field">
-        <text class="preference-label">体重 <text class="preference-hint">留空表示不限</text></text>
+        <text class="preference-label">体重 <text class="preference-hint">留空不限</text></text>
         <view class="preference-range">
           <input type="number" maxlength="3" value="{{form.weightMin}}" placeholder="最低体重" data-field="weightMin" bindinput="onInput" disabled="{{saving}}" aria-label="最低体重" />
           <text>至</text>

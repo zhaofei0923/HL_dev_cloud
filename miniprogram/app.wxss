@@ -163,6 +163,10 @@ page {
   text-align: center;
 }
 
+.guest-entry-card .btn {
+  margin-top: 20rpx;
+}
+
 .btn::after {
   border: 0;
 }

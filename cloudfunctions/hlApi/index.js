@@ -3403,6 +3403,7 @@ function publicPaymentOrder(row) {
   delete safe.memberRecordId;
   delete safe.memberMatchmakerId;
   delete safe.virtualPaymentAttempts;
+  delete safe.cancellationProof;
   delete safe.paymentTestPlanCode;
   delete safe.paymentTestRunId;
   delete safe.userDocumentId;
@@ -3423,7 +3424,7 @@ const MEMBER_ORDER_FIELDS = Object.fromEntries([
   '_id', 'id', 'userId', 'outTradeNo', 'planCode', 'planTitle', 'amountFen', 'durationDays', 'status',
   'fulfillmentStatus', 'fulfillmentMessage', 'createdAt', 'updatedAt', 'paidAt', 'productType', 'serviceCount',
   'paymentProvider', 'refundedAt', 'transactionId', 'virtualPaymentEnv', 'paymentTestPlanCode', 'paymentTestRunId', 'lifetime',
-  'probeArchivedAt', ...MEMBER_ORDER_FLAGS, ...MEMBER_ORDER_SOURCES
+  'probeArchivedAt', 'cancelledAt', 'cancelReason', ...MEMBER_ORDER_FLAGS, ...MEMBER_ORDER_SOURCES
 ].map(field => [field, true]));
 
 function memberOrderUnavailable() {
@@ -3507,7 +3508,9 @@ function memberOrderDto(row, userId) {
     createdAt: row.createdAt, updatedAt: row.updatedAt || row.createdAt, paidAt: row.paidAt || null,
     productType, serviceCount, paymentProvider, ...(lifetimeActivation ? { lifetime: true } : {}),
     ...(row.refundedAt ? { refundedAt: row.refundedAt } : {}),
-    ...(row.transactionId ? { transactionId: row.transactionId } : {})
+    ...(row.transactionId ? { transactionId: row.transactionId } : {}),
+    ...(validDate(row.cancelledAt) && row.cancelReason === 'user_requested'
+      ? { cancelledAt: row.cancelledAt, cancelReason: row.cancelReason } : {})
   };
 }
 
@@ -3866,6 +3869,13 @@ async function allocateVirtualPaymentAttempt(trusted, config, observedAttempts) 
       throw createHttpError('已有新的支付尝试，请先查询订单，勿同时拉起付款', 409, 40905);
     }
     if (attempts.length >= 10) throw createHttpError('支付尝试次数较多，请联系工作人员核查', 409, 40905);
+    const slot = await optionalPaymentDocument(transaction.collection(C.counters).doc(`paymentPendingUser_${Number(current.userId)}`));
+    if (slot?.blockedReviewDocumentId) {
+      const blocked = await optionalPaymentDocument(transaction.collection(C.paymentOrders).doc(slot.blockedReviewDocumentId));
+      if (unresolvedPaymentOrder(blocked)) {
+        throw createHttpError('已有付款待核查，暂不能发起新支付，请联系工作人员', 409, 40906);
+      }
+    }
     const currentMember = member ? await optionalPaymentDocument(transaction.collection(C.members).doc(member._id)) : null;
     const currentUser = await optionalPaymentDocument(transaction.collection(C.users).doc(user._id));
     if ((current.productType !== 'vip' && !isDirectPurchaseOrder(current) && !activePaymentMember(current, currentMember)) || !activePaymentUser(current, currentUser, true)) {
@@ -4005,6 +4015,9 @@ async function reconcileVirtualPaymentOrder(trusted, config, origin = {}) {
       throw createHttpError('同一会员订单存在多笔虚拟支付，请联系工作人员复核重复付款', 409, 40908);
     }
     if (delivery.paymentReviewRequired === true) {
+      if (delivery.reviewReason === 'payment_after_cancellation') {
+        return { order: publicPaymentOrder(delivery), tradeState: 'SUCCESS' };
+      }
       throw createHttpError('会员订单存在重复付款待复核，请联系工作人员', 409, 40908);
     }
     if (safe.fulfillmentStatus !== 'fulfilled') return { order: safe, tradeState: 'SUCCESS' };
@@ -4311,6 +4324,25 @@ function sameProbeArchive(archive, order) {
   return [...fields].every(field => JSON.stringify(archive[field]) === JSON.stringify(order[field]));
 }
 
+// Only a current virtual order with an explicitly empty attempt ledger proves
+// that no signed cashier has been issued. Historical/missing ledgers fail closed.
+function noIssuedVirtualPaymentAttempt(order) {
+  return order.paymentProvider === 'virtual' && Array.isArray(order.virtualPaymentAttempts)
+    && order.virtualPaymentAttempts.length === 0 && !order.virtualProviderOrderNo;
+}
+
+function assertMemberOrderCancellationState(order) {
+  if (order.status === 'paid' || order.status === 'refunded' || order.transactionId || order.paidAt || order.refundedAt) {
+    throw createHttpError('订单已支付或已退款，不能取消，请查看订单结果', 409, 40905);
+  }
+  if (order.paymentReviewRequired || order.fulfillmentStatus === 'requires_review') {
+    throw createHttpError('订单仍待核查，暂不能取消，请联系工作人员', 409, 40906);
+  }
+  if (!['pending', 'confirming', 'closed', 'failed'].includes(order.status)) {
+    throw createHttpError('订单状态尚未确认，暂不能取消，请稍后查询', 409, 40905);
+  }
+}
+
 const membership = {
   async overview(userId) {
     const [user, assignment, normalPlans, unresolvedOrders, vipOverview] = await Promise.all([
@@ -4554,6 +4586,54 @@ const membership = {
     return publicPaymentOrder(row);
   },
 
+  async cancelOrder(userId, outTradeNo) {
+    const orderNo = assertVirtualOrderNumber(String(outTradeNo || ''));
+    const user = await getUserOrThrow(userId);
+    const order = await uniquePaymentOrder(orderNo, userId);
+    if (!order) throw createHttpError('支付订单不存在', 404, 40400);
+    trustedPaymentOrder(order, user.openid);
+    assertMemberOrderCancellationState(order);
+    const locallyUnissued = noIssuedVirtualPaymentAttempt(order);
+    if (!['closed', 'failed'].includes(order.status) && !locallyUnissued) {
+      if (paymentOrderProvider(order) !== 'virtual') {
+        throw createHttpError('原支付通道尚未确认关闭，暂不能取消，请先查询订单', 409, 40905);
+      }
+      // Query every issued attempt through the existing trusted settlement path.
+      // NOTPAY and "not found" remain payable and never authorize local closure.
+      const queried = await membership.virtualQuery(userId, { outTradeNo: orderNo });
+      assertMemberOrderCancellationState(queried.order);
+      if (queried.order.status !== 'closed') {
+        throw createHttpError('微信尚未确认关闭该订单，暂不能取消。请稍后查询，勿重复付款', 409, 40905);
+      }
+    }
+    return db.runTransaction(async transaction => {
+      const ref = transaction.collection(C.paymentOrders).doc(order._id);
+      const current = await optionalPaymentDocument(ref);
+      if (!current || Number(current.userId) !== Number(userId) || current.outTradeNo !== orderNo) {
+        throw createHttpError('支付订单不存在', 404, 40400);
+      }
+      trustedPaymentOrder(current, user.openid);
+      assertMemberOrderCancellationState(current);
+      if (current.cancelledAt && current.cancelReason === 'user_requested' && current.status === 'closed') {
+        return publicPaymentOrder(current);
+      }
+      const terminal = ['closed', 'failed'].includes(current.status);
+      // Allocation and cancellation update the same order document: a racing
+      // newly issued attempt or paid callback makes this transaction refuse.
+      if (!terminal && (!locallyUnissued || !noIssuedVirtualPaymentAttempt(current))) {
+        throw createHttpError('支付尝试或订单状态已变化，请重新查询后再取消', 409, 40905);
+      }
+      const timestamp = nowIso();
+      const patch = { status: 'closed', cancelledAt: timestamp, cancelReason: 'user_requested',
+        cancellationProof: terminal ? 'verified_terminal_order' : 'no_payment_attempts',
+        closedAt: current.closedAt || timestamp, updatedAt: timestamp };
+      // Do not fabricate a platform CLOSED tradeState for an unissued order.
+      await settlePaymentSlot(transaction, current, order._id, true);
+      await ref.update({ data: patch });
+      return publicPaymentOrder({ ...current, ...patch });
+    });
+  },
+
   async internalCheckout(data = {}) {
     assertPaymentCallbackToken(data.callbackToken);
     const order = await uniquePaymentOrder(data.outTradeNo);
@@ -4650,7 +4730,9 @@ const membership = {
         }
         return { order: currentOrder, member: currentMember, idempotent: true };
       }
-      if (!['pending', 'confirming'].includes(String(currentOrder.status))) {
+      const paidAfterCancellation = currentOrder.status === 'closed'
+        && currentOrder.cancelReason === 'user_requested' && !!currentOrder.cancelledAt;
+      if (!['pending', 'confirming'].includes(String(currentOrder.status)) && !paidAfterCancellation) {
         throw createHttpError('支付订单状态不可确认', 409, 40905);
       }
 
@@ -4659,7 +4741,7 @@ const membership = {
       // A verified payment is a money fact even after its original membership
       // was removed or reassigned. Keep it for review without resurrecting a
       // relationship, transferring rights, or issuing an unauthorized refund.
-      let canFulfill = activePaymentUser(currentOrder, currentUser)
+      let canFulfill = !paidAfterCancellation && activePaymentUser(currentOrder, currentUser)
         && (currentOrder.productType === 'vip' || isDirectPurchaseOrder(currentOrder) || (activePaymentMember(currentOrder, currentMember)
           && Number.isSafeInteger(Number(currentOrder.memberMatchmakerId)) && Number(currentOrder.memberMatchmakerId) > 0));
       let serviceChanged = false;
@@ -4676,7 +4758,7 @@ const membership = {
         activationRights = await vipMembership.fulfillOrder(transaction, currentOrder, timestamp);
         if (activationRights.requiresReview || activationRights.fulfilled !== true) canFulfill = false;
       }
-      const reviewReason = canFulfill ? '' : activationRights?.reviewReason || (!activePaymentUser(currentOrder, currentUser) ? 'account_changed'
+      const reviewReason = canFulfill ? '' : paidAfterCancellation ? 'payment_after_cancellation' : activationRights?.reviewReason || (!activePaymentUser(currentOrder, currentUser) ? 'account_changed'
         : !currentMember ? 'membership_missing'
         : Number(currentMember.status) !== 1 ? 'membership_inactive'
           : serviceChanged ? 'service_readiness_changed'
@@ -4687,8 +4769,11 @@ const membership = {
         confirmationRequestId: origin && typeof origin.requestId === 'string'
           && /^[a-zA-Z0-9_-]{1,128}$/.test(origin.requestId) ? origin.requestId : '',
         fulfillmentStatus: canFulfill ? 'fulfilled' : 'requires_review',
+        ...(paidAfterCancellation ? { paymentReviewRequired: true } : {}),
         reviewReason,
-        fulfillmentMessage: canFulfill ? '' : currentOrder.productType === 'matchmaker'
+        fulfillmentMessage: canFulfill ? '' : paidAfterCancellation
+          ? '订单取消后确认收到付款，请联系工作人员核查权益或退款，请勿重复付款。'
+          : currentOrder.productType === 'matchmaker'
           ? '已确认付款，主理人申请状态已变化，请联系工作人员核查开通或退款。'
           : '已确认付款，原会员关系已变更或无法核实，请联系工作人员核查权益或退款。',
         paidAt: Number.isFinite(successTime) ? new Date(successTime).toISOString() : timestamp,
@@ -4873,9 +4958,17 @@ const membership = {
 
   // 小程序虚拟支付：前端查单。本地订单状态 + 微信服务端查单对账后履约。
   async virtualQuery(userId, data = {}) {
+    const outTradeNo = assertVirtualOrderNumber(String(data.outTradeNo || ''));
+    const cancelled = await uniquePaymentOrder(outTradeNo, userId);
+    if (cancelled?.status === 'closed' && cancelled.cancelReason === 'user_requested' && cancelled.cancelledAt
+      && ['no_payment_attempts', 'verified_terminal_order'].includes(cancelled.cancellationProof)
+      && noIssuedVirtualPaymentAttempt(cancelled)) {
+      const user = await getUserOrThrow(userId);
+      trustedPaymentOrder(cancelled, user.openid);
+      return { order: publicPaymentOrder(cancelled) };
+    }
     const config = virtualPaymentConfig(process.env);
     if (!config.configured) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
-    const outTradeNo = assertVirtualOrderNumber(String(data.outTradeNo || ''));
     const user = await getUserOrThrow(userId);
     const payerOpenid = assertVirtualPayer(String(user.openid || '').trim());
     const trusted = await membership.internalQuery({
@@ -7478,6 +7571,10 @@ exports.main = async (event = {}, context = {}) => {
     }
     if (method === 'POST' && path === '/member/payment-virtual/query') {
       return ok(await membership.virtualQuery(session.userId, data));
+    }
+    const paymentOrderCancelMatch = path.match(/^\/member\/payment-orders\/([a-zA-Z0-9_-]+)\/cancel$/);
+    if (paymentOrderCancelMatch && method === 'POST') {
+      return ok(await membership.cancelOrder(session.userId, paymentOrderCancelMatch[1]));
     }
     const paymentOrderMatch = path.match(/^\/member\/payment-orders\/([a-zA-Z0-9_-]+)$/);
     if (paymentOrderMatch && method === 'GET') {

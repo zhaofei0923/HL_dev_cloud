@@ -130,6 +130,11 @@ exports.memberApi = {
             showError: false
         });
     },
+    cancelPaymentOrder(outTradeNo) {
+        return (0, api_1.request)(`/member/payment-orders/${encodeURIComponent(outTradeNo)}/cancel`, {
+            method: 'POST', data: {}, showError: false, unauthorizedRedirect: '/pages/index/index?returnTo=orders'
+        });
+    },
     virtualPaymentCheckout(outTradeNo, loginCode) {
         return (0, api_1.request)('/member/payment-virtual/checkout', {
             method: 'POST',

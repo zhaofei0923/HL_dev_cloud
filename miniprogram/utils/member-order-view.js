@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.memberOrderView = exports.memberOrderAuthError = exports.validMemberOrderNumber = void 0;
+exports.cancelledMemberOrderView = exports.memberOrderView = exports.memberOrderCancellationError = exports.canCancelMemberOrder = exports.memberOrderAuthError = exports.validMemberOrderNumber = void 0;
 const STATUSES = ['pending', 'confirming', 'paid', 'closed', 'failed', 'refunded'];
 const FULFILLMENT_STATUSES = ['', 'fulfilled', 'requires_review'];
 function validMemberOrderNumber(value) {
@@ -12,6 +12,18 @@ function memberOrderAuthError(error) {
     return code === 401 || code === 40100 || code === 40102;
 }
 exports.memberOrderAuthError = memberOrderAuthError;
+function canCancelMemberOrder(order) {
+    return !order.cancelledAt && order.fulfillmentStatus !== 'requires_review' && order.fulfillmentStatus !== 'fulfilled'
+        && ['pending', 'confirming', 'closed', 'failed'].includes(order.status);
+}
+exports.canCancelMemberOrder = canCancelMemberOrder;
+function memberOrderCancellationError(error) {
+    if (memberOrderAuthError(error))
+        return '登录状态已失效，请重新登录后查看订单。';
+    const message = error && typeof error === 'object' && 'message' in error ? String(error.message || '') : '';
+    return /[\u4e00-\u9fff]/.test(message) ? message.slice(0, 200) : '取消订单暂未完成，请刷新订单状态后重试。';
+}
+exports.memberOrderCancellationError = memberOrderCancellationError;
 function timeText(value) {
     if (!value)
         return '—';
@@ -62,8 +74,8 @@ function memberOrderView(order) {
         resultText = '付款结果正在核对，请勿重复付款。';
     }
     else if (order.status === 'closed') {
-        statusText = '已关闭';
-        resultText = '订单已关闭。';
+        statusText = order.cancelledAt ? '已取消' : '已关闭';
+        resultText = order.cancelledAt ? '订单已取消。' : '订单已关闭。';
     }
     else if (order.status === 'failed') {
         statusText = '支付未成功';
@@ -78,6 +90,9 @@ function memberOrderView(order) {
         outTradeNo: order.outTradeNo, planTitle: order.planTitle || '会员服务', status: order.status,
         productType: order.productType, amountText: `¥${(order.amountFen / 100).toFixed(2)}`,
         statusText, statusTone, resultText,
+        canCancel: canCancelMemberOrder(order),
+        isCancelled: order.status === 'closed' && !!order.cancelledAt,
+        cancelledAt: order.cancelledAt || null, cancelledText: timeText(order.cancelledAt),
         termText: order.productType === 'matchmaker' ? '主理人开通 · 长期有效' : order.productType === 'matchmaking'
             ? `${order.durationDays}天服务期 · ${order.serviceCount}次牵线` : `${order.durationDays}天VIP权益`,
         createdText: timeText(order.createdAt), paidText: timeText(order.paidAt), refundedText: timeText(order.refundedAt),
@@ -85,3 +100,14 @@ function memberOrderView(order) {
     };
 }
 exports.memberOrderView = memberOrderView;
+// A cancellation reply is authoritative for these fields only. Keep the last
+// validated order snapshot until the stricter order-detail DTO is refreshed.
+function cancelledMemberOrderView(previous, response) {
+    if (!response || response.outTradeNo !== previous.outTradeNo || response.status !== 'closed'
+        || typeof response.cancelledAt !== 'string' || !Number.isFinite(new Date(response.cancelledAt).getTime())) {
+        throw new Error('取消结果暂未确认，请刷新订单状态后重试。');
+    }
+    return { ...previous, status: 'closed', statusText: '已取消', statusTone: 'muted', resultText: '订单已取消。',
+        cancelledAt: response.cancelledAt, cancelledText: timeText(response.cancelledAt), isCancelled: true, canCancel: false };
+}
+exports.cancelledMemberOrderView = cancelledMemberOrderView;

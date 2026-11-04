@@ -6,12 +6,13 @@ const member_order_view_1 = require("../../utils/member-order-view");
 Page({
     _scope: '', _visible: false, _lifecycle: 0, _serial: 0, _outTradeNo: '',
     _readPromise: null,
-    data: { order: null, loading: false, refreshing: false, errorText: '', invalidLink: false },
+    _cancelPromise: null, _cancelScope: '', _cancelVersion: 0,
+    data: { order: null, loading: false, refreshing: false, cancelling: false, errorText: '', invalidLink: false },
     onLoad(options) {
         this._outTradeNo = String(options.outTradeNo || '');
         this.setData({ invalidLink: !(0, member_order_view_1.validMemberOrderNumber)(this._outTradeNo) });
     },
-    clearPrivate() { this.setData({ order: null, loading: false, refreshing: false, errorText: '' }); },
+    clearPrivate() { this.setData({ order: null, loading: false, refreshing: false, cancelling: false, errorText: '' }); },
     synchronizeSession() {
         const scope = (0, page_session_1.pageSessionScope)();
         if (scope !== this._scope) {
@@ -19,6 +20,9 @@ Page({
             this._serial += 1;
             this._readPromise = null;
             this.clearPrivate();
+            this._cancelVersion += 1;
+            this._cancelPromise = null;
+            this._cancelScope = '';
         }
         return scope;
     },
@@ -28,6 +32,16 @@ Page({
         if (!scope) {
             wx.redirectTo({ url: '/pages/index/index?returnTo=orders' });
             return Promise.resolve();
+        }
+        if (this._cancelPromise && this._cancelScope === scope) {
+            const lifecycle = this._lifecycle;
+            this.setData({ cancelling: true });
+            return this._cancelPromise.then(() => {
+                if (!this._visible || this._lifecycle !== lifecycle || (0, page_session_1.pageSessionScope)() !== scope || this._scope !== scope)
+                    return;
+                this.setData({ cancelling: false });
+                return this.loadOrder();
+            });
         }
         return this.loadOrder();
     },
@@ -45,11 +59,13 @@ Page({
     isCurrent(scope, lifecycle, serial) {
         return this.ownsRequest(scope, lifecycle, serial) && (0, page_session_1.pageSessionScope)() === scope;
     },
-    loadOrder(force = false) {
+    loadOrder(force = false, preserveCancellation = false) {
         if (!this._visible)
             return Promise.resolve();
         const scope = this.synchronizeSession();
         if (!scope || !this._visible || !(0, member_order_view_1.validMemberOrderNumber)(this._outTradeNo))
+            return Promise.resolve();
+        if (this._cancelPromise && this._cancelScope === scope)
             return Promise.resolve();
         if (!force && this._readPromise)
             return this._readPromise;
@@ -78,7 +94,11 @@ Page({
                 }
                 if (!this.isCurrent(scope, lifecycle, serial))
                     return;
-                this.setData({ order: null, errorText: '订单暂时无法读取，请确认订单后重试。' });
+                if (preserveCancellation && this.data.order?.isCancelled) {
+                    this.setData({ errorText: '订单已取消，最新详情暂时无法读取，请稍后刷新。' });
+                }
+                else
+                    this.setData({ order: null, errorText: '订单暂时无法读取，请确认订单后重试。' });
             }
             finally {
                 if (this.isCurrent(scope, lifecycle, serial)) {
@@ -91,12 +111,72 @@ Page({
         return promise;
     },
     onPullDownRefresh() {
+        if (this._cancelPromise) {
+            wx.stopPullDownRefresh();
+            return Promise.resolve();
+        }
         const reading = this.loadOrder(true);
         const scope = this._scope, lifecycle = this._lifecycle, serial = this._serial;
         return reading.finally(() => { if (this.isCurrent(scope, lifecycle, serial))
             wx.stopPullDownRefresh(); });
     },
     refresh() { return this.loadOrder(true); },
+    cancelOrder() {
+        if (!this._visible)
+            return Promise.resolve();
+        const scope = this.synchronizeSession();
+        if (this._cancelPromise && this._cancelScope === scope)
+            return this._cancelPromise;
+        const order = this.data.order;
+        if (!scope || !order?.canCancel || this.data.loading || this.data.refreshing)
+            return Promise.resolve();
+        const lifecycle = this._lifecycle, serial = ++this._serial, version = ++this._cancelVersion;
+        this._cancelScope = scope;
+        this.setData({ cancelling: true, errorText: '' });
+        const promise = Promise.resolve().then(async () => {
+            try {
+                if (!this.isCurrent(scope, lifecycle, serial))
+                    return;
+                const confirmed = await new Promise(resolve => wx.showModal({
+                    title: '取消订单', content: '确认取消这笔订单？系统会先核对支付结果；如已付款，不会直接取消或退款。',
+                    confirmText: '取消订单', cancelText: '保留订单',
+                    success: result => resolve(result.confirm), fail: () => resolve(false)
+                }));
+                if (!confirmed || !this.isCurrent(scope, lifecycle, serial))
+                    return;
+                const result = await member_1.memberApi.cancelPaymentOrder(order.outTradeNo);
+                if (!this.isCurrent(scope, lifecycle, serial))
+                    return;
+                const cancelled = (0, member_order_view_1.cancelledMemberOrderView)(order, result);
+                this.setData({ order: cancelled, cancelling: false });
+                this._cancelPromise = null;
+                await this.loadOrder(true, true);
+            }
+            catch (error) {
+                const currentScope = (0, page_session_1.pageSessionScope)();
+                if ((0, member_order_view_1.memberOrderAuthError)(error) && this.ownsRequest(scope, lifecycle, serial)
+                    && (!currentScope || currentScope === scope)) {
+                    this._serial += 1;
+                    this._readPromise = null;
+                    this.clearPrivate();
+                    wx.redirectTo({ url: '/pages/index/index?returnTo=orders' });
+                    return;
+                }
+                if (this.isCurrent(scope, lifecycle, serial))
+                    this.setData({ errorText: (0, member_order_view_1.memberOrderCancellationError)(error) });
+            }
+            finally {
+                if (this._cancelVersion === version) {
+                    this._cancelPromise = null;
+                    if (this._visible && this._scope === scope && (0, page_session_1.pageSessionScope)() === scope && this._lifecycle === lifecycle) {
+                        this.setData({ cancelling: false });
+                    }
+                }
+            }
+        });
+        this._cancelPromise = promise;
+        return promise;
+    },
     copyOrderNumber() {
         if (!this._visible || !this.synchronizeSession() || !this.data.order)
             return;

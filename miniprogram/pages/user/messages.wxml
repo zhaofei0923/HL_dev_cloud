@@ -1,16 +1,13 @@
 <view class="page with-bottom-nav messages-page">
-  <view wx:if="{{guest}}" class="card">
+  <view wx:if="{{guest}}" class="card guest-entry-card">
     <text class="eyebrow">沟通与心动</text>
     <text class="title">消息只属于你</text>
-    <text class="subtitle">登录后可查看会话、喜欢我的人和互相喜欢的关系，并在符合服务规则时开始沟通。</text>
-    <text class="section-note">当前无需登录即可浏览公开活动，决定参与后再选择登录。</text>
     <button class="btn" bindtap="goGuestLogin">登录后使用</button>
     <button class="btn ghost" bindtap="browseActivities">浏览活动</button>
   </view>
   <block wx:else>
   <view class="messages-intro">
     <text class="messages-title">消息</text>
-    <text class="messages-note">看看新的消息，也别错过对你的喜欢。</text>
   </view>
 
   <view class="relationship-shortcuts">
@@ -22,7 +19,6 @@
     <view class="row list-header conversation-header">
       <view>
         <text class="section-title">会话</text>
-        <text class="section-note">{{conversationLoading && !conversationInitialized ? '正在加载消息' : '按最新消息排序'}}</text>
       </view>
       <text class="conversation-total">{{conversationLoading && !conversationInitialized ? '刷新中' : total + ' 条'}}</text>
     </view>
@@ -59,7 +55,6 @@
     <view class="relationship-header compact">
       <view class="relationship-heading">
         <text class="section-title">心动关系</text>
-        <text class="section-note">喜欢我的与互相喜欢</text>
       </view>
       <text class="relationship-status {{isPremiumMember ? 'open' : 'locked'}}">{{relationshipInitialized && !relationshipPermissionVerified ? '待更新' : (isPremiumMember ? '已开通' : '会员可见')}}</text>
     </view>
@@ -95,7 +90,6 @@
       <view class="relationship-panel-head">
         <view>
           <text class="relationship-panel-title">{{relationshipType === 'incoming' ? '喜欢我的人' : '互相喜欢的人'}}</text>
-          <text class="relationship-panel-note">{{relationshipType === 'incoming' ? '回应后会移入互相喜欢' : '双方都表达了好感'}}</text>
         </view>
         <text class="relationship-panel-count">{{relationshipTotal}} 人</text>
       </view>
@@ -109,7 +103,6 @@
       <view wx:elif="{{relationshipLoading && !relationshipItems.length}}" class="relationship-state">
         <view class="relationship-loading-mark"></view>
         <text class="relationship-state-title">正在更新心动关系</text>
-        <text class="relationship-state-note">请稍候，正在读取最新互动。</text>
       </view>
 
       <view
@@ -165,7 +158,6 @@
 
       <view wx:else class="relationship-state empty">
         <text class="relationship-state-title">{{relationshipType === 'incoming' ? '暂时没有待回应的喜欢' : '还没有互相喜欢的人'}}</text>
-        <text class="relationship-state-note">{{relationshipType === 'incoming' ? '完善资料并多看看推荐会员，会提高被喜欢的机会。' : '双方都表达喜欢后，会自动出现在这里。'}}</text>
       </view>
 
       <button

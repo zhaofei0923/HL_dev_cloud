@@ -17,3 +17,4 @@
 .order-primary, .order-secondary { flex: 1; margin: 0; padding: 23rpx 12rpx; border-radius: 12rpx; font-size: 26rpx; font-weight: 700; line-height: 1.5; }
 .order-primary { background: #a35d45; color: #fffdf9; }
 .order-secondary { border: 1rpx solid #d9c9bb; background: #fffdf9; color: #86634f; }
+.order-cancel-action { width: 100%; margin-top: 16rpx; }

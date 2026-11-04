@@ -1,6 +1,7 @@
 import { bindWechatPhone } from '../../services/auth'
 import { chatApi } from '../../services/chat'
 import { pageSessionScope } from '../../utils/page-session'
+import { memberOrderCancellationError } from '../../utils/member-order-view'
 import { assertPaymentQueryResponse, isTransientPaymentQueryError, paymentRecord, virtualPaymentParamsFrom, type PaymentQueryState, type VirtualPaymentParams } from '../../utils/payment-response'
 import {
   memberApi,
@@ -309,6 +310,12 @@ Page({
   _submittedVirtualPaymentAttempts: [] as string[],
   _nativeSuccessOrderNo: '',
   _activeOrderPayment: null as MembershipPaymentConfig | null,
+  _cancellationVisible: true,
+  _cancellationLifecycle: 0,
+  _returnOrderChecking: false,
+  _cancelScope: '',
+  _cancelPromise: null as Promise<void> | null,
+  _cancelOutcome: null as { scope: string; orderId: string; order?: MembershipPaymentOrder; error?: string } | null,
   data: {
     loading: true,
     refreshing: false,
@@ -341,6 +348,9 @@ Page({
     orderNote: '',
     orderStatus: '',
     orderChecking: false,
+    orderCancelling: false,
+    orderCancelledAt: '',
+    orderCancellationError: '',
     orderCanResume: false,
     orderRequiresReview: false,
     orderPlanText: '',
@@ -355,7 +365,7 @@ Page({
   async switchProduct(e: WechatMiniprogram.TouchEvent) {
     const type = String(e.currentTarget.dataset.type || '')
     if (!['vip', 'matchmaking'].includes(type) || type === this.data.activeProductType) return
-    if (this.data.paymentStarting || this.data.confirming || this.data.orderChecking || this.data.orderRequiresReview
+    if (this.data.paymentStarting || this.data.confirming || this.data.orderChecking || this.data.orderCancelling || this.data.orderRequiresReview
       || (this.data.lastOrderId && !['paid', 'closed', 'failed', 'refunded'].includes(this.data.orderStatus))) {
       wx.showToast({ title: '请先确认当前订单结果', icon: 'none' })
       return
@@ -370,16 +380,59 @@ Page({
     wx.navigateTo({ url: `/pages/user/vip-privileges?type=${type === 'matchmaking' ? 'matchmaking' : 'vip'}` })
   },
 
-  onShow() {
+  async onShow() {
+    const returning = !this._cancellationVisible
     this._membershipUnloaded = false
-    return this.loadOverview()
+    this._cancellationVisible = true
+    const lifecycle = this._cancellationLifecycle
+    if (this._returnOrderChecking) {
+      this._returnOrderChecking = false
+      this.setData({ orderChecking: false })
+    }
+    const scope = pageSessionScope()
+    const pendingCancellation = this._cancelPromise && this._cancelScope === scope ? this._cancelPromise : null
+    if (pendingCancellation) await pendingCancellation
+    if (!this._cancellationVisible || this._membershipUnloaded || lifecycle !== this._cancellationLifecycle || scope !== pageSessionScope()) return
+    if (scope === this._membershipScope) {
+      this.setData({ orderCancelling: false })
+      if (await this.applyCancellationOutcome(scope) || pendingCancellation) return
+    }
+    await this.loadOverview()
+    const orderId = this.data.lastOrderId
+    if (returning && orderId && this.isMembershipSessionCurrent(scope) && this._cancellationVisible && lifecycle === this._cancellationLifecycle
+      && !this.data.overview.pendingOrder && !this.data.activationOrderPending
+      && !this.data.paymentStarting && !this.data.confirming && !this.data.orderChecking && !this.data.orderCancelling) {
+      this._returnOrderChecking = true
+      this.setData({ orderChecking: true })
+      try {
+        const order = await memberApi.membershipOrder(orderId)
+        if (!this.isMembershipSessionCurrent(scope) || !this._cancellationVisible || lifecycle !== this._cancellationLifecycle || this.data.lastOrderId !== orderId) return
+        assertPaymentQueryResponse({ order }, orderId)
+        await this.showOrderResult(order, false, scope)
+      } catch (error) {
+        if (this.isMembershipSessionCurrent(scope) && this._cancellationVisible && lifecycle === this._cancellationLifecycle && this.data.lastOrderId === orderId) {
+          this.setData({ orderCancellationError: '订单状态暂时无法刷新，请查询订单状态后再操作。' })
+        }
+      } finally {
+        if (this.isMembershipSessionCurrent(scope) && this._cancellationVisible && lifecycle === this._cancellationLifecycle) {
+          this._returnOrderChecking = false
+          this.setData({ orderChecking: false })
+        }
+      }
+    }
   },
+
+  // Keep native payment lifecycle behavior intact; only cancellation prompts and
+  // their UI updates are bound to foreground visibility.
+  onHide() { this._cancellationVisible = false; this._cancellationLifecycle += 1 },
 
   onPullDownRefresh() {
     return this.loadOverview({ pullDown: true })
   },
 
   onUnload() {
+    this._cancellationVisible = false
+    this._cancellationLifecycle += 1
     this._membershipUnloaded = true
     this._overviewRequestSerial += 1
     if (this.data.confirming) wx.hideLoading()
@@ -396,6 +449,10 @@ Page({
   async loadOverview(options: { pullDown?: boolean } = {}) {
     if (this._membershipUnloaded) return
     const scope = pageSessionScope()
+    if (this.data.orderCancelling && scope === this._membershipScope) {
+      if (options.pullDown) wx.stopPullDownRefresh()
+      return
+    }
     if (scope !== this._membershipScope) {
       if (this.data.confirming) wx.hideLoading()
       this._membershipScope = scope
@@ -405,6 +462,7 @@ Page({
       this._activeOrderPayment = null
       this.setData({ overview: EMPTY_OVERVIEW, plans: [], onlineCheckout: false, selectedPlanCode: '',
         lastOrderId: '', orderTitle: '', orderNote: '', orderStatus: '', orderChecking: false, orderCanResume: false,
+        orderCancelling: false, orderCancelledAt: '', orderCancellationError: '',
         orderPlanText: '', activationOrderPending: false, orderRequiresReview: false, paymentStarting: false, paymentRestricted: false, confirming: false, phoneAuthorizing: false,
         paymentTestNotice: '',
         matchmakingPackages: [], hasMatchmakingService: false, matchmakingReady: false, matchmakingReadinessText: '',
@@ -425,7 +483,8 @@ Page({
         return
       }
       if (this.data.activationOrderPending) {
-        this.setData({ activationOrderPending: false, lastOrderId: '', orderTitle: '', orderNote: '', orderStatus: '', orderPlanText: '', orderCanResume: false })
+        this.setData({ activationOrderPending: false, lastOrderId: '', orderTitle: '', orderNote: '', orderStatus: '', orderPlanText: '', orderCanResume: false,
+          orderCancelledAt: '', orderCancellationError: '' })
       }
       const activeProductType = pendingOrder ? productType(pendingOrder) : this.data.activeProductType
       const payment = paymentFor(overview, activeProductType)
@@ -508,6 +567,7 @@ Page({
         expiryText: this.data.overview.isPremiumMember ? this.data.expiryText : paymentTestNotice(order) } : {}),
       plans: planViews(this.data.overview, productType(order), payment), selectedPlanCode: order.productType ? order.planCode : this.data.selectedPlanCode,
       lastOrderId: order.outTradeNo, orderStatus: order.status, orderPlanText: orderPlanText(order),
+      orderCancelledAt: order.cancelledAt || '', orderCancellationError: '',
       orderCanResume: false, orderRequiresReview: paymentNeedsReview(order),
       onlineCheckout: payment.reason === 'retired_plan_query_required' ? false : this.data.onlineCheckout,
       orderTitle: paymentNeedsReview(order) ? REVIEW_FEEDBACK.title : '正在恢复原订单',
@@ -542,6 +602,7 @@ Page({
     this._activeOrderPayment = null
     this.setData({ activationOrderPending: true, onlineCheckout: false, plans: [], selectedPlanCode: '',
       lastOrderId: order.outTradeNo, orderStatus: order.status, orderCanResume: false, orderRequiresReview: false,
+      orderCancelledAt: order.cancelledAt || '', orderCancellationError: '',
       statusTitle: '主理人开通订单待处理', expiryText: '请先查看主理人开通订单，确认结果前勿重复付款。',
       orderTitle: '主理人开通订单', orderPlanText: `${order.planTitle || '主理人长期方案'} · ¥${(order.amountFen / 100).toFixed(2)}`,
       orderNote: '此订单用于开通主理人工作台，长期有效。请进入主理人开通页查询或继续原订单。' })
@@ -554,14 +615,14 @@ Page({
 
   selectPlan(e: WechatMiniprogram.TouchEvent) {
     const planCode = String(e.currentTarget.dataset.code || '')
-    if (!planCode || this.data.paymentStarting || this.data.confirming || this.data.orderCanResume || this.data.orderRequiresReview
+    if (!planCode || this.data.paymentStarting || this.data.confirming || this.data.orderChecking || this.data.orderCancelling || this.data.orderCanResume || this.data.orderRequiresReview
       || (this.data.lastOrderId && !['paid', 'closed', 'failed', 'refunded'].includes(this.data.orderStatus))) return
     this.setData({ selectedPlanCode: planCode })
     this.updatePaymentTestCopy()
   },
 
   onPlanChange(e: WechatMiniprogram.RadioGroupChange) {
-    if (this.data.paymentStarting || this.data.confirming || this.data.orderCanResume || this.data.orderRequiresReview
+    if (this.data.paymentStarting || this.data.confirming || this.data.orderChecking || this.data.orderCancelling || this.data.orderCanResume || this.data.orderRequiresReview
       || (this.data.lastOrderId && !['paid', 'closed', 'failed', 'refunded'].includes(this.data.orderStatus))) return
     if (this.data.plans.some(plan => plan.planCode === e.detail.value)) {
       this.setData({ selectedPlanCode: e.detail.value })
@@ -579,7 +640,7 @@ Page({
 
   async authorizePhone(e: WechatMiniprogram.ButtonGetPhoneNumber) {
     const scope = pageSessionScope()
-    if (this.data.phoneAuthorizing || !this.isMembershipSessionCurrent(scope)) return
+    if (this.data.phoneAuthorizing || this.data.orderCancelling || !this.isMembershipSessionCurrent(scope)) return
     const detail: unknown = e.detail
     const code = paymentRecord(detail) && typeof detail.code === 'string' ? detail.code : ''
     if (!code) {
@@ -733,6 +794,14 @@ Page({
   async queryPaymentOrder(outTradeNo: string, requestScope?: string): Promise<MembershipOrderQuery> {
     const scope = requestScope || this._membershipScope
     this.assertMembershipSession(scope)
+    if (this.data.orderCancelledAt && this.data.lastOrderId === outTradeNo) {
+      const local = await memberApi.membershipOrder(outTradeNo)
+      this.assertMembershipSession(scope)
+      assertPaymentQueryResponse({ order: local }, outTradeNo)
+      // Paid/refunded is authoritative; a cancelled order with issued payment
+      // attempts still needs provider reconciliation for a late payment.
+      if (['paid', 'refunded'].includes(local.status)) return local
+    }
     const payment = this._activeOrderPayment || this.data.activePayment
     let queryState: PaymentQueryState = {}
     // 虚拟支付通道直接查询 hlApi；旧通道走支付函数 HTTP 路由。
@@ -783,7 +852,10 @@ Page({
     const canResume = unpaid && !postSuccessPending && payment.available && payment.provider === 'virtual'
       && order.paymentProvider !== 'jsapi' && !this.data.paymentRestricted
       && !!this._resumableCheckout && this._resumableCheckout.order.outTradeNo === order.outTradeNo
-    const feedback = requiresReview ? REVIEW_FEEDBACK : (postSuccessPending
+    const cancelled = order.status === 'closed' && typeof order.cancelledAt === 'string'
+      && Number.isFinite(new Date(order.cancelledAt).getTime())
+    const feedback = cancelled ? { title: '订单已取消', note: '此订单已取消，不能继续支付。需要购买时可重新选择套餐。' }
+      : requiresReview ? REVIEW_FEEDBACK : (postSuccessPending
       ? { title: '付款结果确认中', note: '付款已提交，暂未完成结果确认。请稍后查询订单，勿重复付款。' }
       : unpaid
       ? { title: '订单尚未付款', note: this.data.paymentRestricted
@@ -801,16 +873,70 @@ Page({
       if (this._nativeSuccessOrderNo === order.outTradeNo) this._nativeSuccessOrderNo = ''
       this.setData({ orderCanResume: false })
     }
-    this.setData({ orderTitle: feedback.title, orderNote: feedback.note, orderStatus: postSuccessPending ? 'confirming' : order.status, orderRequiresReview: requiresReview })
+    this.setData({ orderTitle: feedback.title, orderNote: feedback.note, orderStatus: postSuccessPending ? 'confirming' : order.status, orderRequiresReview: requiresReview,
+      orderCancelledAt: cancelled ? order.cancelledAt || '' : '', orderCancellationError: '' })
     if (requiresReview) this.setData({ onlineCheckout: false, statusTitle: feedback.title,
       expiryText: '付款已确认，会员权益待核查', paymentActionText: feedback.title })
     if ((order.status === 'paid' && !requiresReview) || order.status === 'refunded') await this.loadOverview()
     if (modal && this.isMembershipSessionCurrent(scope)) wx.showModal({ title: feedback.title, content: feedback.note, showCancel: false })
   },
 
+  async applyCancellationOutcome(scope: string) {
+    const outcome = this._cancelOutcome
+    if (!outcome || outcome.scope !== scope || !this.isMembershipSessionCurrent(scope)
+      || !this._cancellationVisible || this.data.lastOrderId !== outcome.orderId) return false
+    this._cancelOutcome = null
+    if (outcome.order) await this.showOrderResult(outcome.order, false, scope)
+    else if (outcome.error) this.setData({ orderCancellationError: outcome.error })
+    return true
+  },
+
+  cancelOrder(): Promise<void> {
+    const scope = pageSessionScope()
+    const orderId = this.data.lastOrderId
+    const lifecycle = this._cancellationLifecycle
+    if (!this.isMembershipSessionCurrent(scope) || !this._cancellationVisible || !orderId || this._cancelPromise
+      || this.data.loading || this.data.refreshing || this.data.phoneAuthorizing || this.data.paymentStarting
+      || this.data.confirming || this.data.orderChecking || this.data.orderCancelling || this.data.activationOrderPending
+      || this.data.orderRequiresReview || this.data.orderCancelledAt
+      || !['pending', 'confirming', 'closed', 'failed'].includes(this.data.orderStatus)) return Promise.resolve()
+    const ownsOrder = () => this.isMembershipSessionCurrent(scope) && this.data.lastOrderId === orderId
+    this._cancelScope = scope
+    this.setData({ orderCancelling: true, orderCancellationError: '' })
+    const promise = Promise.resolve().then(async () => {
+      const confirmed = await new Promise<boolean>(resolve => wx.showModal({
+        title: '取消这笔订单？', content: '取消成功后不能继续支付此订单，需要购买时可重新选择套餐。若付款结果尚未确认，请先查询订单状态。',
+        confirmText: '取消订单', cancelText: '暂不取消',
+        success: result => resolve(result.confirm), fail: () => resolve(false)
+      }))
+      if (!confirmed || !ownsOrder() || !this._cancellationVisible || lifecycle !== this._cancellationLifecycle) return
+      try {
+        const order = await memberApi.cancelPaymentOrder(orderId)
+        if (!ownsOrder()) return
+        assertPaymentQueryResponse({ order }, orderId)
+        if (order.status !== 'closed' || typeof order.cancelledAt !== 'string'
+          || !Number.isFinite(new Date(order.cancelledAt).getTime())
+          || Number(order.userId) !== Number(getApp<IAppOption>().globalData.user?.id)) {
+          throw new Error('取消结果暂未确认，请查询订单状态后再操作。')
+        }
+        this._cancelOutcome = { scope, orderId, order }
+        await this.applyCancellationOutcome(scope)
+      } catch (error) {
+        if (!ownsOrder()) return
+        this._cancelOutcome = { scope, orderId, error: memberOrderCancellationError(error) }
+        await this.applyCancellationOutcome(scope)
+      }
+    }).finally(() => {
+      if (this._cancelPromise === promise) this._cancelPromise = null
+      if (ownsOrder() && this._cancellationVisible) this.setData({ orderCancelling: false })
+    })
+    this._cancelPromise = promise
+    return promise
+  },
+
   async refreshOrderStatus() {
     if (this.data.activationOrderPending) { this.openActivation(); return }
-    if (!this.data.lastOrderId || this.data.orderChecking || this.data.confirming) return
+    if (!this.data.lastOrderId || this.data.orderChecking || this.data.confirming || this.data.paymentStarting || this.data.orderCancelling) return
     const scope = pageSessionScope()
     if (!this.isMembershipSessionCurrent(scope)) return
     const orderId = this.data.lastOrderId
@@ -821,7 +947,8 @@ Page({
       await this.showOrderResult(order, false, scope)
     } catch (error) {
       if (!this.isMembershipSessionCurrent(scope) || this.data.lastOrderId !== orderId) return
-      if (!this.data.orderRequiresReview) this.setData({ orderStatus: 'confirming', orderTitle: this.data.paymentRestricted ? '微信支付能力受限' : '付款结果确认中', orderCanResume: false,
+      if (this.data.orderCancelledAt) this.setData({ orderCancellationError: '订单状态暂时无法刷新，请稍后重试。', orderCanResume: false })
+      else if (!this.data.orderRequiresReview) this.setData({ orderStatus: 'confirming', orderTitle: this.data.paymentRestricted ? '微信支付能力受限' : '付款结果确认中', orderCanResume: false,
         orderNote: '暂时无法查询订单，请稍后重试。确认结果前请勿重复付款。' })
       console.warn('refresh membership order failed', error)
     } finally {
@@ -831,7 +958,7 @@ Page({
 
   async startPayment() {
     if (this.data.activationOrderPending) { this.openActivation(); return }
-    if (this.data.paymentStarting || this.data.confirming) return
+    if (this.data.paymentStarting || this.data.confirming || this.data.orderChecking || this.data.orderCancelling) return
     const scope = pageSessionScope()
     if (!this.isMembershipSessionCurrent(scope)) return
     if (this.data.errorText) {
@@ -912,6 +1039,7 @@ Page({
       this._activeOrderPayment = checkout.payment
       this._resumableCheckout = checkout.payment.provider === 'virtual' && checkout.order.paymentProvider !== 'jsapi' ? checkout : null
       this.setData({ lastOrderId: checkout.order.outTradeNo, orderStatus: 'pending', orderTitle: '订单待支付',
+        orderCancelledAt: '', orderCancellationError: '',
         orderNote: '请在微信支付中完成付款。', orderPlanText: orderPlanText(checkout.order), orderCanResume: !!this._resumableCheckout })
       if (checkout.reused || checkout.recoveryRequired || paymentNeedsReview(checkout.order)) {
         this._resumableCheckout = null
@@ -989,7 +1117,7 @@ Page({
               : '付款已提交，但订单结果未能通过核验。请查询订单或联系主理人，勿重复付款。' })
           wx.showToast({ title: transient ? '付款已提交，请稍后查询结果' : '订单核验未通过，请查询订单', icon: 'none', duration: 3000 })
         } else {
-          if (this.data.lastOrderId) this.setData(!paymentRequested && this._resumableCheckout
+          if (this.data.lastOrderId && !this.data.orderCancelledAt) this.setData(!paymentRequested && this._resumableCheckout
             ? { orderCanResume: true, orderTitle: '支付尚未开始', orderNote: '未能拉起微信支付，请继续支付原订单，不会重新创建订单。' }
             : { orderCanResume: false, orderStatus: 'confirming', orderTitle: '付款结果确认中', orderNote: '本次支付未能完成确认，请查询订单状态后再操作。' })
           wx.showToast({ title: message || '支付未完成', icon: 'none', duration: 3000 })

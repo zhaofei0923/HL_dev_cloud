@@ -7,7 +7,6 @@
 
   <view wx:if="{{loading}}" class="card claim-state-card">
     <text class="state-title">正在核对邀请</text>
-    <text class="state-note">请稍候，系统正在确认档案状态。</text>
   </view>
 
   <view wx:elif="{{errorText}}" class="card claim-state-card error">
@@ -19,7 +18,6 @@
   <view wx:elif="{{completed}}" class="card claim-state-card success">
     <text class="success-mark">✓</text>
     <text class="state-title">档案已完成认领</text>
-    <text class="state-note">现在可以使用当前微信账号查看资料、会员服务和主理人消息。</text>
     <button wx:if="{{!loggedIn}}" class="btn gold state-action" loading="{{loginLoading}}" disabled="{{loginLoading}}" bindtap="login">登录当前微信</button>
     <view wx:else class="button-row state-actions">
       <button class="btn secondary" bindtap="goMembers">查看推荐</button>
@@ -32,7 +30,6 @@
       <view class="preview-head">
         <view>
           <text class="section-title">请核对档案</text>
-          <text class="section-note">这里只显示必要的脱敏信息。</text>
         </view>
         <text class="claim-status">待认领</text>
       </view>

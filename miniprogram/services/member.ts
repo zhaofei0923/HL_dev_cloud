@@ -275,6 +275,7 @@ export type MembershipPaymentOrder = {
   fulfillmentMessage?: string
   transactionId?: string
   paidAt?: string | null
+  cancelledAt?: string | null
   createdAt: string
   updatedAt: string
   productType?: MembershipProductType
@@ -307,6 +308,7 @@ export type MemberOrder = {
   paymentProvider: 'virtual' | 'jsapi'
   transactionId?: string
   refundedAt?: string | null
+  cancelledAt?: string | null
 }
 
 export type MemberOrderPage = {
@@ -497,6 +499,11 @@ export const memberApi = {
   membershipOrder(outTradeNo: string) {
     return request<MembershipPaymentOrder>(`/member/payment-orders/${outTradeNo}`, {
       showError: false
+    })
+  },
+  cancelPaymentOrder(outTradeNo: string) {
+    return request<MembershipPaymentOrder>(`/member/payment-orders/${encodeURIComponent(outTradeNo)}/cancel`, {
+      method: 'POST', data: {}, showError: false, unauthorizedRedirect: '/pages/index/index?returnTo=orders'
     })
   },
   virtualPaymentCheckout(outTradeNo: string, loginCode: string) {
