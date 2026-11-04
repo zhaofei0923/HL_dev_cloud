@@ -20,7 +20,7 @@ const PLAN = ['id', 'planCode', 'code', 'title', 'amountFen', 'active', 'product
 const ORDER = ['id', 'outTradeNo', 'userId', 'planCode', 'planTitle', 'productType', 'amountFen', 'currency',
   'status', 'fulfillmentStatus', 'fulfillmentMessage', 'transactionId', 'paidAt', 'createdAt', 'updatedAt',
   'paymentProvider', 'virtualPaymentEnv', 'confirmationSource', 'reviewReason', 'paymentReviewRequired',
-  'refundId', 'refundAmountFen', 'refundedAt', 'refundSource', 'isTest', 'isDemo', 'testMode',
+  'refundId', 'refundAmountFen', 'refundedAt', 'refundSource', 'cancelledAt', 'cancelReason', 'isTest', 'isDemo', 'testMode',
   'paymentTestPlanCode', 'paymentTestRunId', 'source', 'dataSource', 'origin'];
 const APPLICATION_SUMMARY = ['requestId', 'status', 'source', 'method', 'educationLevel', 'institutionName',
   'submittedAt', 'reviewedAt', 'feedback', 'materialIds'];
@@ -231,7 +231,11 @@ function createReadService({ db, now = Date.now } = {}) {
     const isTest = row.isTest === true || row.isDemo === true || row.testMode === true || marker
       || row.planCode === 'hl_payment_probe' || row.paymentTestPlanCode === 'vip_week' || !!row.paymentTestRunId
       || /^payment_probe_user_/.test(row._id);
-    return { ...pick(row, ORDER.filter(key => !['paymentTestPlanCode', 'paymentTestRunId', 'source', 'dataSource', 'origin'].includes(key))),
+    const cancellation = row.cancelReason === 'user_requested' && typeof row.cancelledAt === 'string'
+      && row.cancelledAt.length > 0 && Number.isFinite(Date.parse(row.cancelledAt))
+      ? { cancelledAt: row.cancelledAt, cancelReason: row.cancelReason } : {};
+    return { ...pick(row, ORDER.filter(key => !['paymentTestPlanCode', 'paymentTestRunId', 'source', 'dataSource', 'origin', 'cancelledAt', 'cancelReason'].includes(key))),
+      ...cancellation,
       isTest, isSandbox: Number(row.virtualPaymentEnv) === 1,
       fulfillmentStatus: row.fulfillmentStatus || (row.status === 'paid' ? 'fulfilled' : ''),
       fulfillmentMessage: string(row.fulfillmentMessage) };

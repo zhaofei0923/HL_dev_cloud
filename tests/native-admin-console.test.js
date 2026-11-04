@@ -69,6 +69,40 @@ test('source-only modules load before build; every management list supports sear
     r.page.onHide(); assert.equal(r.page.data.rows.length, 0); assert.equal(r.page.data.keyword, '');
   }
 });
+test('order lists and details distinguish user cancellation while preserving payment and review priority', async () => {
+  const cancelledAt = '2026-11-04T06:00:00.000Z';
+  const cases = [
+    [{}, '用户已取消', true],
+    [{ cancelledAt: undefined, cancelReason: undefined }, '已关闭', false],
+    [{ cancelReason: 'provider_closed' }, '已关闭', false],
+    [{ cancelledAt: 'invalid-date' }, '已关闭', false],
+    [{ status: 'paid', paidAt: '2026-11-04T06:01:00.000Z', fulfillmentStatus: 'fulfilled' }, '已支付', true],
+    [{ status: 'paid', paymentReviewRequired: true, fulfillmentStatus: 'requires_review', reviewReason: 'payment_after_cancellation' }, '已支付 · 待核查', true],
+    [{ paymentReviewRequired: true }, '已关闭 · 待核查', true],
+    [{ status: 'refunded' }, '已退款', true],
+    [{ transactionId: 'fixture-payment-transaction' }, '已关闭', true],
+    [{ fulfillmentStatus: 'fulfilled' }, '已关闭', true]
+  ];
+  const rows = cases.map(([patch], index) => ({ outTradeNo: `order_cancel_${index}`, status: 'closed', amountFen: 6160,
+    fulfillmentStatus: '', cancelledAt, cancelReason: 'user_requested', ...patch }));
+  const workspace = nativeRuntime('admin-console/workspace/index.js', async action => {
+    assert.equal(action, 'orders.list'); return { list: rows, total: rows.length, page: 1, pageSize: 10 };
+  });
+  workspace.page.onLoad({ resource: 'orders' }); await workspace.page.onShow();
+  assert.deepEqual(Array.from(workspace.page.data.rows, row => row.status), cases.map(([, expected]) => expected));
+  const detail = nativeRuntime('admin-console/detail/index.js', async (action, args) => {
+    assert.equal(action, 'orders.detail'); return rows.find(row => row.outTradeNo === args.outTradeNo);
+  });
+  for (const [index, [, expected, hasHistory]] of cases.entries()) {
+    detail.page.onLoad(options('orders', rows[index])); await detail.page.onShow();
+    const fields = Object.fromEntries(detail.page.data.fields.map(field => [field.label, field.value]));
+    assert.equal(fields['支付状态'], expected);
+    assert.equal(fields['取消时间'], hasHistory ? cancelledAt : undefined);
+    assert.equal(fields['取消原因'], hasHistory ? '用户主动取消' : undefined);
+    assert.equal(detail.page.data.canCancel, false, 'orders remain read only');
+  }
+  assert.ok(ops(detail).every(call => call.action === 'orders.detail'));
+});
 test('paid service queue exposes waiting users and filters pending assignment through the native route', async () => {
   const row = { userId: 12, user: { nickname: '服务会员' }, status: 'pending_assignment', contactProgress: '待平台分配主理人', remainingCount: 2 };
   const r = nativeRuntime('admin-console/workspace/index.js', async (action, args) => {

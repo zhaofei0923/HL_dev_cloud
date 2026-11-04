@@ -30,6 +30,7 @@ export interface AdminRecord {
   transactionId?: string; paidAt?: string; paymentProvider?: string; virtualPaymentEnv?: number; confirmationSource?: string
   reviewReason?: string; paymentReviewRequired?: boolean; refundId?: string; refundAmountFen?: number
   refundedAt?: string; refundSource?: string; isTest?: boolean; isSandbox?: boolean
+  cancelledAt?: string; cancelReason?: string
   requestedAt?: string; contactProgress?: string; packageCount?: number; remainingCount?: number; canAssign?: boolean
   hasExistingAssignment?: boolean; assignment?: { memberRecordId: number; matchmakerId: number; nickname: string; matchmakerNo: string } | null
   principals?: ServicePrincipal[]; packages?: ServicePackage[]
@@ -60,6 +61,16 @@ export const isKind = (value: unknown): value is CertificationKind => typeof val
 export const shown = (value: unknown): string => value === null || value === undefined || value === '' ? '—' : String(value)
 export const money = (value: unknown): string => typeof value === 'number' && Number.isSafeInteger(value) ? (value / 100).toFixed(2) + ' 元' : '—'
 export const stateText = (value: unknown): string => typeof value === 'string' ? ({ pending_assignment: '待分配主理人', pending_contact: '待主理人联系', in_progress: '服务准备已确认', needs_review: '待核查', exhausted: '次数已用完', active: '有效' } as Record<string, string>)[value] || STATUS[value] || shown(value) : shown(value)
+function hasUserCancellation(row: AdminRecord) {
+  return row.cancelReason === 'user_requested' && typeof row.cancelledAt === 'string'
+    && !!row.cancelledAt && Number.isFinite(Date.parse(row.cancelledAt))
+}
+function orderStatus(row: AdminRecord) {
+  const label = row.status === 'pending' ? '待支付' : stateText(row.status)
+  if (row.paymentReviewRequired === true || row.fulfillmentStatus === 'requires_review' || row.reviewReason === 'payment_after_cancellation') return label + ' · 待核查'
+  if (row.status === 'closed' && hasUserCancellation(row) && !row.paidAt && !row.transactionId && row.fulfillmentStatus !== 'fulfilled') return '用户已取消'
+  return label
+}
 export const countText = (value: unknown): string => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : '—'
 export const apiCode = (failure: unknown): number => failure && typeof failure === 'object' && 'code' in failure ? Number(failure.code) : 0
 export function errorMessage(failure: unknown): string {
@@ -111,7 +122,7 @@ export function listCard(resource: AdminResource, row: AdminRecord): ListCard {
     lines: fields([['活动时间', row.eventDate], ['地点', row.location], ['报名人数', countText(row.currentParticipants) + ' / ' + countText(row.maxParticipants)]]) }
   if (resource === 'plans') return { rowKey, key: key || {}, title: row.title || '套餐', subtitle: row.planCode || row.code || '—', status: row.active ? '启用' : '停用', canOpen: !!key,
     lines: fields([['价格', money(row.amountFen)], ['期限', row.durationDays === undefined ? '—' : row.durationDays + ' 天'], ['服务次数', countText(row.serviceCount)]]) }
-  return { rowKey, key: key || {}, title: row.planTitle || row.planCode || '支付订单', subtitle: row.outTradeNo || '—', status: row.status === 'pending' ? '待支付' : stateText(row.status), canOpen: !!key,
+  return { rowKey, key: key || {}, title: row.planTitle || row.planCode || '支付订单', subtitle: row.outTradeNo || '—', status: orderStatus(row), canOpen: !!key,
     lines: fields([['金额', money(row.amountFen)], ['履约', stateText(row.fulfillmentStatus)], ['创建时间', row.createdAt], ['环境', row.isTest ? '测试订单' : row.isSandbox ? '沙箱订单' : '正式订单']]) }
 }
 export function detailFields(resource: AdminResource, row: AdminRecord): LabelValue[] {
@@ -124,6 +135,9 @@ export function detailFields(resource: AdminResource, row: AdminRecord): LabelVa
   else if (resource === 'certifications') pairs = [['会员', row.user?.nickname], ['会员编号', row.userId], ['手机号', row.user?.phone], ['认证类型', row.kind ? KIND_LABELS[row.kind] : ''], ['申请编号', row.applicationId], ['申请状态', stateText(row.status)], ['当前效力', stateText(row.effectiveStatus)], ['核验来源', SOURCE_LABELS[row.source || '']], ['认证方式', methods[row.method || '']], ['学校', row.institutionName], ['申报学历', degrees[row.educationLevel || ''] || row.educationLevel], ['提交时间', row.submittedAt], ['审核时间', row.reviewedAt], ['本人可见反馈', row.feedback], ['当前学历结论', row.current?.level], ['当前资产档位', ASSET_LABELS[row.current?.financialAssetRange || '']], ['认证有效期', row.current?.expiresAt]]
   else if (resource === 'salons') pairs = [['活动', row.title], ['组织人', row.organizer?.nickname], ['状态', stateText(row.status)], ['活动时间', row.eventDate], ['地点', row.location], ['人数', countText(row.currentParticipants) + ' / ' + countText(row.maxParticipants)], ['费用', row.price === undefined ? '—' : row.price + ' 元'], ['介绍', row.description], ['审核备注', row.reviewRemark], ['审核时间', row.reviewedAt]]
   else if (resource === 'plans') pairs = [['套餐', row.title], ['编码', row.planCode || row.code], ['状态', row.active ? '启用' : '停用'], ['固定价格', money(row.amountFen)], ['类型', row.productType === 'vip' ? '会员服务' : '婚恋服务'], ['期限', row.durationDays === undefined ? '—' : row.durationDays + ' 天'], ['服务次数', countText(row.serviceCount)], ['说明', row.description], ['价格规则', row.priceLockedReason], ['历史套餐', row.retired ? '是，只读' : '否']]
-  else pairs = [['订单号', row.outTradeNo], ['会员', row.user?.nickname || row.userId], ['套餐', row.planTitle || row.planCode], ['金额', money(row.amountFen)], ['支付状态', row.status === 'pending' ? '待支付' : stateText(row.status)], ['履约状态', stateText(row.fulfillmentStatus)], ['履约说明', row.fulfillmentMessage], ['支付渠道', row.paymentProvider], ['支付单号', row.transactionId], ['支付时间', row.paidAt], ['确认来源', row.confirmationSource], ['人工核查', row.paymentReviewRequired ? '需要' : '无需'], ['核查原因', row.reviewReason], ['退款单号', row.refundId], ['退款金额', money(row.refundAmountFen)], ['退款时间', row.refundedAt], ['退款来源', row.refundSource], ['环境', row.isTest ? '测试订单' : row.isSandbox ? '沙箱订单' : '正式订单']]
+  else {
+    pairs = [['订单号', row.outTradeNo], ['会员', row.user?.nickname || row.userId], ['套餐', row.planTitle || row.planCode], ['金额', money(row.amountFen)], ['支付状态', orderStatus(row)], ['履约状态', stateText(row.fulfillmentStatus)], ['履约说明', row.fulfillmentMessage], ['支付渠道', row.paymentProvider], ['支付单号', row.transactionId], ['支付时间', row.paidAt], ['确认来源', row.confirmationSource], ['人工核查', row.paymentReviewRequired ? '需要' : '无需'], ['核查原因', row.reviewReason], ['退款单号', row.refundId], ['退款金额', money(row.refundAmountFen)], ['退款时间', row.refundedAt], ['退款来源', row.refundSource], ['环境', row.isTest ? '测试订单' : row.isSandbox ? '沙箱订单' : '正式订单']]
+    if (hasUserCancellation(row)) pairs.splice(5, 0, ['取消时间', row.cancelledAt], ['取消原因', '用户主动取消'])
+  }
   return [...pairs, ['创建时间', row.createdAt] as [string, unknown], ['更新时间', row.updatedAt] as [string, unknown]].map(([label, value]) => ({ label, value: shown(value) }))
 }

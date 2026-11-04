@@ -17,6 +17,18 @@ const money = (value) => typeof value === 'number' && Number.isSafeInteger(value
 exports.money = money;
 const stateText = (value) => typeof value === 'string' ? { pending_assignment: '待分配主理人', pending_contact: '待主理人联系', in_progress: '服务准备已确认', needs_review: '待核查', exhausted: '次数已用完', active: '有效' }[value] || STATUS[value] || (0, exports.shown)(value) : (0, exports.shown)(value);
 exports.stateText = stateText;
+function hasUserCancellation(row) {
+    return row.cancelReason === 'user_requested' && typeof row.cancelledAt === 'string'
+        && !!row.cancelledAt && Number.isFinite(Date.parse(row.cancelledAt));
+}
+function orderStatus(row) {
+    const label = row.status === 'pending' ? '待支付' : (0, exports.stateText)(row.status);
+    if (row.paymentReviewRequired === true || row.fulfillmentStatus === 'requires_review' || row.reviewReason === 'payment_after_cancellation')
+        return label + ' · 待核查';
+    if (row.status === 'closed' && hasUserCancellation(row) && !row.paidAt && !row.transactionId && row.fulfillmentStatus !== 'fulfilled')
+        return '用户已取消';
+    return label;
+}
 const countText = (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : '—';
 exports.countText = countText;
 const apiCode = (failure) => failure && typeof failure === 'object' && 'code' in failure ? Number(failure.code) : 0;
@@ -90,7 +102,7 @@ function listCard(resource, row) {
     if (resource === 'plans')
         return { rowKey, key: key || {}, title: row.title || '套餐', subtitle: row.planCode || row.code || '—', status: row.active ? '启用' : '停用', canOpen: !!key,
             lines: fields([['价格', (0, exports.money)(row.amountFen)], ['期限', row.durationDays === undefined ? '—' : row.durationDays + ' 天'], ['服务次数', (0, exports.countText)(row.serviceCount)]]) };
-    return { rowKey, key: key || {}, title: row.planTitle || row.planCode || '支付订单', subtitle: row.outTradeNo || '—', status: row.status === 'pending' ? '待支付' : (0, exports.stateText)(row.status), canOpen: !!key,
+    return { rowKey, key: key || {}, title: row.planTitle || row.planCode || '支付订单', subtitle: row.outTradeNo || '—', status: orderStatus(row), canOpen: !!key,
         lines: fields([['金额', (0, exports.money)(row.amountFen)], ['履约', (0, exports.stateText)(row.fulfillmentStatus)], ['创建时间', row.createdAt], ['环境', row.isTest ? '测试订单' : row.isSandbox ? '沙箱订单' : '正式订单']]) };
 }
 exports.listCard = listCard;
@@ -109,8 +121,11 @@ function detailFields(resource, row) {
         pairs = [['活动', row.title], ['组织人', row.organizer?.nickname], ['状态', (0, exports.stateText)(row.status)], ['活动时间', row.eventDate], ['地点', row.location], ['人数', (0, exports.countText)(row.currentParticipants) + ' / ' + (0, exports.countText)(row.maxParticipants)], ['费用', row.price === undefined ? '—' : row.price + ' 元'], ['介绍', row.description], ['审核备注', row.reviewRemark], ['审核时间', row.reviewedAt]];
     else if (resource === 'plans')
         pairs = [['套餐', row.title], ['编码', row.planCode || row.code], ['状态', row.active ? '启用' : '停用'], ['固定价格', (0, exports.money)(row.amountFen)], ['类型', row.productType === 'vip' ? '会员服务' : '婚恋服务'], ['期限', row.durationDays === undefined ? '—' : row.durationDays + ' 天'], ['服务次数', (0, exports.countText)(row.serviceCount)], ['说明', row.description], ['价格规则', row.priceLockedReason], ['历史套餐', row.retired ? '是，只读' : '否']];
-    else
-        pairs = [['订单号', row.outTradeNo], ['会员', row.user?.nickname || row.userId], ['套餐', row.planTitle || row.planCode], ['金额', (0, exports.money)(row.amountFen)], ['支付状态', row.status === 'pending' ? '待支付' : (0, exports.stateText)(row.status)], ['履约状态', (0, exports.stateText)(row.fulfillmentStatus)], ['履约说明', row.fulfillmentMessage], ['支付渠道', row.paymentProvider], ['支付单号', row.transactionId], ['支付时间', row.paidAt], ['确认来源', row.confirmationSource], ['人工核查', row.paymentReviewRequired ? '需要' : '无需'], ['核查原因', row.reviewReason], ['退款单号', row.refundId], ['退款金额', (0, exports.money)(row.refundAmountFen)], ['退款时间', row.refundedAt], ['退款来源', row.refundSource], ['环境', row.isTest ? '测试订单' : row.isSandbox ? '沙箱订单' : '正式订单']];
+    else {
+        pairs = [['订单号', row.outTradeNo], ['会员', row.user?.nickname || row.userId], ['套餐', row.planTitle || row.planCode], ['金额', (0, exports.money)(row.amountFen)], ['支付状态', orderStatus(row)], ['履约状态', (0, exports.stateText)(row.fulfillmentStatus)], ['履约说明', row.fulfillmentMessage], ['支付渠道', row.paymentProvider], ['支付单号', row.transactionId], ['支付时间', row.paidAt], ['确认来源', row.confirmationSource], ['人工核查', row.paymentReviewRequired ? '需要' : '无需'], ['核查原因', row.reviewReason], ['退款单号', row.refundId], ['退款金额', (0, exports.money)(row.refundAmountFen)], ['退款时间', row.refundedAt], ['退款来源', row.refundSource], ['环境', row.isTest ? '测试订单' : row.isSandbox ? '沙箱订单' : '正式订单']];
+        if (hasUserCancellation(row))
+            pairs.splice(5, 0, ['取消时间', row.cancelledAt], ['取消原因', '用户主动取消']);
+    }
     return [...pairs, ['创建时间', row.createdAt], ['更新时间', row.updatedAt]].map(([label, value]) => ({ label, value: (0, exports.shown)(value) }));
 }
 exports.detailFields = detailFields;

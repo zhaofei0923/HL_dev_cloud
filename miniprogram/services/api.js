@@ -20,15 +20,38 @@ function isSessionRecoverableError(err) {
     return isUnauthorized(code) || /invalid token|unauthorized|user not found/i.test(raw);
 }
 exports.isSessionRecoverableError = isSessionRecoverableError;
-function cloudFailMessage(err) {
+function cloudFailure(err) {
+    const details = err && typeof err === 'object' ? err : {};
     const raw = errorText(err);
-    if (/timeout/i.test(raw)) {
-        return `云函数 ${cloud_1.CLOUD_FUNCTION_NAME} 调用超时，请确认已部署到 ${cloud_1.CLOUD_ENV_ID}`;
+    // Keep only bounded SDK codes in the UI; raw messages can contain request
+    // contents, credentials or infrastructure details and stay on the Error.
+    const safeCode = (value) => typeof value === 'number' && Number.isSafeInteger(value) && value !== 0 && Math.abs(value) <= 999999999
+        ? String(value) : typeof value === 'string' && /^(?:-?\d{1,9}|[A-Z][A-Z0-9_]{2,63})$/.test(value) && value !== '0' ? value : '';
+    const semantic = raw.match(/\b(?:FUNCTIONS?_[A-Z_]+|EXCEED_[A-Z_]+|INVALID_ENV(?:_SOURCE|_STATUS)?|PERMISSION_DENIED|ACCESS_DENIED|SERVER_TIMEOUT)\b/);
+    const numeric = raw.match(/\berrCode\s*[:=]\s*(-?\d{1,9})\b/i)
+        || raw.match(/\b(?:cloud\.)?callFunction:fail\s+(-?\d{1,9})\b/i);
+    const code = safeCode(details.errCode) || safeCode(details.code) || (numeric ? numeric[1] : '') || (semantic ? safeCode(semantic[0]) : '');
+    const reason = `${safeCode(details.code)} ${safeCode(details.errCode)} ${raw}`;
+    let message = '请求未完成，请重试';
+    if (/timeout|timed\s*out|TIME_LIMIT_EXCEEDED/i.test(reason)) {
+        message = '请求超时，请稍后重试';
     }
-    if (/not found|function/i.test(raw)) {
-        return `云函数 ${cloud_1.CLOUD_FUNCTION_NAME} 未部署，请先部署到 ${cloud_1.CLOUD_ENV_ID}`;
+    else if (/EXCEED_(?:MAX_PAYLOAD_SIZE|REQUEST_SIZE(?:_LIMIT)?|UPLOAD_MAXFILESIZE)|payload too large|request entity too large/i.test(reason)) {
+        message = '提交内容过大，请缩小文件后重试';
     }
-    return `无法连接云函数 ${cloud_1.CLOUD_FUNCTION_NAME}，请检查 ${cloud_1.CLOUD_ENV_ID}`;
+    else if (/FUNCTIONS?_NOT_FOUND|\bfunction\s+(?:[\w.-]{1,64}\s+)?(?:not found|does not exist)\b|云函数不存在/i.test(reason)) {
+        message = '服务暂不可用，请稍后重试';
+    }
+    else if (/PERMISSION_DENIED|ACCESS_DENIED|EXCEED_AUTHORITY|permission denied|access denied/i.test(reason)) {
+        message = '当前服务暂不可访问，请重新进入小程序后重试';
+    }
+    else if (/INVALID_ENV(?:_SOURCE|_STATUS)?\b/i.test(reason)) {
+        message = '服务配置异常，请联系工作人员';
+    }
+    else if (/network|request:fail|SSL|TLS|socket|ECONN|ENOTFOUND|disconnected/i.test(reason)) {
+        message = '网络连接失败，请切换网络后重试';
+    }
+    return { code, message: code ? `${message}（错误码 ${code}）` : message };
 }
 function request(path, options = {}) {
     const method = options.method || 'GET';
@@ -76,12 +99,13 @@ function request(path, options = {}) {
                 reject(apiError);
             },
             fail(err) {
-                const message = cloudFailMessage(err);
+                const { code, message } = cloudFailure(err);
                 if (options.showError !== false)
                     wx.showToast({ title: message, icon: 'none', duration: 3000 });
                 const apiError = new Error(message);
                 apiError.raw = err;
                 apiError.path = path;
+                apiError.transportCode = code;
                 reject(apiError);
             }
         });

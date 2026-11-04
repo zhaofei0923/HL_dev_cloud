@@ -18,7 +18,14 @@ const KIND = { identity: '身份认证', education: '学历认证', vehicle: '�
 const SOURCE = { identity_document: '身份证明', chsi: '学信网', cscse: '留服认证', vehicle_license: '车辆行驶证', property_certificate: '房产证明', bank_statement: '银行证明', securities_statement: '证券证明', insurance_statement: '保险现金价值', combined_financial_statement: '综合证明' };
 const ASSET_RANGE = { under_500k: '50万以下', '500k_2m': '50万–200万', '2m_5m': '200万–500万', '5m_10m': '500万–1000万', over_10m: '1000万以上' };
 const status = value => STATUS[value] || display(value);
-const orderStatus = value => value === 'pending' ? '待支付' : status(value);
+const hasUserCancellation = row => row.cancelReason === 'user_requested' && typeof row.cancelledAt === 'string'
+  && !!row.cancelledAt && Number.isFinite(Date.parse(row.cancelledAt));
+function orderStatus(row) {
+  const label = row.status === 'pending' ? '待支付' : status(row.status);
+  if (row.paymentReviewRequired === true || row.fulfillmentStatus === 'requires_review' || row.reviewReason === 'payment_after_cancellation') return label + ' · 待核查';
+  if (row.status === 'closed' && hasUserCancellation(row) && !row.paidAt && !row.transactionId && row.fulfillmentStatus !== 'fulfilled') return '用户已取消';
+  return label;
+}
 
 export function amountYuanToFen(value) {
   const text = typeof value === 'string' ? value.trim() : '';
@@ -42,7 +49,7 @@ export function rowCells(pageId, row) {
   if (pageId === 'certifications') return [display(row.user?.nickname), KIND[row.kind] || '—', display(row.applicationId), display(row.submittedAt), status(row.status) + (row.verified === true ? ' / 当前有效' : '')];
   if (pageId === 'salons') return [display(row.title), display(row.organizer?.nickname), display(row.location), display(row.eventDate), count(row.currentParticipants), status(row.status)];
   if (pageId === 'plans') return [display(row.title), display(row.planCode || row.code), money(row.amountFen), row.durationDays == null ? '—' : row.durationDays + ' 天', row.active === true ? '启用' : row.active === false ? '停用' : '—', display(row.updatedAt)];
-  return [display(row.outTradeNo), display(row.user?.nickname || row.userId), display(row.planTitle || row.planCode), money(row.amountFen), orderStatus(row.status), status(row.fulfillmentStatus), display(row.createdAt)];
+  return [display(row.outTradeNo), display(row.user?.nickname || row.userId), display(row.planTitle || row.planCode), money(row.amountFen), orderStatus(row), status(row.fulfillmentStatus), display(row.createdAt)];
 }
 
 function initial(pageId) {
@@ -221,7 +228,9 @@ function details(pageId, value) {
   else if (pageId === 'certifications') { add('会员', value.user?.nickname); add('认证类型', KIND[value.kind]); add('申请编号', value.applicationId); add('申请状态', status(value.applicationStatus || value.status)); add('当前展示状态', status(value.effectiveStatus)); add('当前认证有效', value.verified === true ? '是' : value.verified === false ? '否' : '—'); add('核验来源', SOURCE[value.source] || '—'); add('院校', value.institutionName); add('提交时间', value.submittedAt); add('审核时间', value.reviewedAt); add('申请人可见反馈', value.feedback); }
   else if (pageId === 'salons') { add('沙龙名称', value.title); add('主理人', value.organizer?.nickname); add('时间', value.eventDate); add('地点', value.location); add('状态', status(value.status)); add('报名人数', count(value.currentParticipants)); add('介绍', value.description); add('审核记录', value.reviewRemark); }
   else if (pageId === 'plans') { add('套餐', value.title); add('编号', value.planCode || value.code); add('现价（元）', money(value.amountFen)); add('类型', value.productType); add('有效期（天）', count(value.durationDays)); add('服务次数', count(value.serviceCount)); add('启用', value.active === true ? '是' : value.active === false ? '否' : '—'); add('说明', value.description); add('价格约束', '微信虚拟商品价格需与商品配置一致；此处只支持启停，不提交调价。'); }
-  else { for (const [label, key] of [['订单号', 'outTradeNo'], ['会员', 'userId'], ['套餐', 'planTitle'], ['套餐编号', 'planCode'], ['币种', 'currency'], ['支付状态', 'status'], ['履约状态', 'fulfillmentStatus'], ['履约说明', 'fulfillmentMessage'], ['创建时间', 'createdAt'], ['支付时间', 'paidAt'], ['支付渠道', 'paymentProvider'], ['平台交易号', 'transactionId'], ['确认来源', 'confirmationSource'], ['核查原因', 'reviewReason'], ['退款编号', 'refundId'], ['退款时间', 'refundedAt']]) add(label, key === 'status' ? orderStatus(value[key]) : key === 'fulfillmentStatus' ? status(value[key]) : value[key]); add('订单金额（元）', money(value.amountFen)); add('退款金额（元）', money(value.refundAmountFen)); add('沙箱', value.isSandbox === true ? '是' : '否'); add('测试标记', value.isTest === true ? '是' : '否'); }
+  else { for (const [label, key] of [['订单号', 'outTradeNo'], ['会员', 'userId'], ['套餐', 'planTitle'], ['套餐编号', 'planCode'], ['币种', 'currency'], ['支付状态', 'status'], ['履约状态', 'fulfillmentStatus'], ['履约说明', 'fulfillmentMessage'], ['创建时间', 'createdAt'], ['支付时间', 'paidAt'], ['支付渠道', 'paymentProvider'], ['平台交易号', 'transactionId'], ['确认来源', 'confirmationSource'], ['核查原因', 'reviewReason'], ['退款编号', 'refundId'], ['退款时间', 'refundedAt']]) add(label, key === 'status' ? orderStatus(value) : key === 'fulfillmentStatus' ? status(value[key]) : value[key]);
+    if (hasUserCancellation(value)) { add('取消时间', value.cancelledAt); add('取消原因', '用户主动取消'); }
+    add('订单金额（元）', money(value.amountFen)); add('退款金额（元）', money(value.refundAmountFen)); add('沙箱', value.isSandbox === true ? '是' : '否'); add('测试标记', value.isTest === true ? '是' : '否'); }
   return pairs.join('\n');
 }
 async function select(ctx, index) {

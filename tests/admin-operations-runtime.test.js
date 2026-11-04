@@ -41,6 +41,37 @@ test('operation reads use the fixed function, pagination/filter contract and fre
   });
 });
 
+test('order cancellation appears in list and detail without masking late payments or review cases', async () => {
+  const cancelledAt = '2026-11-04T06:00:00.000Z';
+  const cases = [
+    [{}, '用户已取消', true],
+    [{ cancelledAt: undefined, cancelReason: undefined }, '已关闭', false],
+    [{ cancelReason: 'provider_closed' }, '已关闭', false],
+    [{ cancelledAt: 'invalid-date' }, '已关闭', false],
+    [{ status: 'paid', paidAt: '2026-11-04T06:01:00.000Z', fulfillmentStatus: 'fulfilled' }, '已支付', true],
+    [{ status: 'paid', paymentReviewRequired: true, fulfillmentStatus: 'requires_review', reviewReason: 'payment_after_cancellation' }, '已支付 · 待核查', true],
+    [{ paymentReviewRequired: true }, '已关闭 · 待核查', true],
+    [{ status: 'refunded' }, '已退款', true],
+    [{ transactionId: 'fixture-payment-transaction' }, '已关闭', true],
+    [{ fulfillmentStatus: 'fulfilled' }, '已关闭', true]
+  ];
+  const rows = cases.map(([patch], index) => ({ outTradeNo: `order_cancel_${index}`, status: 'closed', amountFen: 6160,
+    fulfillmentStatus: '', cancelledAt, cancelReason: 'user_requested', ...patch }));
+  await harness('orders', ({ action, args }) => reply(action === 'orders.list' ? list(rows)
+    : rows.find(row => row.outTradeNo === args.outTradeNo)), async ({ state, requests, command }) => {
+    await command('init');
+    assert.deepEqual(state.ops.rows.map(row => row.cells[4]), cases.map(([, expected]) => expected));
+    for (const [index, [, expected, hasHistory]] of cases.entries()) {
+      await command('select', { index });
+      assert.ok(state.ops.detailText.includes('支付状态：' + expected + '\n'));
+      assert.equal(state.ops.detailText.includes('取消时间：' + cancelledAt), hasHistory);
+      assert.equal(state.ops.detailText.includes('取消原因：用户主动取消'), hasHistory);
+      assert.equal(state.ops.canCancel, false, 'orders remain read only');
+    }
+    assert.ok(requests.every(request => ['orders.list', 'orders.detail'].includes(request.data.action)));
+  });
+});
+
 test('prepare is local only, explicit confirmation writes once and duplicate clicks cannot resubmit', async () => {
   const pending = deferred();
   await harness('matchmakers', ({ action }) => action.endsWith('.review') ? pending.promise : Promise.resolve(reply(action.endsWith('.list') ? list() : detail())), async ({ state, requests, command }) => {

@@ -218,7 +218,15 @@ Page({
       const remote = restored.find(material => material.localId === item.localId)
       return remote ? [remote] : !item.id ? [item] : []
     })
-    this.setData({ uploadedMaterials: [...merged, ...restored.filter(item => !merged.some(local => local.localId === item.localId))] })
+    const uploadedMaterials = [...merged, ...restored.filter(item => !merged.some(local => local.localId === item.localId))]
+    const recoveredUploadError = !!this.data.uploadError && previous.some(item => item.status === 'failed'
+      && item.error === this.data.uploadError && restored.some(material => material.localId === item.localId))
+    const remainingFailures = uploadedMaterials.filter(item => item.status === 'failed')
+    // Only replace an error belonging to an upload whose server handle was
+    // recovered. Selection errors and files still awaiting upload remain visible.
+    this.setData({ uploadedMaterials, ...(recoveredUploadError ? {
+      uploadError: remainingFailures.length ? remainingFailures[remainingFailures.length - 1].error || '材料上传失败，请重试' : ''
+    } : {}) })
     this.updateLeaveGuard()
   },
   clearMaterialPreviews() {

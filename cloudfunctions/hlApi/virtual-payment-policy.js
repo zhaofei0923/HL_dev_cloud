@@ -226,11 +226,12 @@ function createVirtualPaymentClient({ request = httpsRequestJson, appId } = {}) 
       return queryOrder({ appSecret, appKey, openid, env, outTradeNo }, true);
     }
     if (data.errcode === 0) {
-      if (!record(data.order)) return null;
+      if (!record(data.order)) throw failure('微信订单查询结果不完整，请稍后重试', 503, 50301);
       return data.order;
     }
-    const message = String(data.errmsg || '');
-    if (Number(data.errcode) === 90019 || /未找到|不存在|not[\s_]*found|not[\s_]*exist/i.test(message)) return null;
+    // Only the known order-not-found code proves absence. Error text may
+    // describe missing credentials or configuration and is never payment evidence.
+    if (data.errcode === 90019) return null;
     throw failure('微信订单查询失败，请稍后重试', 503, 50301);
   }
 

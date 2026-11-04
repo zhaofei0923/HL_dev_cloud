@@ -602,8 +602,81 @@ test('lost upload response is reconciled to the original staged handle before th
   assert.equal(page.data.uploadedMaterials.length, 1);
   assert.equal(page.data.uploadedMaterials[0].id, 'committed-before-network-loss');
   assert.equal(page.data.uploadedMaterials[0].status, 'uploaded');
+  assert.equal(page.data.uploadedMaterials[0].error, '');
+  assert.equal(page.data.uploadError, '', 'confirmed recovery clears the failed upload banner');
   await page.retryMaterial({ currentTarget: { dataset: { localId: page.data.uploadedMaterials[0].localId } } });
   assert.equal(calls, 1);
+});
+
+test('partial upload recovery keeps the error for the remaining failed material', async () => {
+  for (const oversizedPdf of [false, true]) for (const recoveredFirst of [false, true]) {
+    const staged = [];
+    const { page } = certificationRuntime('identity', {
+      wx: { getFileSystemManager: () => ({ readFile: options => options.success({ data: `/9j/${options.filePath}` }) }) },
+      memberApi: {
+        stagingCertificationMaterials: async () => ({ materials: staged }),
+        uploadCertificationMaterial: async data => {
+          if (data.contentBase64.includes('recovered')) {
+            staged.push({ id: 'recovered-material', kind: data.kind, mimeType: data.mimeType, size: 100, clientRequestId: data.clientRequestId });
+            throw new Error('云函数未部署');
+          }
+          throw new Error('网络中断，请重试');
+        }
+      }
+    });
+    await page.onShow();
+    const failed = { path: oversizedPdf ? 'wxfile://oversized.pdf' : 'wxfile://uncommitted.jpg', size: oversizedPdf ? 512001 : 100, isPdf: oversizedPdf };
+    const recovered = { path: 'wxfile://recovered.jpg', size: 100, isPdf: false };
+    await page.uploadMaterials(recoveredFirst ? [recovered, failed] : [failed, recovered]);
+    const remaining = page.data.uploadedMaterials.find(item => item.status === 'failed');
+    const expected = oversizedPdf ? 'PDF 文件须小于或等于500 KB，请压缩后重试' : '网络中断，请重试';
+    assert.equal(page.data.uploadedMaterials.find(item => item.id === 'recovered-material').status, 'uploaded');
+    assert.equal(remaining.source.path, failed.path);
+    assert.equal(remaining.error, expected);
+    assert.equal(page.data.uploadError, expected);
+  }
+});
+
+test('an unrelated staged material cannot clear the error for an upload that never reached the server', async () => {
+  let staged = [];
+  const { page } = certificationRuntime('identity', {
+    wx: { getFileSystemManager: () => ({ readFile: options => options.success({ data: '/9j/private-image' }) }) },
+    memberApi: {
+      stagingCertificationMaterials: async () => ({ materials: staged }),
+      uploadCertificationMaterial: async () => {
+        staged = [{ id: 'unrelated-upload', kind: 'identity', mimeType: 'image/jpeg', size: 100, clientRequestId: 'unrelated-upload-request' }];
+        throw new Error('网络中断，请重试');
+      }
+    }
+  });
+  await page.onShow();
+  await page.uploadMaterials([{ path: 'wxfile://uncommitted.jpg', size: 100, isPdf: false }]);
+  assert.deepEqual(plain(page.data.uploadedMaterials.map(item => item.status)), ['failed', 'uploaded']);
+  assert.equal(page.data.uploadError, '网络中断，请重试');
+});
+
+test('staged recovery by material ID clears its upload failure but preserves a newer native selection error', async () => {
+  for (const selectionError of [false, true]) {
+    let staged = [], selection;
+    const { page } = certificationRuntime('identity', {
+      wx: { chooseMedia: options => { selection = options; } },
+      memberApi: { stagingCertificationMaterials: async () => ({ materials: staged }) }
+    });
+    await page.onShow();
+    page.setData({ uploadError: '上传响应中断', uploadedMaterials: [{ id: 'known-upload', localId: 'local-known', clientRequestId: '',
+      mimeType: 'image/jpeg', size: 100, sizeText: '1 KB', previewPath: 'wxfile://known.jpg', isPdf: false,
+      status: 'failed', error: '上传响应中断', source: { path: 'wxfile://known.jpg', size: 100, isPdf: false } }] });
+    if (selectionError) {
+      page.chooseMaterials();
+      selection.fail({ errMsg: 'chooseMedia:fail auth deny' });
+      assert.equal(page.data.uploadError, '请允许微信访问相册或相机后重试');
+    }
+    staged = [{ id: 'known-upload', kind: 'identity', mimeType: 'image/jpeg', size: 100 }];
+    await page.retryLoad();
+    assert.equal(page.data.uploadedMaterials[0].status, 'uploaded');
+    assert.equal(page.data.uploadedMaterials[0].localId, 'local-known');
+    assert.equal(page.data.uploadError, selectionError ? '请允许微信访问相册或相机后重试' : '');
+  }
 });
 
 test('failed staging recovery blocks extra uploads and consent until recovery succeeds', async () => {

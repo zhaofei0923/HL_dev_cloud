@@ -3943,7 +3943,7 @@ async function recordDuplicateVirtualPayments(orderNo, transactionId, confirmati
   });
 }
 
-async function reconcileVirtualPaymentOrder(trusted, config, origin = {}) {
+async function reconcileVirtualPaymentOrder(trusted, config, origin = {}, observedEvidence = null) {
   const local = {
     outTradeNo: trusted.outTradeNo,
     amountFen: Number(trusted.amountFen),
@@ -3952,9 +3952,9 @@ async function reconcileVirtualPaymentOrder(trusted, config, origin = {}) {
     status: String(trusted.status)
   };
   const identity = paymentOrderIdentity();
-  let queried;
+  let queried = observedEvidence;
   try {
-    queried = await queryVirtualPaymentAttempts(trusted, config);
+    if (!queried) queried = await queryVirtualPaymentAttempts(trusted, config);
   } catch (error) {
     throw createHttpError(error && error.message || '微信订单查询失败，请稍后重试',
       Number(error && error.status) || 503, Number(error && error.code) || 50301);
@@ -4037,6 +4037,19 @@ async function reconcileVirtualPaymentOrder(trusted, config, origin = {}) {
       }
     }
     return { order: publicPaymentOrder(delivery), tradeState: 'SUCCESS' };
+  }
+  // Business cancellation does not close a previously signed platform cashier.
+  // Keep querying every attempt for late payments, but an unpaid result must
+  // not undo the cancellation or produce an invalid closed + NOTPAY response.
+  if (queried.order.status === 'closed' && queried.order.cancelReason === 'user_requested' && queried.order.cancelledAt
+    && results.every(result => !result.xpayOrder || ['NOTPAY', 'CLOSED'].includes(mapVirtualOrderState(result.xpayOrder)))) {
+    const current = await uniquePaymentOrder(local.outTradeNo, local.userId);
+    trustedPaymentOrder(current, local.payerOpenid);
+    if (memberOrderCancellationSnapshot(current) !== memberOrderCancellationSnapshot(queried.order)) {
+      throw createHttpError('支付尝试已变化，请重新查询订单', 409, 40905);
+    }
+    // A callback may have committed while the provider query was in flight.
+    return { order: publicPaymentOrder(current) };
   }
   if (!results.length || results.every(result => !result.xpayOrder)) {
     if (!['pending', 'confirming'].includes(local.status)) {
@@ -4331,11 +4344,27 @@ function noIssuedVirtualPaymentAttempt(order) {
     && order.virtualPaymentAttempts.length === 0 && !order.virtualProviderOrderNo;
 }
 
+function memberOrderCancellationSnapshot(order) {
+  return JSON.stringify(['_id', 'id', 'outTradeNo', 'userId', 'payerOpenid', 'merchantId', 'appId', 'currency',
+    'amountFen', 'planCode', 'productType', 'durationDays', 'serviceCount', 'fulfillmentContract',
+    'memberRecordId', 'memberMatchmakerId', 'paymentProvider', 'virtualPaymentEnv', 'virtualPaymentOfferId',
+    'virtualProviderOrderNo', 'virtualPaymentAttempts'].map(key => order[key]));
+}
+
+function assertCancellationAttemptLedger(order) {
+  if (!Array.isArray(order.virtualPaymentAttempts) || !order.virtualPaymentAttempts.length
+    || order.virtualPaymentAttempts.length > 10
+    || order.virtualPaymentAttempts.some(attempt => !attempt || typeof attempt !== 'object')
+    || (order.virtualProviderOrderNo && !order.virtualPaymentAttempts.some(attempt => attempt.outTradeNo === order.virtualProviderOrderNo))) {
+    throw createHttpError('历史支付记录不完整，请联系工作人员核查', 409, 40905);
+  }
+}
+
 function assertMemberOrderCancellationState(order) {
   if (order.status === 'paid' || order.status === 'refunded' || order.transactionId || order.paidAt || order.refundedAt) {
     throw createHttpError('订单已支付或已退款，不能取消，请查看订单结果', 409, 40905);
   }
-  if (order.paymentReviewRequired || order.fulfillmentStatus === 'requires_review') {
+  if (order.paymentReviewRequired || ['requires_review', 'fulfilled'].includes(order.fulfillmentStatus)) {
     throw createHttpError('订单仍待核查，暂不能取消，请联系工作人员', 409, 40906);
   }
   if (!['pending', 'confirming', 'closed', 'failed'].includes(order.status)) {
@@ -4594,16 +4623,38 @@ const membership = {
     trustedPaymentOrder(order, user.openid);
     assertMemberOrderCancellationState(order);
     const locallyUnissued = noIssuedVirtualPaymentAttempt(order);
+    let observedSnapshot = memberOrderCancellationSnapshot(order);
+    let observedStatus = order.status;
+    let verifiedUnpaid = false;
     if (!['closed', 'failed'].includes(order.status) && !locallyUnissued) {
       if (paymentOrderProvider(order) !== 'virtual') {
         throw createHttpError('原支付通道尚未确认关闭，暂不能取消，请先查询订单', 409, 40905);
       }
-      // Query every issued attempt through the existing trusted settlement path.
-      // NOTPAY and "not found" remain payable and never authorize local closure.
-      const queried = await membership.virtualQuery(userId, { outTradeNo: orderNo });
-      assertMemberOrderCancellationState(queried.order);
-      if (queried.order.status !== 'closed') {
-        throw createHttpError('微信尚未确认关闭该订单，暂不能取消。请稍后查询，勿重复付款', 409, 40905);
+      assertCancellationAttemptLedger(order);
+      const config = virtualPaymentConfig(process.env);
+      if (!config.configured) throw createHttpError('微信支付尚未完成商户配置', 503, 50301);
+      const evidence = await queryVirtualPaymentAttempts(trustedPaymentOrder(order, user.openid), config);
+      assertCancellationAttemptLedger(evidence.order);
+      assertMemberOrderCancellationState(evidence.order);
+      if (evidence.results.some(result => result.xpayOrder && mapVirtualOrderState(result.xpayOrder) === 'SUCCESS')) {
+        await reconcileVirtualPaymentOrder(trustedPaymentOrder(evidence.order, user.openid), config, { source: 'virtual_query' }, evidence);
+        throw createHttpError('订单已支付，不能取消，请查看订单结果', 409, 40905);
+      }
+      if (!evidence.results.length || !evidence.results.every(result => !result.xpayOrder
+        || ['NOTPAY', 'CLOSED'].includes(mapVirtualOrderState(result.xpayOrder)))) {
+        throw createHttpError('支付状态尚未确认，暂不能取消，请稍后查询', 409, 40905);
+      }
+      observedSnapshot = memberOrderCancellationSnapshot(evidence.order);
+      observedStatus = evidence.order.status;
+      if (evidence.results.every(result => result.xpayOrder && mapVirtualOrderState(result.xpayOrder) === 'CLOSED')) {
+        const queried = await reconcileVirtualPaymentOrder(trustedPaymentOrder(evidence.order, user.openid), config,
+          { source: 'virtual_query' }, evidence);
+        assertMemberOrderCancellationState(queried.order);
+        if (queried.order.status !== 'closed') throw createHttpError('订单状态已变化，请重新查询后再取消', 409, 40905);
+      } else {
+        // Cancel only the business order. Preserve signed attempts and their
+        // mappings so a later verified payment is still recorded for review.
+        verifiedUnpaid = true;
       }
     }
     return db.runTransaction(async transaction => {
@@ -4617,17 +4668,20 @@ const membership = {
       if (current.cancelledAt && current.cancelReason === 'user_requested' && current.status === 'closed') {
         return publicPaymentOrder(current);
       }
+      if (memberOrderCancellationSnapshot(current) !== observedSnapshot || (verifiedUnpaid && current.status !== observedStatus)) {
+        throw createHttpError('支付尝试或订单资料已变化，请重新查询后再取消', 409, 40905);
+      }
       const terminal = ['closed', 'failed'].includes(current.status);
       // Allocation and cancellation update the same order document: a racing
       // newly issued attempt or paid callback makes this transaction refuse.
-      if (!terminal && (!locallyUnissued || !noIssuedVirtualPaymentAttempt(current))) {
+      if (!terminal && !verifiedUnpaid && (!locallyUnissued || !noIssuedVirtualPaymentAttempt(current))) {
         throw createHttpError('支付尝试或订单状态已变化，请重新查询后再取消', 409, 40905);
       }
       const timestamp = nowIso();
       const patch = { status: 'closed', cancelledAt: timestamp, cancelReason: 'user_requested',
-        cancellationProof: terminal ? 'verified_terminal_order' : 'no_payment_attempts',
+        cancellationProof: terminal ? 'verified_terminal_order' : verifiedUnpaid ? 'verified_unpaid_attempts' : 'no_payment_attempts',
         closedAt: current.closedAt || timestamp, updatedAt: timestamp };
-      // Do not fabricate a platform CLOSED tradeState for an unissued order.
+      // Business cancellation never fabricates a platform CLOSED tradeState.
       await settlePaymentSlot(transaction, current, order._id, true);
       await ref.update({ data: patch });
       return publicPaymentOrder({ ...current, ...patch });
@@ -6912,10 +6966,11 @@ const certifications = {
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), status: 'staging', fileID,
         ...(data.clientRequestId ? { clientRequestId: data.clientRequestId, requestFingerprint } : {}) };
       const saved = await db.runTransaction(async transaction => {
-        const [currentUser, currentProfile, certification] = await Promise.all([
-          salonTransactionDocument(transaction, C.users, user._id), salonTransactionDocument(transaction, C.profiles, profile._id),
-          salonTransactionDocument(transaction, C.memberCertifications, `user_${Number(userId)}`)
-        ]);
+        // CloudBase can reject concurrent reads in the same transaction with
+        // DATABASE_TRANSACTION_FAIL. Keep the ownership checks sequential.
+        const currentUser = await salonTransactionDocument(transaction, C.users, user._id);
+        const currentProfile = await salonTransactionDocument(transaction, C.profiles, profile._id);
+        const certification = await salonTransactionDocument(transaction, C.memberCertifications, documentId);
         if (!currentUser || Number(currentUser.id) !== Number(userId) || Number(currentUser.status) !== 1 || currentUser.mergedIntoUserId
           || Number(currentUser.authVersion || 1) !== Number(user.authVersion || 1) || !currentProfile || Number(currentProfile.userId) !== Number(userId)) {
           throw createHttpError('本人资料已变化，请重新登录后上传', 409, 40940);

@@ -385,6 +385,47 @@ test('query order refuses provider failures instead of fabricating state', async
   );
 });
 
+test('query order never treats unrelated not-found errors as order absence', async () => {
+  for (const data of [
+    { errcode: 99999, errmsg: 'application not found' },
+    { errcode: -1, errmsg: '配置不存在' },
+    { errcode: 40001, errmsg: 'access_token not found' },
+    { errmsg: 'order not found' },
+    { errcode: '90019', errmsg: 'order not found' }
+  ]) {
+    let queries = 0;
+    const client = createVirtualPaymentClient({
+      appId: IDENTITY.appId,
+      request: async url => {
+        if (url.includes('stable_token')) return { status: 200,
+          data: { access_token: 'fixture_access_token_query_error_0001', expires_in: 7200 } };
+        queries += 1;
+        return { status: 200, data };
+      }
+    });
+    await assert.rejects(
+      () => client.queryOrder({ appSecret: ENV.WX_APP_SECRET, appKey: APP_KEY, openid: OPENID, env: 0, outTradeNo: ORDER_NO }),
+      error => error.status === 503 && error.code === 50301
+    );
+    assert.equal(queries, data.errcode === 40001 ? 2 : 1);
+  }
+});
+
+test('query order refuses success envelopes without an order object', async () => {
+  for (const order of [undefined, null, [], '', false, 0]) {
+    const client = createVirtualPaymentClient({
+      appId: IDENTITY.appId,
+      request: async url => ({ status: 200, data: url.includes('stable_token')
+        ? { access_token: 'fixture_access_token_query_shape_0001', expires_in: 7200 }
+        : { errcode: 0, errmsg: 'ok', ...(order === undefined ? {} : { order }) } })
+    });
+    await assert.rejects(
+      () => client.queryOrder({ appSecret: ENV.WX_APP_SECRET, appKey: APP_KEY, openid: OPENID, env: 0, outTradeNo: ORDER_NO }),
+      error => error.status === 503 && error.code === 50301 && /结果不完整/.test(error.message)
+    );
+  }
+});
+
 test('code2session returns verified credentials and rejects mismatches', async () => {
   const client = createVirtualPaymentClient({
     appId: IDENTITY.appId,

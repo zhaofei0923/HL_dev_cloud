@@ -366,6 +366,54 @@ test('order amount remains its snapshot, secret payment fields are not read, and
   assert.equal(Object.hasOwn(result.list[0], 'paymentTestRunId'), false); assert.equal(result.list[0].transactionId, 'wx-fixture-transaction');
 });
 
+test('order list and detail expose a validated user cancellation record without changing payment state or reading its private proof', async () => {
+  for (const paymentState of [
+    { status: 'closed' },
+    { status: 'paid', paidAt: NOW, transactionId: 'late-payment-fixture', fulfillmentStatus: 'requires_review',
+      paymentReviewRequired: true, reviewReason: 'payment_after_cancellation' },
+    { status: 'refunded', paidAt: NOW, refundedAt: NOW, transactionId: 'refunded-payment-fixture' }
+  ]) {
+    const rt = runtime();
+    Object.assign(rt.rows[C.orders][0], paymentState, {
+      cancelledAt: BEFORE, cancelReason: 'user_requested', cancellationProof: 'must-not-read-private-cancellation-proof'
+    });
+    const before = clone(rt.rows);
+    const listed = await rt.service.listOrders({ status: paymentState.status });
+    const detailed = await rt.service.detailOrder({ outTradeNo: 'order_fixture_1' });
+    assert.equal(listed.total, 1);
+    for (const view of [listed.list[0], detailed]) {
+      assert.equal(view.cancelledAt, BEFORE);
+      assert.equal(view.cancelReason, 'user_requested');
+      for (const [key, value] of Object.entries(paymentState)) assert.equal(view[key], value);
+      assert.equal(Object.hasOwn(view, 'cancellationProof'), false);
+      assert.doesNotMatch(JSON.stringify(view), /must-not-read/);
+    }
+    for (const read of rt.reads.filter(read => read.name === C.orders)) {
+      assert.equal(read.projection.cancelledAt, true);
+      assert.equal(read.projection.cancelReason, true);
+      assert.equal(Object.hasOwn(read.projection, 'cancellationProof'), false);
+    }
+    assert.deepEqual(rt.rows, before);
+  }
+});
+
+test('historical closed orders and incomplete cancellation records retain their original DTO shape', async () => {
+  for (const cancellation of [{}, { cancelledAt: BEFORE }, { cancelReason: 'user_requested' },
+    { cancelledAt: '', cancelReason: 'user_requested' }, { cancelledAt: 'invalid-date', cancelReason: 'user_requested' },
+    { cancelledAt: 1793520000000, cancelReason: 'user_requested' }, { cancelledAt: {}, cancelReason: 'user_requested' },
+    { cancelledAt: BEFORE, cancelReason: 'provider_closed' }, { cancelledAt: BEFORE, cancelReason: null }]) {
+    const rt = runtime();
+    Object.assign(rt.rows[C.orders][0], { status: 'closed', ...cancellation });
+    const listed = await rt.service.listOrders({ status: 'closed' });
+    const detailed = await rt.service.detailOrder({ outTradeNo: 'order_fixture_1' });
+    for (const view of [listed.list[0], detailed]) {
+      assert.equal(view.status, 'closed');
+      assert.equal(Object.hasOwn(view, 'cancelledAt'), false);
+      assert.equal(Object.hasOwn(view, 'cancelReason'), false);
+    }
+  }
+});
+
 test('orders support legacy/product/status filtering without inferring paid amounts and reject conflicting order numbers', async () => {
   const rt = runtime(); delete rt.rows[C.orders][0].productType;
   assert.equal((await rt.service.listOrders({ productType: 'legacy', status: 'pending' })).total, 1);

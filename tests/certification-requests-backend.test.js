@@ -63,13 +63,27 @@ function runtime(input = fixture(), beforeTransaction = () => {}, options = {}) 
       doc(id) {
         return {
           async get() {
-            reads.push({ name, id });
-            if (name === 'hl_member_certifications' && options.certificationReadError) throw new Error(options.certificationReadError);
-            const row = (fixtures[name] || []).find(item => item._id === id);
-            if (!row) {
-              const error = new Error('document does not exist'); error.errCode = 'DOCUMENT_NOT_EXIST'; throw error;
+            const guard = inTransaction && options.rejectParallelTransactionReads;
+            if (guard && inTransaction.pendingReads > 0) {
+              const error = new Error('RESOURCE_SYSTEM_ERROR: DATABASE_TRANSACTION_FAIL');
+              error.errCode = -501001;
+              throw error;
             }
-            return { data: structuredClone(row) };
+            if (guard) inTransaction.pendingReads += 1;
+            try {
+              // Keep a read in flight so Promise.all exercises the deployed
+              // database's single-operation-per-transaction constraint.
+              if (guard) await new Promise(resolve => setImmediate(resolve));
+              reads.push({ name, id });
+              if (name === 'hl_member_certifications' && options.certificationReadError) throw new Error(options.certificationReadError);
+              const row = (fixtures[name] || []).find(item => item._id === id);
+              if (!row) {
+                const error = new Error('document does not exist'); error.errCode = 'DOCUMENT_NOT_EXIST'; throw error;
+              }
+              return { data: structuredClone(row) };
+            } finally {
+              if (guard) inTransaction.pendingReads -= 1;
+            }
           },
           async set({ data }) {
             const payload = { ...structuredClone(data), _id: id };
@@ -94,9 +108,10 @@ function runtime(input = fixture(), beforeTransaction = () => {}, options = {}) 
     async runTransaction(callback) {
       beforeTransaction(fixtures);
       const saved = structuredClone(fixtures), writeCount = writes.length;
+      const transaction = { pendingReads: 0 };
       let committed = false;
       try {
-        const result = await callback({ collection: name => collection(name, true) });
+        const result = await callback({ collection: name => collection(name, transaction) });
         committed = true;
         if (options.afterTransaction) options.afterTransaction(fixtures);
         return result;
@@ -388,6 +403,45 @@ test('material upload persists only AEAD ciphertext and returns an opaque metada
   assert.equal(own.code, 0); assert.equal(own.data.contentBase64, JPEG.toString('base64'));
   assert.doesNotMatch(JSON.stringify(own), /fileID|cloud:\/\/|algorithm|iv|tag/);
 });
+
+for (const [format, mimeType, content] of [
+  ['JPEG', 'image/jpeg', JPEG],
+  ['PDF', 'application/pdf', Buffer.from('%PDF-1.4\nSynthetic education upload fixture\n%%EOF')]
+]) {
+  test(`education ${format} upload, preview and removal succeed when transactions reject parallel reads`, async () => {
+    const r = runtime(fixture(false), undefined, { rejectParallelTransactionReads: true });
+    const token = r.token(1);
+    const result = await upload(r, 'education', 1, {
+      mimeType, contentBase64: content.toString('base64'), clientRequestId: `education-serial-${format.toLowerCase()}`
+    });
+    assert.equal(result.code, 0, result.message);
+    const material = result.data.material;
+    assert.equal(material.kind, 'education');
+    assert.equal(material.mimeType, mimeType);
+    assert.equal(material.size, content.length);
+    assert.equal(r.uploads.length, 1);
+    assert.equal(r.deletions.length, 0);
+    assert.equal(r.storage.size, 1);
+    assert.ok(!r.uploads[0].fileContent.includes(content));
+
+    const staged = await r.call('/user/certification-materials', 'GET', { kind: 'education' }, token);
+    assert.equal(staged.code, 0);
+    assert.deepEqual(plain(staged.data.materials.map(item => item.id)), [material.id]);
+    const preview = await r.call(`/user/certification-materials/${material.id}`, 'GET', {}, token);
+    assert.equal(preview.code, 0);
+    assert.equal(preview.data.contentBase64, content.toString('base64'));
+
+    const removed = await r.call(`/user/certification-materials/${material.id}`, 'DELETE', {}, token);
+    assert.equal(removed.code, 0);
+    assert.equal(removed.data.removed, true);
+    assert.equal(r.storage.size, 0);
+    assert.equal(r.deletions.length, 1);
+    const remaining = await r.call('/user/certification-materials', 'GET', { kind: 'education' }, token);
+    assert.equal(remaining.code, 0);
+    assert.deepEqual(plain(remaining.data.materials), []);
+    assert.equal((await r.call(`/user/certification-materials/${material.id}`, 'GET', {}, token)).code, 40400);
+  });
+}
 
 test('owner can recover all three staged materials after process loss, preview, delete and submit without reuploading', async () => {
   const r = runtime(fixture(false));

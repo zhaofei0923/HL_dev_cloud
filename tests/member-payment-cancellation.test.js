@@ -203,13 +203,15 @@ test('cancellation rejects foreign orders, paid/refunded/review states and unkno
   assert.equal(foreign.writes.length, 0);
   for (const patch of [{ status: 'paid' }, { status: 'refunded' }, { status: 'closed', transactionId: TRANSACTION_ID },
     { status: 'closed', paidAt: '2026-11-03T02:00:00Z' }, { status: 'confirming', paymentReviewRequired: true },
-    { status: 'closed', fulfillmentStatus: 'requires_review' }, { status: 'mystery' }]) {
+    { status: 'closed', fulfillmentStatus: 'requires_review' }, { status: 'confirming', fulfillmentStatus: 'fulfilled' },
+    { status: 'mystery' }]) {
     const r = unissued(patch); reserve(r);
     await assert.rejects(r.cancel, error => [40905, 40906].includes(error.code));
     assert.equal(r.writes.length, 0); assert.equal(slot(r).orderDocumentId, 'order-1');
   }
   for (const patch of [{ virtualPaymentAttempts: undefined }, { virtualPaymentAttempts: [], virtualProviderOrderNo: ATTEMPT_NO },
-    { paymentProvider: 'jsapi', virtualPaymentAttempts: [] }]) {
+    { paymentProvider: 'jsapi', virtualPaymentAttempts: [] },
+    { paymentProvider: undefined, virtualPaymentAttempts: undefined }]) {
     const r = runtime({ orderPatch: patch, xpay: null }); reserve(r);
     await assert.rejects(r.cancel, error => error.code === 40905);
     assert.equal(r.rows.hl_payment_orders[0].cancelledAt, undefined);
@@ -217,9 +219,61 @@ test('cancellation rejects foreign orders, paid/refunded/review states and unkno
   }
 });
 
-test('issued orders cancel only after all provider attempts are CLOSED; unpaid, absent and errors preserve the reservation', async () => {
+test('malformed or conflicting attempt ledgers cannot be treated as evidence of an unpaid order', async () => {
+  const attempt = { outTradeNo: ATTEMPT_NO, env: 0, offerId: ENV.VPAY_OFFER_ID };
+  for (const attempts of [null, {}, 'invalid', [null], [{}], [{ ...attempt, outTradeNo: 'bad number!' }],
+    [{ ...attempt, env: 1 }], [{ ...attempt, offerId: 'different-offer' }], [attempt, attempt],
+    Array.from({ length: 11 }, (_, index) => ({ ...attempt, outTradeNo: `HLAfixture${String(index).padStart(20, '0')}` }))]) {
+    const r = runtime({ xpay: null });
+    r.rows.hl_payment_orders[0].virtualPaymentAttempts = attempts;
+    reserve(r);
+    const response = await r.cancelApi();
+    assert.notEqual(response.code, 0);
+    assert.equal(r.rows.hl_payment_orders[0].cancelledAt, undefined);
+    assert.equal(slot(r).orderDocumentId, 'order-1');
+    assert.equal(r.writes.length, 0);
+  }
+});
+
+test('issued orders can be cancelled after every attempt is absent, unpaid or closed without discarding payment evidence', async () => {
+  for (const states of [[null], [1], [6], [null, 1], [6, 1], [1, null], [6, 6], [null, 1, 6]]) {
+    const attempts = states.map((state, index) => ({ outTradeNo: `HLAfixtureattempt${String(index + 1).padStart(9, '0')}`,
+      env: 0, offerId: ENV.VPAY_OFFER_ID, createdAt: '2026-10-15T00:00:00Z' }));
+    const r = runtime({ orderPatch: { virtualPaymentAttempts: attempts }, query: async request => {
+      const state = states[attempts.findIndex(attempt => attempt.outTradeNo === request.outTradeNo)];
+      return state === null ? null : paidOrder({ order_id: request.outTradeNo, status: state });
+    } });
+    reserve(r);
+    const mappings = plain(r.rows.hl_counters.filter(row => row._id.startsWith('virtualPaymentAttempt_')));
+    const cancelled = await r.cancel();
+    assert.equal(cancelled.status, 'closed'); assert.ok(cancelled.cancelledAt);
+    assert.equal(cancelled.cancelReason, 'user_requested');
+    assert.deepEqual(r.queries.map(query => query.outTradeNo).sort(), attempts.map(attempt => attempt.outTradeNo).sort());
+    assert.deepEqual(plain(r.rows.hl_payment_orders[0].virtualPaymentAttempts), attempts);
+    assert.deepEqual(plain(r.rows.hl_counters.filter(row => row._id.startsWith('virtualPaymentAttempt_'))), mappings);
+    assert.equal(slot(r).orderDocumentId, '');
+    assert.equal(r.rows.hl_members[0].memberType, 'free');
+    assert.equal(r.deliveries.length, 0);
+    if (states.some(state => state !== 6)) assert.notEqual(cancelled.tradeState, 'CLOSED');
+    const queried = await r.query();
+    assert.equal(queried.order.status, 'closed');
+    assert.equal(queried.order.cancelledAt, cancelled.cancelledAt);
+    assert.equal(queried.order.cancelReason, 'user_requested');
+    assert.equal(queried.tradeState, undefined);
+    assert.equal(queried.providerOrderAbsent, undefined);
+    if (states.some(state => state !== 6)) assert.notEqual(queried.tradeState, 'CLOSED');
+    const writes = r.writes.length, queries = r.queries.length;
+    assert.deepEqual(plain(await r.cancel()), plain(cancelled));
+    assert.equal(r.writes.length, writes);
+    assert.equal(r.queries.length, queries);
+  }
+});
+
+test('a refunded, unknown or failed provider query prevents cancellation and retains the reservation', async () => {
   const newer = 'HLAfixtureattempt000000002';
-  for (const pending of [null, paidOrder({ order_id: newer, status: 1 }), new Error('provider timeout')]) {
+  for (const pending of [paidOrder({ order_id: newer, status: 5 }), paidOrder({ order_id: newer, status: 8 }),
+    paidOrder({ order_id: newer, status: 0 }), paidOrder({ order_id: newer, status: 7 }),
+    paidOrder({ order_id: newer, status: 99 }), new Error('provider timeout')]) {
     const r = runtime({ orderPatch: { virtualPaymentAttempts: [
       { outTradeNo: ATTEMPT_NO, env: 0, offerId: ENV.VPAY_OFFER_ID }, { outTradeNo: newer, env: 0, offerId: ENV.VPAY_OFFER_ID }
     ] }, query: async request => {
@@ -231,10 +285,6 @@ test('issued orders cancel only after all provider attempts are CLOSED; unpaid, 
     assert.equal(r.rows.hl_payment_orders[0].status, 'confirming'); assert.equal(r.rows.hl_payment_orders[0].cancelledAt, undefined);
     assert.equal(slot(r).orderDocumentId, 'order-1'); assert.equal(r.writes.length, 0);
   }
-  const r = runtime({ xpay: paidOrder({ status: 6 }) }); reserve(r);
-  const cancelled = await r.cancel();
-  assert.equal(cancelled.status, 'closed'); assert.ok(cancelled.cancelledAt);
-  assert.equal(cancelled.tradeState, 'CLOSED'); assert.equal(r.queries.length, 1); assert.equal(slot(r).orderDocumentId, '');
 });
 
 test('a new attempt appearing during the CLOSED query prevents cancellation and retains its reservation', async () => {
@@ -263,6 +313,31 @@ test('transaction rechecks new signed attempts or payment facts committed after 
       } }); reserve(r);
     await assert.rejects(r.cancel, error => [40905, 40400].includes(error.code));
     assert.equal(r.rows.hl_payment_orders[0].cancelledAt, undefined); assert.equal(slot(r).orderDocumentId, 'order-1');
+  }
+});
+
+test('cancellation rejects payment snapshots changed after provider queries and never releases their reservation', async () => {
+  for (const change of ['attempt', 'attempt_environment', 'provider_number', 'status', 'payment', 'owner', 'amount']) {
+    let changed = false;
+    const r = runtime({ xpay: paidOrder({ status: 1 }), beforeTransaction: rows => {
+      if (changed) return;
+      changed = true;
+      const current = rows.hl_payment_orders[0];
+      if (change === 'attempt') current.virtualPaymentAttempts.push({ outTradeNo: 'HLAfixtureattempt000000002', env: 0, offerId: ENV.VPAY_OFFER_ID });
+      else if (change === 'attempt_environment') current.virtualPaymentAttempts[0].env = 1;
+      else if (change === 'provider_number') current.virtualProviderOrderNo = 'HLAfixtureattempt000000002';
+      else if (change === 'status') current.status = 'failed';
+      else if (change === 'payment') current.transactionId = TRANSACTION_ID;
+      else if (change === 'owner') current.userId = 2;
+      else current.amountFen += 100;
+    } });
+    reserve(r);
+    await assert.rejects(r.cancel, error => [40304, 40400, 40905, 40907].includes(error.code), change);
+    assert.equal(changed, true, 'provider checks must finish before exercising the transaction race');
+    assert.equal(r.queries.length, 1, change);
+    assert.equal(r.rows.hl_payment_orders[0].cancelledAt, undefined, change);
+    assert.equal(slot(r).orderDocumentId, 'order-1', change);
+    assert.equal(r.writes.length, 0, change);
   }
 });
 
@@ -305,7 +380,7 @@ test('member history projection exposes only valid cancellation fields and leave
 });
 
 test('the public cancel route ignores client terminal proofs and requires authentication', async () => {
-  const r = runtime({ xpay: paidOrder({ status: 1 }) }); reserve(r);
+  const r = runtime({ xpay: paidOrder({ status: 0 }) }); reserve(r);
   const unauthorized = await r.cancelWithoutAuth();
   assert.equal(unauthorized.code, 40100); assert.equal(r.writes.length, 0);
   const response = await r.cancelApi({ tradeState: 'CLOSED', status: 'closed', cancelledAt: 'forged' });
@@ -318,7 +393,7 @@ test('the public cancel route ignores client terminal proofs and requires authen
 
 test('a verified late payment after user cancellation is recorded for review without issuing duplicate rights', async () => {
   let paid = false;
-  const r = runtime({ query: async () => paidOrder({ status: paid ? 2 : 6 }) }); reserve(r);
+  const r = runtime({ query: async () => paidOrder({ status: paid ? 2 : 1 }) }); reserve(r);
   const cancelled = await r.cancel();
   assert.equal(cancelled.status, 'closed');
   const next = { ...r.rows.hl_payment_orders[0], _id: 'order-2', id: 2, outTradeNo: 'HLM202610110000000002',
@@ -342,6 +417,75 @@ test('a verified late payment after user cancellation is recorded for review wit
   assert.equal(r.rows.hl_payment_orders[1].virtualPaymentAttempts.length, 0);
   assert.equal((await r.query()).order.status, 'paid', 'verified repeat query is idempotent');
   await assert.rejects(r.cancel, error => error.code === 40905);
+});
+
+test('a payment push after cancelling a provider-absent order records review without fulfilling or delivering goods', async () => {
+  let paid = false;
+  const r = runtime({ query: async () => paid ? paidOrder() : null }); reserve(r);
+  const cancelled = await r.cancel();
+  assert.equal(cancelled.status, 'closed');
+  assert.notEqual(cancelled.tradeState, 'CLOSED');
+  paid = true;
+  await r.push();
+  const current = r.rows.hl_payment_orders[0];
+  assert.equal(current.status, 'paid');
+  assert.equal(current.transactionId, TRANSACTION_ID);
+  assert.equal(current.paymentReviewRequired, true);
+  assert.equal(current.fulfillmentStatus, 'requires_review');
+  assert.equal(current.reviewReason, 'payment_after_cancellation');
+  assert.equal(current.cancelledAt, cancelled.cancelledAt);
+  assert.equal(r.rows.hl_members[0].memberType, 'free');
+  assert.equal(r.deliveries.length, 0);
+  assert.equal(slot(r).blockedReviewDocumentId, 'order-1');
+});
+
+test('a cancelled-order query returns a payment callback committed while its unpaid provider query was in flight', async () => {
+  let callbackDuringQuery = false, insideCallback = false, r;
+  r = runtime({ query: async () => {
+    if (insideCallback) return paidOrder();
+    if (callbackDuringQuery) {
+      callbackDuringQuery = false;
+      insideCallback = true;
+      try { await r.push(); } finally { insideCallback = false; }
+    }
+    return paidOrder({ status: 1 });
+  } }); reserve(r);
+  const cancelled = await r.cancel();
+  callbackDuringQuery = true;
+  const result = await r.query();
+  assert.equal(result.order.status, 'paid');
+  assert.equal(result.order.transactionId, TRANSACTION_ID);
+  assert.equal(result.order.fulfillmentStatus, 'requires_review');
+  assert.equal(result.order.reviewReason, 'payment_after_cancellation');
+  assert.equal(result.order.cancelledAt, cancelled.cancelledAt);
+  assert.equal(result.tradeState, undefined);
+  assert.equal(result.providerOrderAbsent, undefined);
+  assert.equal(r.rows.hl_members[0].memberType, 'free');
+  assert.equal(r.deliveries.length, 0);
+  assert.equal(slot(r).blockedReviewDocumentId, 'order-1');
+});
+
+test('cancelled-order queries reject changed payment attempts and unverified provider states without undoing cancellation', async () => {
+  for (const change of ['attempt', 'refund', 'unknown', 'query_error']) {
+    let changed = false, r;
+    r = runtime({ query: async request => {
+      if (!changed) return paidOrder({ status: 1 });
+      if (change === 'query_error') throw new Error('provider timeout');
+      if (change === 'attempt') {
+        r.rows.hl_payment_orders[0].virtualPaymentAttempts.push({ outTradeNo: 'HLAfixtureattempt000000002',
+          env: 0, offerId: ENV.VPAY_OFFER_ID });
+      }
+      return paidOrder({ order_id: request.outTradeNo, status: change === 'refund' ? 5 : change === 'unknown' ? 99 : 1 });
+    } }); reserve(r);
+    const cancelled = await r.cancel();
+    const writes = r.writes.length;
+    changed = true;
+    await assert.rejects(r.query, change);
+    assert.equal(r.rows.hl_payment_orders[0].status, 'closed', change);
+    assert.equal(r.rows.hl_payment_orders[0].cancelledAt, cancelled.cancelledAt, change);
+    assert.equal(r.writes.length, writes, change);
+    assert.equal(slot(r).orderDocumentId, '', change);
+  }
 });
 
 
